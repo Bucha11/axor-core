@@ -1,0 +1,77 @@
+name: CI/CD
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*.*.*"]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: Test (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install
+        run: |
+          pip install -e ".[dev]"
+
+      - name: Static analysis — no provider imports in core
+        run: |
+          python - << 'EOF'
+          import ast, os, sys
+          issues = []
+          for root, dirs, files in os.walk("axor_core"):
+              dirs[:] = [d for d in dirs if not d.startswith("__")]
+              for f in files:
+                  if not f.endswith(".py"):
+                      continue
+                  path = os.path.join(root, f)
+                  src  = open(path).read()
+                  for provider in ["anthropic", "openai", "langchain", "boto3"]:
+                      if f"import {provider}" in src or f"from {provider}" in src:
+                          issues.append(f"PROVIDER_IMPORT: {path} imports {provider}")
+          if issues:
+              print("\n".join(issues))
+              sys.exit(1)
+          print(f"✓ no provider imports in axor_core/")
+          EOF
+
+      - name: Run tests
+        run: pytest tests/ -v --tb=short
+
+  publish:
+    name: Publish to PyPI
+    needs: test
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    environment: pypi
+
+    permissions:
+      id-token: write   # for trusted publishing
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build
+        run: |
+          pip install hatchling build
+          python -m build
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
