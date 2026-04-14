@@ -193,7 +193,7 @@ def make_envelope(focused_policy, root_lineage):
             max_child_depth=0,
         )
         export = ExportContract(
-            mode=ExportMode.SUMMARY,
+            mode=p.export_mode,
             allowed_fields=frozenset(["output"]),
             max_export_tokens=1024,
         )
