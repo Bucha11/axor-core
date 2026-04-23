@@ -73,6 +73,8 @@ from axor_core.contracts.trace import (
     CommandRoutedEvent,
     PluginDeniedEvent,
     CancelledEvent,
+    Embedder,
+    TelemetrySink,
 )
 
 __all__ = [
@@ -102,4 +104,5 @@ __all__ = [
     "AnonymizedTraceRecord", "SignalChosenEvent", "PolicyAdjustedEvent",
     "IntentDeniedEvent", "ChildSpawnedEvent", "TokensSpentEvent",
     "CommandRoutedEvent", "PluginDeniedEvent", "CancelledEvent",
+    "Embedder", "TelemetrySink",
 ]

@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import os
+from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any
+from typing import Any, Protocol, runtime_checkable
 
 from axor_core.contracts.policy import TaskSignal, PolicyDecisionKind
 
@@ -139,6 +140,55 @@ class CancelledEvent(TraceEvent):
     reason: str          = ""   # CancelReason value
     detail: str          = ""
     completed_intents: int = 0  # how many intents completed before cancel
+
+
+# ── Telemetry contracts ───────────────────────────────────────────────────────
+
+
+@runtime_checkable
+class Embedder(Protocol):
+    """
+    Produces a fixed-dimension numeric fingerprint of raw input text.
+
+    Core ships no implementation — the default pipeline passes None when no
+    embedder is attached. axor-telemetry provides MinHashEmbedder (char-3
+    n-grams, 128 hashes). External packages may provide semantic embedders.
+    """
+
+    @property
+    def kind(self) -> str:
+        """Identifier like 'minhash_v1' for downstream schema matching."""
+        ...
+
+    def embed(self, text: str) -> list[float]:
+        """Return a fixed-dim vector for the given text."""
+        ...
+
+
+class TelemetrySink(ABC):
+    """
+    Destination for AnonymizedTraceRecord batches.
+
+    Core ships no implementation. axor-telemetry provides FileTelemetrySink
+    (local JSONL queue) and HTTPTelemetrySink (remote ingest endpoint).
+
+    Implementations must be safe to call concurrently — the pipeline may
+    flush from a background task while the user's code records events.
+    """
+
+    @abstractmethod
+    async def send(self, records: list["AnonymizedTraceRecord"]) -> None:
+        """Enqueue or ship a batch. Must not raise on transient failures."""
+        ...
+
+    @abstractmethod
+    async def flush(self) -> None:
+        """Force in-memory buffers to their underlying durable store."""
+        ...
+
+    async def aclose(self) -> None:
+        """Release resources. Default: flush only."""
+        await self.flush()
 
 
 # ── AnonymizedTraceRecord — for classifier training ───────────────────────────
