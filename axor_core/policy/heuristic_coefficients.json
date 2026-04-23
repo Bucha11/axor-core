@@ -1,0 +1,56 @@
+{
+  "version": 1,
+  "notes": "Weights are tuned from aggregated telemetry. Regex sources live here too so that adding a pattern does not require a code release. Flags: 'i' = re.IGNORECASE.",
+  "patterns": {
+    "complexity.expansive": [
+      {"id": "rewrite_qualifier",   "regex": "\\brewrite\\s+(entire|whole|full|the)\\b",      "flags": "i", "weight": 1.0},
+      {"id": "migrate_qualifier",   "regex": "\\bmigrate\\s+(entire|whole|full|the|all)\\b",  "flags": "i", "weight": 1.0},
+      {"id": "port_qualifier",      "regex": "\\bport\\s+(entire|whole|full|the|all)\\b",     "flags": "i", "weight": 1.0},
+      {"id": "rewrite_x_to_y",      "regex": "\\brewrite\\s+\\w+\\s+(to|in|into)\\s+\\w+",    "flags": "i", "weight": 0.8},
+      {"id": "migrate_direction",   "regex": "\\bmigrate\\s+\\w+\\s+(to|from)\\b",            "flags": "i", "weight": 0.8},
+      {"id": "refactor_entire",     "regex": "\\brefactor\\s+(entire|whole|all|the\\s+entire)\\b", "flags": "i", "weight": 0.9},
+      {"id": "architecture_change", "regex": "\\barchitecture\\s+(overhaul|redesign|rework)\\b",   "flags": "i", "weight": 1.0},
+      {"id": "convert_entire",      "regex": "\\bconvert\\s+(the\\s+)?(entire|whole|full)\\b",     "flags": "i", "weight": 0.9}
+    ],
+    "complexity.moderate": [
+      {"id": "add_feature",      "regex": "\\badd\\s+(a\\s+)?feature\\b",     "flags": "i", "weight": 0.8},
+      {"id": "implement_x",      "regex": "\\bimplement\\s+\\w+",             "flags": "i", "weight": 0.6},
+      {"id": "refactor_x",       "regex": "\\brefactor\\s+\\w+",              "flags": "i", "weight": 0.7},
+      {"id": "update_x",         "regex": "\\bupdate\\s+\\w+",                "flags": "i", "weight": 0.5},
+      {"id": "extend_x",         "regex": "\\bextend\\s+\\w+",                "flags": "i", "weight": 0.6},
+      {"id": "integrate_x",      "regex": "\\bintegrate\\s+\\w+",             "flags": "i", "weight": 0.7},
+      {"id": "replace_x_with",   "regex": "\\breplace\\s+\\w+\\s+with\\b",    "flags": "i", "weight": 0.7}
+    ],
+    "nature.readonly": [
+      {"id": "explain",      "regex": "\\bexplain\\b",                 "flags": "i", "weight": 0.9},
+      {"id": "analyze",      "regex": "\\banalyze\\b",                 "flags": "i", "weight": 0.8},
+      {"id": "what_is",      "regex": "\\bwhat\\s+(is|are|does)\\b",   "flags": "i", "weight": 0.7},
+      {"id": "how_does",     "regex": "\\bhow\\s+does\\b",             "flags": "i", "weight": 0.7},
+      {"id": "why_x",        "regex": "\\bwhy\\s+(is|does|did)\\b",    "flags": "i", "weight": 0.7},
+      {"id": "summarize",    "regex": "\\bsummarize\\b",               "flags": "i", "weight": 0.9},
+      {"id": "review",       "regex": "\\breview\\b",                  "flags": "i", "weight": 0.6},
+      {"id": "check_if",     "regex": "\\bcheck\\s+(if|whether|that)\\b", "flags": "i", "weight": 0.6},
+      {"id": "find_qualifier","regex": "\\bfind\\s+(all|the|where|any)\\b", "flags": "i", "weight": 0.5}
+    ],
+    "nature.mutative": [
+      {"id": "fix",            "regex": "\\bfix\\b",                                       "flags": "i", "weight": 0.7},
+      {"id": "write_artifact", "regex": "\\bwrite\\s+(a\\s+)?(test|spec|function|class|module)\\b", "flags": "i", "weight": 0.8},
+      {"id": "create",         "regex": "\\bcreate\\b",                                    "flags": "i", "weight": 0.6},
+      {"id": "modify",         "regex": "\\bmodify\\b",                                    "flags": "i", "weight": 0.8},
+      {"id": "delete",         "regex": "\\bdelete\\b",                                    "flags": "i", "weight": 0.8},
+      {"id": "remove",         "regex": "\\bremove\\b",                                    "flags": "i", "weight": 0.7},
+      {"id": "rename",         "regex": "\\brename\\b",                                    "flags": "i", "weight": 0.8},
+      {"id": "move",           "regex": "\\bmove\\b",                                      "flags": "i", "weight": 0.5},
+      {"id": "refactor",       "regex": "\\brefactor\\b",                                  "flags": "i", "weight": 0.7},
+      {"id": "rewrite",        "regex": "\\brewrite\\b",                                   "flags": "i", "weight": 0.9}
+    ],
+    "nature.generative": [
+      {"id": "write_test_stub", "regex": "\\bwrite\\s+(a\\s+)?(test|spec|mock|stub)\\b",             "flags": "i", "weight": 0.9},
+      {"id": "generate",        "regex": "\\bgenerate\\b",                                           "flags": "i", "weight": 0.8},
+      {"id": "create_artifact", "regex": "\\bcreate\\s+(a\\s+)?(new\\s+)?(file|module|class|function)\\b", "flags": "i", "weight": 0.8},
+      {"id": "scaffold",        "regex": "\\bscaffold\\b",                                           "flags": "i", "weight": 0.9},
+      {"id": "boilerplate",     "regex": "\\bboilerplate\\b",                                        "flags": "i", "weight": 0.9},
+      {"id": "template",        "regex": "\\btemplate\\b",                                           "flags": "i", "weight": 0.6}
+    ]
+  }
+}

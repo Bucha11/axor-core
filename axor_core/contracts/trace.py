@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
 from axor_core.contracts.policy import TaskSignal, PolicyDecisionKind
+
+
+def _default_trace_dir() -> str:
+    return os.environ.get("AXOR_TRACE_DIR", "~/.axor/traces")
 
 
 class TraceEventKind(str, Enum):
@@ -58,11 +63,18 @@ class SignalChosenEvent(TraceEvent):
     """
     Records which classifier produced the TaskSignal and with what confidence.
     Used for classifier performance tracking.
+
+    `scores` carries the full classifier distribution when available,
+    not just the winning signal. Keys are namespaced: `complexity.focused`,
+    `nature.readonly`, `domain.coding`. Empty when the classifier does not
+    expose a distribution (e.g. injected external classifier without
+    `classify_with_scores` overridden).
     """
     raw_input: str           = ""
     signal: TaskSignal | None = None
     confidence: float        = 0.0
     classifier: str          = "heuristic"   # "heuristic" | "local" | "cloud"
+    scores: dict[str, float] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -140,13 +152,19 @@ class AnonymizedTraceRecord:
     Only embeddings and governance metadata.
 
     Users must explicitly opt in to training_opt_in=True in TraceConfig.
+
+    `input_embedding` is Optional because the embedder lives in a separate
+    package (axor-telemetry). When axor-core alone is installed, records
+    are emitted with embedding=None and fingerprint_kind="" — still useful
+    for aggregate stats, unusable for classifier training.
     """
-    input_embedding: list[float]     # embedding of raw_input — never the text itself
     signal_chosen: TaskSignal
     classifier_used: str
     confidence: float
     tokens_spent: int
-    policy_adjusted: bool            # was the initial signal wrong?
+    policy_adjusted: bool                    # was the initial signal wrong?
+    input_embedding: list[float] | None = None
+    fingerprint_kind: str = ""               # e.g. "minhash_v1"; "" when no embedder
     # deliberately no: raw_input, session_id, user_id, code content
 
 
@@ -160,12 +178,16 @@ class TraceConfig:
     Defaults are maximally private:
     - local_only=True      traces never leave the machine
     - persist_inputs=False raw inputs are not written even locally
+    - persist_to_disk=True events stream to JSONL per session (honours local_only)
     - training_opt_in=False anonymized records not sent for cloud training
+    - retention_days=30    JSONL files older than this are deleted on collector init
     """
     local_only: bool       = True
     persist_inputs: bool   = False
+    persist_to_disk: bool  = True
     training_opt_in: bool  = False
-    trace_dir: str         = "~/.axor/traces"
+    trace_dir: str         = field(default_factory=_default_trace_dir)
+    retention_days: int    = 30
 
 
 # ── DecisionTrace ──────────────────────────────────────────────────────────────

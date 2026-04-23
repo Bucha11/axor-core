@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import json
 import re
+from pathlib import Path
+
 from axor_core.contracts.policy import (
     SignalClassifier,
     TaskSignal,
@@ -11,63 +14,44 @@ from axor_core.contracts.policy import (
 
 # ── Signal patterns ────────────────────────────────────────────────────────────
 #
-# Each pattern is (regex, weight).
-# Multiple matches accumulate weight — avoids single-keyword false positives.
+# Patterns and weights live in heuristic_coefficients.json so that telemetry-
+# driven updates can ship new coefficients without a code release. Multiple
+# matches accumulate weight — avoids single-keyword false positives.
 
-_EXPANSIVE_PATTERNS: list[tuple[re.Pattern, float]] = [
-    (re.compile(r"\brewrite\s+(entire|whole|full|the)\b", re.I), 1.0),
-    (re.compile(r"\bmigrate\s+(entire|whole|full|the|all)\b", re.I), 1.0),
-    (re.compile(r"\bport\s+(entire|whole|full|the|all)\b", re.I), 1.0),
-    (re.compile(r"\brewrite\s+\w+\s+(to|in|into)\s+\w+", re.I), 0.8),  # rewrite X to Y
-    (re.compile(r"\bmigrate\s+\w+\s+(to|from)\b", re.I), 0.8),
-    (re.compile(r"\brefactor\s+(entire|whole|all|the\s+entire)\b", re.I), 0.9),
-    (re.compile(r"\barchitecture\s+(overhaul|redesign|rework)\b", re.I), 1.0),
-    (re.compile(r"\bconvert\s+(the\s+)?(entire|whole|full)\b", re.I), 0.9),
-]
+_COEFFICIENTS_PATH = Path(__file__).parent / "heuristic_coefficients.json"
 
-_MODERATE_PATTERNS: list[tuple[re.Pattern, float]] = [
-    (re.compile(r"\badd\s+(a\s+)?feature\b", re.I), 0.8),
-    (re.compile(r"\bimplement\s+\w+", re.I), 0.6),
-    (re.compile(r"\brefactor\s+\w+", re.I), 0.7),
-    (re.compile(r"\bupdate\s+\w+", re.I), 0.5),
-    (re.compile(r"\bextend\s+\w+", re.I), 0.6),
-    (re.compile(r"\bintegrate\s+\w+", re.I), 0.7),
-    (re.compile(r"\breplace\s+\w+\s+with\b", re.I), 0.7),
-]
+_REGEX_FLAGS = {"i": re.IGNORECASE, "m": re.MULTILINE, "s": re.DOTALL}
 
-_READONLY_PATTERNS: list[tuple[re.Pattern, float]] = [
-    (re.compile(r"\bexplain\b", re.I), 0.9),
-    (re.compile(r"\banalyze\b", re.I), 0.8),
-    (re.compile(r"\bwhat\s+(is|are|does)\b", re.I), 0.7),
-    (re.compile(r"\bhow\s+does\b", re.I), 0.7),
-    (re.compile(r"\bwhy\s+(is|does|did)\b", re.I), 0.7),
-    (re.compile(r"\bsummarize\b", re.I), 0.9),
-    (re.compile(r"\breview\b", re.I), 0.6),
-    (re.compile(r"\bcheck\s+(if|whether|that)\b", re.I), 0.6),
-    (re.compile(r"\bfind\s+(all|the|where|any)\b", re.I), 0.5),
-]
 
-_MUTATIVE_PATTERNS: list[tuple[re.Pattern, float]] = [
-    (re.compile(r"\bfix\b", re.I), 0.7),
-    (re.compile(r"\bwrite\s+(a\s+)?(test|spec|function|class|module)\b", re.I), 0.8),
-    (re.compile(r"\bcreate\b", re.I), 0.6),
-    (re.compile(r"\bmodify\b", re.I), 0.8),
-    (re.compile(r"\bdelete\b", re.I), 0.8),
-    (re.compile(r"\bremove\b", re.I), 0.7),
-    (re.compile(r"\brename\b", re.I), 0.8),
-    (re.compile(r"\bmove\b", re.I), 0.5),
-    (re.compile(r"\brefactor\b", re.I), 0.7),
-    (re.compile(r"\brewrite\b", re.I), 0.9),
-]
+def _compile_flags(spec: str) -> int:
+    flags = 0
+    for ch in spec or "":
+        f = _REGEX_FLAGS.get(ch)
+        if f is None:
+            raise ValueError(f"Unknown regex flag {ch!r} in heuristic coefficients")
+        flags |= f
+    return flags
 
-_GENERATIVE_PATTERNS: list[tuple[re.Pattern, float]] = [
-    (re.compile(r"\bwrite\s+(a\s+)?(test|spec|mock|stub)\b", re.I), 0.9),
-    (re.compile(r"\bgenerate\b", re.I), 0.8),
-    (re.compile(r"\bcreate\s+(a\s+)?(new\s+)?(file|module|class|function)\b", re.I), 0.8),
-    (re.compile(r"\bscaffold\b", re.I), 0.9),
-    (re.compile(r"\bboilerplate\b", re.I), 0.9),
-    (re.compile(r"\btemplate\b", re.I), 0.6),
-]
+
+def _load_patterns() -> dict[str, list[tuple[re.Pattern[str], float]]]:
+    with _COEFFICIENTS_PATH.open(encoding="utf-8") as fh:
+        data = json.load(fh)
+    out: dict[str, list[tuple[re.Pattern[str], float]]] = {}
+    for group, entries in data["patterns"].items():
+        out[group] = [
+            (re.compile(entry["regex"], _compile_flags(entry.get("flags", ""))), float(entry["weight"]))
+            for entry in entries
+        ]
+    return out
+
+
+_PATTERNS = _load_patterns()
+
+_EXPANSIVE_PATTERNS:  list[tuple[re.Pattern[str], float]] = _PATTERNS["complexity.expansive"]
+_MODERATE_PATTERNS:   list[tuple[re.Pattern[str], float]] = _PATTERNS["complexity.moderate"]
+_READONLY_PATTERNS:   list[tuple[re.Pattern[str], float]] = _PATTERNS["nature.readonly"]
+_MUTATIVE_PATTERNS:   list[tuple[re.Pattern[str], float]] = _PATTERNS["nature.mutative"]
+_GENERATIVE_PATTERNS: list[tuple[re.Pattern[str], float]] = _PATTERNS["nature.generative"]
 
 # Contradiction signals — presence of both reduces confidence
 _CONTRADICTION_PAIRS = [
@@ -80,6 +64,46 @@ _CONFIDENCE_THRESHOLD = 0.75
 
 def _score(text: str, patterns: list[tuple[re.Pattern, float]]) -> float:
     return sum(weight for pattern, weight in patterns if pattern.search(text))
+
+
+def _marginal_complexity_scores(text: str) -> dict[str, float]:
+    """
+    Return a normalized marginal distribution over TaskComplexity.
+
+    Focused has no patterns — it absorbs the residual mass when expansive
+    and moderate do not fire strongly. Keys are namespaced `complexity.*`.
+    """
+    expansive = _score(text, _EXPANSIVE_PATTERNS)
+    moderate  = _score(text, _MODERATE_PATTERNS)
+    # focused residual: full mass when neither other class fires,
+    # shrinks as stronger classes accumulate score
+    focused = max(0.0, 1.0 - expansive - moderate)
+    total = expansive + moderate + focused
+    if total == 0:
+        return {"complexity.focused": 1.0, "complexity.moderate": 0.0, "complexity.expansive": 0.0}
+    return {
+        "complexity.focused":   focused   / total,
+        "complexity.moderate":  moderate  / total,
+        "complexity.expansive": expansive / total,
+    }
+
+
+def _marginal_nature_scores(text: str) -> dict[str, float]:
+    """
+    Return a normalized marginal distribution over TaskNature.
+    Keys are namespaced `nature.*`. Uniform when no patterns fire.
+    """
+    mutative   = _score(text, _MUTATIVE_PATTERNS)
+    generative = _score(text, _GENERATIVE_PATTERNS)
+    readonly   = _score(text, _READONLY_PATTERNS)
+    total = mutative + generative + readonly
+    if total == 0:
+        return {"nature.readonly": 1/3, "nature.generative": 1/3, "nature.mutative": 1/3}
+    return {
+        "nature.readonly":   readonly   / total,
+        "nature.generative": generative / total,
+        "nature.mutative":   mutative   / total,
+    }
 
 
 class HeuristicClassifier(SignalClassifier):
@@ -95,6 +119,12 @@ class HeuristicClassifier(SignalClassifier):
     """
 
     async def classify(self, raw_input: str) -> tuple[TaskSignal, float]:
+        signal, confidence, _ = await self.classify_with_scores(raw_input)
+        return signal, confidence
+
+    async def classify_with_scores(
+        self, raw_input: str
+    ) -> tuple[TaskSignal, float, dict[str, float]]:
         text = raw_input.strip()
 
         complexity, complexity_conf = self._classify_complexity(text)
@@ -113,7 +143,12 @@ class HeuristicClassifier(SignalClassifier):
             requires_children=complexity == TaskComplexity.EXPANSIVE,
             requires_mutation=nature == TaskNature.MUTATIVE,
         )
-        return signal, confidence
+
+        scores = {
+            **_marginal_complexity_scores(text),
+            **_marginal_nature_scores(text),
+        }
+        return signal, confidence, scores
 
     def _classify_complexity(self, text: str) -> tuple[TaskComplexity, float]:
         expansive_score = _score(text, _EXPANSIVE_PATTERNS)

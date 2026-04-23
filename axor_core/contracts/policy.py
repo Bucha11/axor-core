@@ -58,6 +58,19 @@ class SignalClassifier(ABC):
         """
         ...
 
+    async def classify_with_scores(
+        self, raw_input: str
+    ) -> tuple[TaskSignal, float, dict[str, float]]:
+        """
+        Extension of classify() that also returns a distribution over labels.
+
+        Default returns an empty dict — classifiers that can produce a proper
+        distribution (heuristic marginals, ML softmax) should override.
+        Keys are namespaced: `complexity.focused`, `nature.readonly`, etc.
+        """
+        signal, confidence = await self.classify(raw_input)
+        return signal, confidence, {}
+
 
 # ── Policy Modes ───────────────────────────────────────────────────────────────
 

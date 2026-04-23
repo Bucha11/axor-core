@@ -103,7 +103,10 @@ class GovernedSession:
         )
 
         # trace — shared across all nodes
-        self._collector = TraceCollector(config=self._trace_config)
+        self._collector = TraceCollector(
+            config=self._trace_config,
+            session_id=self._session_id,
+        )
 
         # extensions
         self._extension_loaders = extension_loaders or []
@@ -219,6 +222,28 @@ class GovernedSession:
         """
         if self._active_token:
             self._active_token.cancel(CancelReason.USER_ABORT, detail=detail)
+
+    async def aclose(self) -> None:
+        """
+        Close session-scoped resources: trace JSONL file and memory provider.
+        Idempotent. Safe to call even if start() was never invoked.
+        """
+        self._collector.close()
+        if self._memory_provider is not None:
+            close = getattr(self._memory_provider, "aclose", None) or getattr(
+                self._memory_provider, "close", None
+            )
+            if close is not None:
+                res = close()
+                if hasattr(res, "__await__"):
+                    await res
+
+    async def __aenter__(self) -> "GovernedSession":
+        await self.start()
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb) -> None:
+        await self.aclose()
 
     # ── Introspection ──────────────────────────────────────────────────────────
 

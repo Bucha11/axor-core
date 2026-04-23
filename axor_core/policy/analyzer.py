@@ -35,6 +35,17 @@ _DOMAIN_SIGNALS: dict[str, list[str]] = {
 }
 
 
+def _raw_domain_scores(raw_input: str) -> dict[str, int]:
+    """Keyword-match counts per domain. Used by both detection and telemetry."""
+    text = raw_input.lower()
+    counts: dict[str, int] = {d: 0 for d in _DOMAIN_SIGNALS}
+    for domain, keywords in _DOMAIN_SIGNALS.items():
+        for kw in keywords:
+            if kw in text:
+                counts[domain] += 1
+    return counts
+
+
 def _detect_domain(raw_input: str, agent_domain: str = "general") -> str:
     """
     Heuristic domain detection from raw input text.
@@ -47,17 +58,22 @@ def _detect_domain(raw_input: str, agent_domain: str = "general") -> str:
     if agent_domain != "general":
         return agent_domain
 
-    text = raw_input.lower()
-    scores: dict[str, int] = {d: 0 for d in _DOMAIN_SIGNALS}
+    counts = _raw_domain_scores(raw_input)
+    best = max(counts, key=lambda d: counts[d])
+    return best if counts[best] > 0 else "coding"
 
-    for domain, keywords in _DOMAIN_SIGNALS.items():
-        for kw in keywords:
-            if kw in text:
-                scores[domain] += 1
 
-    # return highest scoring domain, default to "coding"
-    best = max(scores, key=lambda d: scores[d])
-    return best if scores[best] > 0 else "coding"
+def _marginal_domain_scores(raw_input: str) -> dict[str, float]:
+    """
+    Normalized marginal distribution over domains, namespaced `domain.*`.
+    Uniform when no keywords match.
+    """
+    counts = _raw_domain_scores(raw_input)
+    total = sum(counts.values())
+    if total == 0:
+        uniform = 1.0 / len(counts)
+        return {f"domain.{d}": uniform for d in counts}
+    return {f"domain.{d}": c / total for d, c in counts.items()}
 
 
 class TaskAnalyzer:
@@ -97,18 +113,25 @@ class TaskAnalyzer:
         Classify raw input into a TaskSignal with domain detection.
         Returns the signal and a trace event recording the decision.
         """
-        signal, confidence = await self._heuristic.classify(raw_input)
+        signal, confidence, scores = await self._heuristic.classify_with_scores(raw_input)
         classifier_used = "heuristic"
 
         if confidence < self._threshold and self._external is not None:
-            external_signal, external_confidence = await self._external.classify(raw_input)
-            if external_confidence > confidence:
-                signal = external_signal
-                confidence = external_confidence
+            ext_signal, ext_conf, ext_scores = await self._external.classify_with_scores(raw_input)
+            if ext_conf > confidence:
+                signal = ext_signal
+                confidence = ext_conf
                 classifier_used = type(self._external).__name__
+                # external scores replace heuristic scores only if provided;
+                # empty dict means external did not expose a distribution
+                if ext_scores:
+                    scores = ext_scores
 
         # domain detection — agent domain takes priority over task-level
         domain = _detect_domain(raw_input, self._agent_domain)
+        # domain distribution always comes from the text heuristic; agent-domain
+        # assignment is a policy override, not a probabilistic statement.
+        scores = {**scores, **_marginal_domain_scores(raw_input)}
 
         # rebuild signal with domain
         signal = TaskSignal(
@@ -129,6 +152,7 @@ class TaskAnalyzer:
             signal=signal,
             confidence=confidence,
             classifier=classifier_used,
+            scores=scores,
         )
 
         return signal, event

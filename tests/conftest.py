@@ -135,6 +135,12 @@ class MockBashHandler(ToolHandler):
 # ── Fixtures ───────────────────────────────────────────────────────────────────
 
 
+@pytest.fixture(autouse=True)
+def _axor_trace_dir(tmp_path, monkeypatch):
+    """Redirect trace JSONL output into pytest tmp_path so tests never touch ~/.axor."""
+    monkeypatch.setenv("AXOR_TRACE_DIR", str(tmp_path / "traces"))
+
+
 @pytest.fixture
 def read_handler():
     return MockReadHandler()

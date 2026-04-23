@@ -20,6 +20,7 @@ def signal_chosen(
     signal: TaskSignal,
     confidence: float,
     classifier: str,
+    scores: dict[str, float] | None = None,
 ) -> SignalChosenEvent:
     return SignalChosenEvent(
         kind=TraceEventKind.SIGNAL_CHOSEN,
@@ -29,6 +30,7 @@ def signal_chosen(
         signal=signal,
         confidence=confidence,
         classifier=classifier,
+        scores=scores or {},
     )
 
 
