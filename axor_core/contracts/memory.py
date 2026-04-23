@@ -20,7 +20,7 @@ They are injected at GovernedSession construction time.
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
 
@@ -62,12 +62,12 @@ class MemoryFragment:
     value:       FragmentValue   = FragmentValue.WORKING
     token_count: int             = 0
     tags:        list[str]       = field(default_factory=list)
-    created_at:  datetime        = field(default_factory=datetime.utcnow)
-    accessed_at: datetime        = field(default_factory=datetime.utcnow)
+    created_at:  datetime        = field(default_factory=lambda: datetime.now(timezone.utc))
+    accessed_at: datetime        = field(default_factory=lambda: datetime.now(timezone.utc))
     metadata:    dict[str, Any]  = field(default_factory=dict)
 
     def touch(self) -> MemoryFragment:
-        self.accessed_at = datetime.utcnow()
+        self.accessed_at = datetime.now(timezone.utc)
         return self
 
     def as_context_fragment_kwargs(self) -> dict[str, Any]:

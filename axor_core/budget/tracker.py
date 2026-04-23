@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import threading
+from collections import deque
 from dataclasses import dataclass, field
 
 
@@ -113,16 +114,19 @@ class BudgetTracker:
     # ── Private ────────────────────────────────────────────────────────────────
 
     def _subtree_ids(self, root_id: str) -> set[str]:
-        """Collect node_id + all descendant ids."""
-        result = {root_id}
+        """Collect node_id + all descendant ids via BFS."""
+        # build parent→children index for O(n) traversal
+        children: dict[str, list[str]] = {}
         for node in self._nodes.values():
-            if node.parent_id in result:
-                result.add(node.node_id)
-        # iterate until stable (handles arbitrary depth)
-        prev_size = 0
-        while prev_size != len(result):
-            prev_size = len(result)
-            for node in self._nodes.values():
-                if node.parent_id in result:
-                    result.add(node.node_id)
+            if node.parent_id is not None:
+                children.setdefault(node.parent_id, []).append(node.node_id)
+
+        result: set[str] = set()
+        queue = deque([root_id])
+        while queue:
+            nid = queue.popleft()
+            if nid in result:
+                continue
+            result.add(nid)
+            queue.extend(children.get(nid, []))
         return result

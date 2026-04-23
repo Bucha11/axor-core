@@ -195,6 +195,8 @@ class ContextCompressor:
                     token_estimate=max_tokens,
                     source=f.source,
                     relevance=f.relevance,
+                    value=f.value,
+                    turn=f.turn,
                 ))
                 applied = True
             else:
@@ -220,6 +222,8 @@ class ContextCompressor:
                     token_estimate=max_tokens,
                     source=f.source,
                     relevance=f.relevance,
+                    value=f.value,
+                    turn=f.turn,
                 ))
                 applied = True
             else:
@@ -283,7 +287,7 @@ class ContextCompressor:
         old_prose: list[str] = []
 
         for f in fragments:
-            is_old = (current_turn - getattr(f, "_turn", current_turn)) >= threshold
+            is_old = f.turn > 0 and (current_turn - f.turn) >= threshold
             is_prose = f.kind in ("assistant_prose", "reasoning")
 
             if is_prose and is_old:
@@ -328,22 +332,24 @@ class ContextCompressor:
 
     def _normalize_paths(self, fragments: list[ContextFragment]) -> list[ContextFragment]:
         """
-        Normalize absolute paths to relative where possible.
-        Reduces token count and prevents path explosion.
+        Normalize absolute paths in fragment `source` field to relative.
+        Content is left untouched — normalizing inside file content or
+        tool output can change meaning and break references.
         """
-        # simple heuristic: replace common absolute path prefixes
         _ABS_PATH = re.compile(r"/(?:home|Users|root)/[\w.]+/([\w./]+)")
 
         result = []
         for f in fragments:
-            normalized = _ABS_PATH.sub(r"./\1", f.content)
-            if normalized != f.content:
+            normalized_source = _ABS_PATH.sub(r"./\1", f.source)
+            if normalized_source != f.source:
                 result.append(ContextFragment(
                     kind=f.kind,
-                    content=normalized,
-                    token_estimate=len(normalized) // 4,
-                    source=f.source,
+                    content=f.content,
+                    token_estimate=f.token_estimate,
+                    source=normalized_source,
                     relevance=f.relevance,
+                    value=f.value,
+                    turn=f.turn,
                 ))
             else:
                 result.append(f)
@@ -361,7 +367,7 @@ class ContextCompressor:
         if len(content) <= max_chars:
             return content
 
-        head_chars = max_chars // 3
+        head_chars = max_chars * 2 // 3
         tail_chars = max_chars - head_chars
         head = content[:head_chars]
         tail = content[-tail_chars:]

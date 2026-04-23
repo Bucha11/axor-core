@@ -361,7 +361,7 @@ class GovernedNode:
 
         # record child tokens in parent budget tracker so total_tokens_spent() is accurate
         if self._budget_engine:
-            self._budget_engine._tracker.record(
+            self._budget_engine.record_child_tokens(
                 node_id=child_raw_state.lineage.node_id if child_raw_state.lineage else "child",
                 input_tokens=child_result.token_usage.input_tokens,
                 output_tokens=child_result.token_usage.output_tokens,

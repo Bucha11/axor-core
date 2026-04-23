@@ -87,8 +87,8 @@ class ContextSelector:
                 continue    # skip this fragment, try smaller ones
             selected.append(fragment)
             total_tokens += fragment.token_estimate
-            # track active paths for drift detection
-            if fragment.source and fragment.source.endswith(".py"):
+            # track active paths for drift detection (any file with extension)
+            if fragment.source and "." in fragment.source.rsplit("/", 1)[-1]:
                 self._active_paths.add(fragment.source)
 
         return selected
@@ -155,9 +155,8 @@ class ContextSelector:
         score -= penalty
 
         # recency boost (small — relevance matters more than recency)
-        turn_attr = getattr(fragment, "_turn", None)
-        if turn_attr is not None and current_turn > 0:
-            age = current_turn - turn_attr
+        if fragment.turn > 0 and current_turn > 0:
+            age = current_turn - fragment.turn
             score += max(0.0, 0.1 - age * 0.01)
 
         return max(0.0, score)

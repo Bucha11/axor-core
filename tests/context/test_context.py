@@ -109,11 +109,20 @@ class TestContextCompressor:
         assert "collapse_errors" in result.strategies_applied
 
     def test_path_normalization(self, compressor):
-        frag = make_fragment("/home/user/project/src/auth.py")
+        # normalization applies to source field, not content
+        frag = ContextFragment(
+            kind="fact",
+            content="file content here",
+            token_estimate=10,
+            source="/home/user/project/src/auth.py",
+            relevance=1.0,
+        )
         result = compressor.compress([frag], CompressionMode.LIGHT, current_turn=1)
-        # path should be normalized
-        content = result.fragments[0].content
-        assert "/home/user" not in content or "./src/auth.py" in content
+        source = result.fragments[0].source
+        assert "/home/user" not in source
+        assert "./project/src/auth.py" in source
+        # content should remain untouched
+        assert result.fragments[0].content == "file content here"
 
     def test_smart_truncation_keeps_head_and_tail(self, compressor):
         lines = [f"line {i}" for i in range(200)]

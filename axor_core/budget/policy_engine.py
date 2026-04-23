@@ -129,7 +129,7 @@ class BudgetPolicyEngine:
                 suggested_export=ExportMode.SUMMARY,
             )
 
-        if ratio >= self._COMPRESS_CONTEXT:
+        if ratio >= self._COMPRESS_THRESHOLD:
             return OptimizationDecision(
                 action=OptimizationAction.COMPRESS_CONTEXT,
                 reason=f"projected {ratio:.0%} — compress result before context write",
@@ -183,9 +183,22 @@ class BudgetPolicyEngine:
 
         return _proceed(f"child approved — spent {ratio:.0%}, slice sufficient")
 
-    @property
-    def _COMPRESS_CONTEXT(self) -> float:
-        return self._COMPRESS_THRESHOLD
+    def record_child_tokens(
+        self,
+        node_id: str,
+        input_tokens: int = 0,
+        output_tokens: int = 0,
+        tool_tokens: int = 0,
+        context_tokens: int = 0,
+    ) -> None:
+        """Record token usage from a completed child node into the tracker."""
+        self._tracker.record(
+            node_id=node_id,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            tool_tokens=tool_tokens,
+            context_tokens=context_tokens,
+        )
 
 
 def _proceed(reason: str) -> OptimizationDecision:

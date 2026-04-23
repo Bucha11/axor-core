@@ -43,13 +43,16 @@ class ContextManager:
         unnecessary rereads  → cache.get_file() before tool execution
     """
 
-    def __init__(self) -> None:
+    _MAX_FRAGMENTS = 200
+
+    def __init__(self, max_fragments: int = _MAX_FRAGMENTS) -> None:
         self._cache       = ContextCache()
         self._symbols     = SymbolTable()
         self._compressor  = ContextCompressor()
         self._selector    = ContextSelector(self._symbols)
         self._invalidator = ContextInvalidator(self._cache, self._symbols)
         self._turn        = 0
+        self._max_fragments = max_fragments
         self._all_fragments: list[ContextFragment] = []
         self._pinned_fragments: list[ContextFragment] = []  # never compressed/evicted
         self._recent_outputs: list[str] = []
@@ -97,12 +100,39 @@ class ContextManager:
             source=source,
             relevance=0.85,
             value="knowledge",
+            turn=self._turn,
         )
         # replace existing knowledge from same source
         self._all_fragments = [
             f for f in self._all_fragments if f.source != source
         ]
         self._all_fragments.append(fragment)
+        self._evict_if_needed()
+
+    def ingest_fragments(self, fragments: list[ContextFragment]) -> None:
+        """
+        Add fragments from external sources (e.g. adapters).
+
+        Deduplicates by source — if a fragment with the same source already
+        exists, it is replaced. Evicts lowest-relevance fragments when the
+        collection exceeds max_fragments.
+        """
+        existing_sources = {f.source for f in self._all_fragments}
+        for frag in fragments:
+            if frag.source in existing_sources:
+                self._all_fragments = [
+                    f for f in self._all_fragments if f.source != frag.source
+                ]
+            self._all_fragments.append(frag)
+            existing_sources.add(frag.source)
+        self._evict_if_needed()
+
+    def _evict_if_needed(self) -> None:
+        """Drop lowest-relevance fragments when collection exceeds limit."""
+        if len(self._all_fragments) <= self._max_fragments:
+            return
+        self._all_fragments.sort(key=lambda f: f.relevance, reverse=True)
+        self._all_fragments = self._all_fragments[:self._max_fragments]
 
     def build(
         self,
@@ -192,8 +222,10 @@ class ContextManager:
                 token_estimate=min(len(result_output) // 4, 500),
                 source=f"node:{node_id}",
                 relevance=0.7,
+                turn=self._turn,
             )
             self._all_fragments.append(fragment)
+            self._evict_if_needed()
 
     def record_file_read(self, path: str, content: str) -> None:
         """
@@ -209,6 +241,7 @@ class ContextManager:
             token_estimate=cached.token_estimate,
             source=path,
             relevance=1.0,
+            turn=self._turn,
         )
         # replace existing fragment for this path or append
         self._all_fragments = [
@@ -238,6 +271,7 @@ class ContextManager:
             token_estimate=len(raw_state.task) // 4,
             source="task",
             relevance=1.0,
+            turn=self._turn,
         ))
 
         # parent export
@@ -248,6 +282,7 @@ class ContextManager:
                 token_estimate=len(raw_state.parent_export) // 4,
                 source="parent_export",
                 relevance=0.9,
+                turn=self._turn,
             ))
 
         # memory fragments
@@ -258,6 +293,7 @@ class ContextManager:
                 token_estimate=len(mem) // 4,
                 source="memory",
                 relevance=0.6,
+                turn=self._turn,
             ))
 
         return fragments
