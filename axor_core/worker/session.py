@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from typing import Any
 from axor_core.contracts.cancel import make_token, CancelReason
 from axor_core.contracts.context import RawExecutionState, LineageSummary
 from axor_core.contracts.extension import ExtensionBundle, ExtensionLoader
@@ -71,6 +72,7 @@ class GovernedSession:
         child_executor: Invokable | None = None,
         agent_def: "AgentDefinition | None" = None,
         memory_provider: "MemoryProvider | None" = None,
+        telemetry: "Any | None" = None,
     ) -> None:
         self._session_id     = f"session_{uuid.uuid4().hex[:12]}"
         self._executor       = executor
@@ -79,6 +81,10 @@ class GovernedSession:
         self._agent_def      = agent_def
         self._memory_provider = memory_provider
         self._trace_config   = trace_config or TraceConfig()
+        # Duck-typed: any object exposing `ingest_trace(trace, raw_input)` and
+        # optional `aclose()`. Typically axor_telemetry.TelemetryPipeline.
+        # Kept Any so core does not import from telemetry packages.
+        self._telemetry      = telemetry
 
         # derive agent domain for task analyzer
         agent_domain = "general"
@@ -213,6 +219,16 @@ class GovernedSession:
             context_tokens=result.token_usage.context_tokens,
         )
 
+        # Feed telemetry pipeline, if one is attached. Failures here must
+        # never propagate to the caller — the governance path is authoritative.
+        if self._telemetry is not None:
+            try:
+                trace = self._collector.get_trace(result.node_id)
+                if trace is not None:
+                    await self._telemetry.ingest_trace(trace, raw_input=task)
+            except Exception:
+                pass
+
         return result
 
     def cancel(self, detail: str = "") -> None:
@@ -225,10 +241,18 @@ class GovernedSession:
 
     async def aclose(self) -> None:
         """
-        Close session-scoped resources: trace JSONL file and memory provider.
-        Idempotent. Safe to call even if start() was never invoked.
+        Close session-scoped resources: trace JSONL file, telemetry pipeline,
+        memory provider. Idempotent. Safe to call even if start() was never
+        invoked.
         """
         self._collector.close()
+        if self._telemetry is not None:
+            close = getattr(self._telemetry, "aclose", None)
+            if close is not None:
+                try:
+                    await close()
+                except Exception:
+                    pass
         if self._memory_provider is not None:
             close = getattr(self._memory_provider, "aclose", None) or getattr(
                 self._memory_provider, "close", None

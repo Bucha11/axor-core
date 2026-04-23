@@ -138,6 +138,49 @@ class TestGovernedSessionIntegration:
         await session.run("task 2")
         assert session.session_id() == sid
 
+    @pytest.mark.asyncio
+    async def test_telemetry_ingest_called_after_run(self, echo_executor, cap_executor):
+        class StubPipeline:
+            def __init__(self):
+                self.calls = []
+                self.closed = False
+            async def ingest_trace(self, trace, raw_input=""):
+                self.calls.append((trace.node_id, raw_input))
+            async def aclose(self):
+                self.closed = True
+
+        stub = StubPipeline()
+        session = GovernedSession(
+            executor=echo_executor,
+            capability_executor=cap_executor,
+            trace_config=TraceConfig(local_only=True, persist_inputs=False),
+            telemetry=stub,
+        )
+        await session.run("write a test for auth")
+        assert len(stub.calls) == 1
+        assert stub.calls[0][1] == "write a test for auth"
+        await session.aclose()
+        assert stub.closed is True
+
+    @pytest.mark.asyncio
+    async def test_telemetry_failure_does_not_break_run(self, echo_executor, cap_executor):
+        class BrokenPipeline:
+            async def ingest_trace(self, trace, raw_input=""):
+                raise RuntimeError("telemetry exploded")
+            async def aclose(self):
+                raise RuntimeError("close exploded")
+
+        session = GovernedSession(
+            executor=echo_executor,
+            capability_executor=cap_executor,
+            trace_config=TraceConfig(local_only=True, persist_inputs=False),
+            telemetry=BrokenPipeline(),
+        )
+        # Must not raise
+        result = await session.run("explain this")
+        assert result.output  # normal result delivered
+        await session.aclose()  # also must not raise
+
 
 class TestContextManagerIntegration:
     """Test that ContextManager integrates correctly with tool execution."""
