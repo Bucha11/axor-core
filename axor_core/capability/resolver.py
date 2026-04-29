@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from axor_core.contracts.envelope import Capabilities
 from axor_core.contracts.extension import ExtensionTool
-from axor_core.contracts.policy import ExecutionPolicy, ChildMode
+from axor_core.contracts.policy import ExecutionPolicy, ChildMode, ExportMode
 
 # ── Built-in tool names ────────────────────────────────────────────────────────
 #
@@ -58,7 +58,7 @@ class CapabilityResolver:
             allow_children=allow_children,
             allow_nested_children=allow_nested,
             allow_context_expansion=self._allow_context_expansion(policy),
-            allow_export=policy.export_mode != "restricted",
+            allow_export=policy.export_mode != ExportMode.RESTRICTED,
             allow_mutation=policy.tool_policy.allow_write or policy.tool_policy.allow_bash,
             max_child_depth=policy.max_child_depth,
         )

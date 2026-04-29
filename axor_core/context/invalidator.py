@@ -24,10 +24,19 @@ class InvalidationResult:
     fragments_to_penalise: list[str]          # fragment sources to deprioritise (not remove)
 
 
-# Git-related tool calls that go stale quickly
-_GIT_TOOLS = {"bash"}
-_GIT_COMMANDS = {"git log", "git diff", "git status", "git branch"}
+# Bash commands whose output goes stale quickly (working tree state).
+_GIT_COMMAND_PREFIXES = ("git ", "git\t")
 _GIT_TTL = 30.0  # seconds
+
+
+def _is_git_bash(tool_result) -> bool:
+    """Predicate matching CachedToolResult — True for bash invocations of git."""
+    if tool_result.tool != "bash":
+        return False
+    args = tool_result.args or {}
+    # bash args may use either `command` or `cmd`; check both.
+    cmd = (args.get("command") or args.get("cmd") or "").lstrip()
+    return cmd.startswith(_GIT_COMMAND_PREFIXES)
 
 # Files not touched in this many turns are considered drifted from working set
 _WORKING_SET_DRIFT_TURNS = 8
@@ -73,7 +82,7 @@ class ContextInvalidator:
         """
         invalidated_paths: list[str]    = []
         invalidated_tool_keys: list[str] = []
-        reasons: dict[str, str]          = {}
+        reasons: dict[str, InvalidationReason] = {}
         fragments_to_penalise: list[str] = []
 
         # 1. working set drift — files not in active_paths but still cached
@@ -85,13 +94,16 @@ class ContextInvalidator:
                 fragments_to_penalise.append(path)
                 reasons[path] = InvalidationReason.WORKING_SET_DRIFT
 
-        # 2. git staleness — invalidate bash tool results for git commands
+        # 2. git staleness — invalidate ONLY bash tool results that ran a git
+        # command. Previously this dropped *every* bash cache entry every 30s,
+        # which defeats memoization for non-git bash calls (npm, pytest, etc).
         now = time.time()
         if now - self._last_git_check > _GIT_TTL:
-            self._cache.invalidate_tool_results(tool="bash")
+            n = self._cache.invalidate_tool_results_where(_is_git_bash)
             self._last_git_check = now
-            invalidated_tool_keys.append("bash:git_*")
-            reasons["bash:git"] = InvalidationReason.GIT_STATE_STALE
+            if n > 0:
+                invalidated_tool_keys.append("bash:git_*")
+                reasons["bash:git"] = InvalidationReason.GIT_STATE_STALE
 
         # 3. deprecated symbols — penalise fragments containing old names
         deprecated = self._symbols.deprecated_names()

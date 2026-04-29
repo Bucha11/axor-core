@@ -28,23 +28,48 @@ class CancelToken:
         - Partial results are always returned — never silently dropped.
           A cancelled node returns what it completed before cancellation.
 
+    Loop-binding: the underlying asyncio.Event is created lazily on first
+    use inside a running event loop. Constructing a token from sync code
+    (e.g. GovernedSession.__init__) is safe; the Event binds to whichever
+    loop first calls wait()/cancel() from async context.
+
     One token per GovernedNode execution.
     Child nodes receive their own independent token.
     """
 
-    _event:  asyncio.Event = field(default_factory=asyncio.Event)
-    _reason: CancelReason | None = field(default=None)
-    _detail: str = field(default="")
+    _cancelled: bool = field(default=False)
+    _reason:    CancelReason | None = field(default=None)
+    _detail:    str = field(default="")
+    _event:     asyncio.Event | None = field(default=None, repr=False)
+
+    def _ensure_event(self) -> asyncio.Event:
+        """Create the asyncio.Event lazily on first async use.
+
+        Must be called from within a running loop, otherwise asyncio.Event()
+        will fail to bind. Sync paths (cancel/is_cancelled) use the boolean
+        flag and only touch the event if it has already been created.
+        """
+        if self._event is None:
+            self._event = asyncio.Event()
+            if self._cancelled:
+                self._event.set()
+        return self._event
 
     def cancel(self, reason: CancelReason, detail: str = "") -> None:
-        """Signal cancellation. Idempotent — safe to call multiple times."""
-        if not self._event.is_set():
-            self._reason = reason
-            self._detail = detail
+        """Signal cancellation. Idempotent — safe to call multiple times.
+
+        Safe from sync, signal-handler, and async contexts.
+        """
+        if self._cancelled:
+            return
+        self._cancelled = True
+        self._reason = reason
+        self._detail = detail
+        if self._event is not None:
             self._event.set()
 
     def is_cancelled(self) -> bool:
-        return self._event.is_set()
+        return self._cancelled
 
     @property
     def reason(self) -> CancelReason | None:
@@ -56,7 +81,7 @@ class CancelToken:
 
     async def wait(self) -> CancelReason:
         """Await cancellation signal. Returns reason when fired."""
-        await self._event.wait()
+        await self._ensure_event().wait()
         return self._reason
 
     def child_token(self) -> "CancelToken":

@@ -115,6 +115,9 @@ class TokensSpentEvent(TraceEvent):
     tool_tokens: int    = 0
     context_tokens: int = 0
     cumulative: int     = 0          # total for this lineage tree so far
+    # Anthropic prompt-cache accounting (separate from input_tokens)
+    cache_creation_input_tokens: int = 0
+    cache_read_input_tokens: int     = 0
 
 
 @dataclass(frozen=True)
@@ -257,7 +260,13 @@ class DecisionTrace:
     @property
     def total_tokens(self) -> int:
         spent = [e for e in self.events if isinstance(e, TokensSpentEvent)]
-        return sum(e.input_tokens + e.output_tokens for e in spent)
+        return sum(
+            e.input_tokens
+            + e.cache_creation_input_tokens
+            + e.cache_read_input_tokens
+            + e.output_tokens
+            for e in spent
+        )
 
     @property
     def had_policy_adjustment(self) -> bool:

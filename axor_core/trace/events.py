@@ -104,6 +104,8 @@ def tokens_spent(
     tool_tokens: int,
     context_tokens: int,
     cumulative: int,
+    cache_creation_input_tokens: int = 0,
+    cache_read_input_tokens: int     = 0,
 ) -> TokensSpentEvent:
     return TokensSpentEvent(
         kind=TraceEventKind.TOKENS_SPENT,
@@ -114,6 +116,8 @@ def tokens_spent(
         tool_tokens=tool_tokens,
         context_tokens=context_tokens,
         cumulative=cumulative,
+        cache_creation_input_tokens=cache_creation_input_tokens,
+        cache_read_input_tokens=cache_read_input_tokens,
     )
 
 

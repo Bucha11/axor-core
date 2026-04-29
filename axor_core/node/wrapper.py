@@ -367,6 +367,12 @@ class GovernedNode:
                 output_tokens=child_result.token_usage.output_tokens,
                 tool_tokens=child_result.token_usage.tool_tokens,
                 context_tokens=child_result.token_usage.context_tokens,
+                cache_creation_input_tokens=(
+                    child_result.token_usage.cache_creation_input_tokens
+                ),
+                cache_read_input_tokens=(
+                    child_result.token_usage.cache_read_input_tokens
+                ),
             )
 
         return child_result.output
@@ -435,6 +441,8 @@ class GovernedNode:
                 output_tokens=spent.output_tokens,
                 tool_tokens=spent.tool_tokens,
                 context_tokens=spent.context_tokens,
+                cache_creation_input_tokens=spent.cache_creation_input_tokens,
+                cache_read_input_tokens=spent.cache_read_input_tokens,
             )
         return TokenUsage(
             input_tokens=0, output_tokens=0,

@@ -15,7 +15,15 @@ from axor_core.node.wrapper import GovernedNode
 from axor_core.policy.analyzer import TaskAnalyzer
 from axor_core.policy.selector import PolicySelector
 from axor_core.policy.composer import PolicyComposer
-from axor_core.budget import BudgetTracker, BudgetEstimator, BudgetPolicyEngine
+from axor_core.budget import (
+    BudgetTracker,
+    BudgetEstimator,
+    BudgetPolicyEngine,
+    BudgetThresholds,
+    TokenCostRates,
+    CacheSummary,
+    CostSummary,
+)
 from axor_core.trace import TraceCollector
 from axor_core.extensions.registry import ExtensionRegistry
 from axor_core.extensions.sanitizer import ExtensionSanitizer
@@ -69,6 +77,8 @@ class GovernedSession:
         extension_loaders: list[ExtensionLoader] | None = None,
         trace_config: TraceConfig | None = None,
         soft_token_limit: int | None = None,
+        budget_thresholds: BudgetThresholds | None = None,
+        token_cost_rates: TokenCostRates | None = None,
         child_executor: Invokable | None = None,
         agent_def: "AgentDefinition | None" = None,
         memory_provider: "MemoryProvider | None" = None,
@@ -81,6 +91,7 @@ class GovernedSession:
         self._agent_def      = agent_def
         self._memory_provider = memory_provider
         self._trace_config   = trace_config or TraceConfig()
+        self._token_cost_rates = token_cost_rates
         # Duck-typed: any object exposing `ingest_trace(trace, raw_input)` and
         # optional `aclose()`. Typically axor_telemetry.TelemetryPipeline.
         # Kept Any so core does not import from telemetry packages.
@@ -106,6 +117,7 @@ class GovernedSession:
             tracker=self._tracker,
             estimator=self._estimator,
             soft_limit=soft_token_limit,
+            thresholds=budget_thresholds,
         )
 
         # trace — shared across all nodes
@@ -217,6 +229,8 @@ class GovernedSession:
             output_tokens=result.token_usage.output_tokens,
             tool_tokens=result.token_usage.tool_tokens,
             context_tokens=result.token_usage.context_tokens,
+            cache_creation_input_tokens=result.token_usage.cache_creation_input_tokens,
+            cache_read_input_tokens=result.token_usage.cache_read_input_tokens,
         )
 
         # Feed telemetry pipeline, if one is attached. Failures here must
@@ -277,12 +291,27 @@ class GovernedSession:
     def total_tokens_spent(self) -> int:
         return self._tracker.total_tokens()
 
+    def cache_summary(self) -> CacheSummary:
+        """Aggregate prompt-cache accounting for the session."""
+        return self._tracker.cache_summary()
+
+    def cost_summary(self) -> CostSummary | None:
+        """Aggregate money accounting for the session when rates are configured."""
+        if self._token_cost_rates is None:
+            return None
+        return self._tracker.cost_summary(self._token_cost_rates)
+
     def all_traces(self):
         return self._collector.all_traces()
 
     def budget_snapshot(self) -> dict:
         return {
-            nid: {"total": b.total, "depth": b.depth}
+            nid: {
+                "total": b.total,
+                "input": b.total_input_tokens,
+                "output": b.output_tokens,
+                "depth": b.depth,
+            }
             for nid, b in self._tracker.snapshot().items()
         }
 
@@ -309,7 +338,10 @@ class GovernedSession:
             node_id=self._session_id,
             output=str(result.output),
             export_payload={"output": str(result.output)},
-            token_usage=TokenUsage(0, 0, 0, 0),
+            token_usage=TokenUsage(
+                input_tokens=0, output_tokens=0,
+                tool_tokens=0,  context_tokens=0,
+            ),
             metadata={
                 "command": result.command.name,
                 "class": result.command_class.value,

@@ -7,6 +7,29 @@ from axor_core.contracts.context import ContextFragment
 from axor_core.contracts.policy import CompressionMode
 
 
+# ── Decision-verb regex (single source of truth) ─────────────────────────────
+# Used by ContextCompressor._extract_key_decisions to identify sentences
+# in assistant prose that carry agent decisions (vs filler / chatter).
+# Exported as a public constant so adapters (axor-langchain etc.) can
+# share the SAME pattern set when classifying messages — divergent regexes
+# between layers would cause inconsistent FragmentValue assignment vs
+# compressor behavior.
+DECISION_VERBS_PATTERN = (
+    r"\b(decided|chose|using|will use|replaced|renamed|refactored|"
+    r"moved|deleted|created|added|fixed|changed|set|configured)\b"
+)
+DECISION_VERBS_RE = re.compile(DECISION_VERBS_PATTERN, re.IGNORECASE)
+
+
+def has_decision_content(text: str) -> bool:
+    """
+    True iff `text` contains at least one decision verb. Used by adapters
+    to label fragments as KNOWLEDGE (preserve across compression cycles)
+    vs WORKING (subject to compress_prose extraction).
+    """
+    return bool(DECISION_VERBS_RE.search(text or ""))
+
+
 @dataclass
 class CompressionResult:
     fragments: list[ContextFragment]
@@ -383,16 +406,12 @@ class ContextCompressor:
     def _extract_key_decisions(self, prose: str) -> list[str]:
         """
         Extract decision-like sentences from assistant prose.
-        Heuristic: sentences with decision verbs.
+        Heuristic: sentences with decision verbs (DECISION_VERBS_RE,
+        exported at module level so adapters share the same pattern set).
         """
-        decision_verbs = re.compile(
-            r"\b(decided|chose|using|will use|replaced|renamed|refactored|"
-            r"moved|deleted|created|added|fixed|changed|set|configured)\b",
-            re.IGNORECASE,
-        )
         decisions = []
         for sentence in re.split(r"[.!?]\s+", prose):
             sentence = sentence.strip()
-            if decision_verbs.search(sentence) and 10 < len(sentence) < 200:
+            if DECISION_VERBS_RE.search(sentence) and 10 < len(sentence) < 200:
                 decisions.append(sentence)
         return decisions[:5]  # cap at 5 key points per prose block

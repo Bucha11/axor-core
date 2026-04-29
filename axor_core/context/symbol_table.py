@@ -93,11 +93,21 @@ class SymbolTable:
         self._extract_pending_intents(content, path)
         return new_symbols
 
+    # Bound the regex input — assistant output can be arbitrarily long, and
+    # though the rename pattern is RE2-clean enough in CPython today, applying
+    # it to multi-MB output is wasteful. Cap at 64KB which comfortably covers
+    # any realistic single-turn assistant message containing rename language.
+    _RENAME_INGEST_MAX_BYTES = 64 * 1024
+
     def ingest_assistant_text(self, text: str) -> None:
         """
         Detect rename mentions in assistant output.
         e.g. "renamed auth_check to verify_token"
         """
+        if not text:
+            return
+        if len(text) > self._RENAME_INGEST_MAX_BYTES:
+            text = text[: self._RENAME_INGEST_MAX_BYTES]
         for match in self._RENAME_PATTERN.finditer(text):
             old_name = match.group(1)
             new_name = match.group(2)

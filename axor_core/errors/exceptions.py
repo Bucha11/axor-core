@@ -94,3 +94,28 @@ class ExtensionSanitizationError(AxorError):
         self.name = name
         self.reason = reason
         super().__init__(f"Extension '{name}' failed sanitization: {reason}")
+
+
+# ── Budget ─────────────────────────────────────────────────────────────────────
+
+class BudgetExceededError(AxorError):
+    """
+    Hard token budget would be exceeded by the next operation.
+
+    Raised by adapters / middleware when a model call's projected token
+    cost would push cumulative spend past `hard_token_limit`. Stops the
+    agent loop instead of silently overspending.
+
+    Carries:
+      • spent: tokens already consumed
+      • projected: tokens the next call would add
+      • limit: configured hard cap
+    """
+    def __init__(self, spent: int, projected: int, limit: int) -> None:
+        self.spent = spent
+        self.projected = projected
+        self.limit = limit
+        super().__init__(
+            f"Budget exceeded: {spent} spent + {projected} projected "
+            f"> {limit} hard limit"
+        )

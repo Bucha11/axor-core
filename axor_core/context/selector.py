@@ -53,9 +53,21 @@ class ContextSelector:
         "reasoning":      0.5,
     }
 
-    def __init__(self, symbol_table: SymbolTable) -> None:
+    # Long sessions accumulate every file ever seen via a fragment.source.
+    # Cap the set; oldest entries (FIFO) are dropped when over.
+    DEFAULT_MAX_ACTIVE_PATHS = 512
+
+    def __init__(
+        self,
+        symbol_table: SymbolTable,
+        max_active_paths: int = DEFAULT_MAX_ACTIVE_PATHS,
+    ) -> None:
+        if max_active_paths <= 0:
+            raise ValueError("max_active_paths must be positive")
         self._symbols = symbol_table
-        self._active_paths: set[str] = set()
+        self._max_active_paths = max_active_paths
+        # Insertion-ordered for predictable FIFO eviction.
+        self._active_paths: dict[str, None] = {}
 
     def select(
         self,
@@ -89,12 +101,19 @@ class ContextSelector:
             total_tokens += fragment.token_estimate
             # track active paths for drift detection (any file with extension)
             if fragment.source and "." in fragment.source.rsplit("/", 1)[-1]:
-                self._active_paths.add(fragment.source)
+                if fragment.source in self._active_paths:
+                    # bump to "most recent" so it survives eviction
+                    del self._active_paths[fragment.source]
+                self._active_paths[fragment.source] = None
+                # Cap to prevent unbounded growth across long sessions.
+                while len(self._active_paths) > self._max_active_paths:
+                    oldest = next(iter(self._active_paths))
+                    self._active_paths.pop(oldest)
 
         return selected
 
     def active_paths(self) -> set[str]:
-        return set(self._active_paths)
+        return set(self._active_paths.keys())
 
     def select_child_slice(
         self,

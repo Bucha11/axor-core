@@ -9,12 +9,23 @@ class LineageSummary:
     """
     Ancestry visible to a single node.
     Never full parent context — only what governance allows.
+
+    `ancestry_ids` and `inherited_restrictions` are stored as tuples so a
+    consumer holding the dataclass cannot retroactively `.append()` to
+    them — the frozen=True guarantee otherwise leaks via mutable list fields.
+    Lists supplied at construction time are coerced to tuples in __post_init__.
     """
     node_id: str
     parent_id: str | None
     depth: int
-    ancestry_ids: list[str]           # ordered root → parent
-    inherited_restrictions: list[str] # restriction names carried from ancestors
+    ancestry_ids: tuple[str, ...]           # ordered root → parent
+    inherited_restrictions: tuple[str, ...] # restriction names carried from ancestors
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.ancestry_ids, tuple):
+            object.__setattr__(self, "ancestry_ids", tuple(self.ancestry_ids))
+        if not isinstance(self.inherited_restrictions, tuple):
+            object.__setattr__(self, "inherited_restrictions", tuple(self.inherited_restrictions))
 
 
 @dataclass(frozen=True)
@@ -51,14 +62,23 @@ class ContextView:
     - working_summary replaces raw turn history
     - visible_fragments are selected and scored by relevance
     - child nodes never receive this directly — they receive a derived slice
+
+    Sequence-typed fields are coerced to tuples so the frozen=True guarantee
+    isn't undermined by `view.visible_fragments.append(...)` after the fact.
     """
     node_id: str
     working_summary: str
-    visible_fragments: list[ContextFragment]
-    active_constraints: list[str]    # human-readable constraint names
+    visible_fragments: tuple[ContextFragment, ...]
+    active_constraints: tuple[str, ...]    # human-readable constraint names
     lineage: LineageSummary
     token_count: int                 # total tokens in this view
     compression_ratio: float         # how much was compressed (1.0 = no compression)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.visible_fragments, tuple):
+            object.__setattr__(self, "visible_fragments", tuple(self.visible_fragments))
+        if not isinstance(self.active_constraints, tuple):
+            object.__setattr__(self, "active_constraints", tuple(self.active_constraints))
 
 
 @dataclass

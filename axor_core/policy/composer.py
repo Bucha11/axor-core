@@ -5,6 +5,8 @@ from axor_core.contracts.policy import (
     ExecutionPolicy,
     ToolPolicy,
     ChildMode,
+    CompressionMode,
+    ContextMode,
     ExportMode,
 )
 
@@ -69,7 +71,7 @@ class PolicyComposer:
                 tool_policy = _with_tool(tool_policy, allow_bash=True)
             if overrides.get("allow_write") and base.tool_policy.allow_write:
                 tool_policy = _with_tool(tool_policy, allow_write=True)
-            if overrides.get("allow_search"):
+            if overrides.get("allow_search") and base.tool_policy.allow_search:
                 tool_policy = _with_tool(tool_policy, allow_search=True)
 
             # extra_allowed — extension-specific tool names
@@ -123,10 +125,36 @@ class PolicyComposer:
             parent_policy.export_mode,
         )
 
-        # child mode — if parent denies children, so does child
-        child_mode = child_policy.child_mode
-        if parent_policy.child_mode == ChildMode.DENIED:
-            child_mode = ChildMode.DENIED
+        # child mode — if parent denies children, so does child;
+        # if parent only allows shallow, child cannot be ALLOWED.
+        child_mode = _most_restrictive_child_mode(
+            child_policy.child_mode, parent_policy.child_mode
+        )
+
+        # context_mode and compression_mode: child cannot be more permissive
+        context_mode = _most_restrictive_context(
+            child_policy.context_mode, parent_policy.context_mode
+        )
+        compression_mode = _most_restrictive_compression(
+            child_policy.compression_mode, parent_policy.compression_mode
+        )
+
+        # child_context_fraction: less inheritance is more restrictive
+        child_context_fraction = min(
+            child_policy.child_context_fraction,
+            parent_policy.child_context_fraction,
+        )
+
+        # passthrough commands: child keeps only what parent also allows
+        passthrough = tuple(
+            c for c in child_policy.allowed_passthrough_commands
+            if c in parent_policy.allowed_passthrough_commands
+        )
+
+        # allow_model_switch: AND of both
+        allow_model_switch = (
+            child_policy.allow_model_switch and parent_policy.allow_model_switch
+        )
 
         return _with_policy(
             child_policy,
@@ -134,6 +162,11 @@ class PolicyComposer:
             max_child_depth=max_depth,
             child_mode=child_mode,
             export_mode=export_mode,
+            context_mode=context_mode,
+            compression_mode=compression_mode,
+            child_context_fraction=child_context_fraction,
+            allowed_passthrough_commands=passthrough,
+            allow_model_switch=allow_model_switch,
         )
 
 
@@ -181,3 +214,39 @@ _EXPORT_RESTRICTIVENESS = {
 
 def _most_restrictive_export(a: ExportMode, b: ExportMode) -> ExportMode:
     return a if _EXPORT_RESTRICTIVENESS[a] >= _EXPORT_RESTRICTIVENESS[b] else b
+
+
+# Higher rank == more restrictive.
+_CONTEXT_RESTRICTIVENESS = {
+    ContextMode.BROAD:    0,
+    ContextMode.MODERATE: 1,
+    ContextMode.MINIMAL:  2,
+}
+
+
+def _most_restrictive_context(a: ContextMode, b: ContextMode) -> ContextMode:
+    return a if _CONTEXT_RESTRICTIVENESS[a] >= _CONTEXT_RESTRICTIVENESS[b] else b
+
+
+_COMPRESSION_RESTRICTIVENESS = {
+    CompressionMode.LIGHT:      0,
+    CompressionMode.BALANCED:   1,
+    CompressionMode.AGGRESSIVE: 2,
+}
+
+
+def _most_restrictive_compression(
+    a: CompressionMode, b: CompressionMode
+) -> CompressionMode:
+    return a if _COMPRESSION_RESTRICTIVENESS[a] >= _COMPRESSION_RESTRICTIVENESS[b] else b
+
+
+_CHILD_MODE_RESTRICTIVENESS = {
+    ChildMode.ALLOWED: 0,
+    ChildMode.SHALLOW: 1,
+    ChildMode.DENIED:  2,
+}
+
+
+def _most_restrictive_child_mode(a: ChildMode, b: ChildMode) -> ChildMode:
+    return a if _CHILD_MODE_RESTRICTIVENESS[a] >= _CHILD_MODE_RESTRICTIVENESS[b] else b

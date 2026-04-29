@@ -671,6 +671,27 @@ result = await session.run("/status")
 # → Session: session_abc123 | Tokens: 4,200 | Nodes: 3 (1 children)
 ```
 
+To include money estimates, pass model pricing explicitly. Prices are provider
+and model specific, so core does not hardcode them:
+
+```python
+from axor_core import GovernedSession, TokenCostRates
+
+session = GovernedSession(
+    executor=executor,
+    capability_executor=cap_executor,
+    token_cost_rates=TokenCostRates(input_per_m=3.00, output_per_m=15.00),
+)
+
+result = await session.run("/cost")
+# includes estimated cost plus input/cache-write/cache-read/output breakdown
+```
+
+Prompt-cache rates default to Anthropic-style multipliers when not supplied:
+cache writes use `1.25 * input_per_m`; cache reads use `0.1 * input_per_m`.
+Override `cache_creation_input_per_m` and `cache_read_input_per_m` when a
+provider or model uses different pricing.
+
 ---
 
 ## Implementing an Adapter

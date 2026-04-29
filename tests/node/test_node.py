@@ -115,6 +115,94 @@ class TestIntentLoop:
         assert cancelled_events[0].reason == CancelReason.USER_ABORT.value
 
     @pytest.mark.asyncio
+    async def test_cancel_calls_aclose_on_executor_stream(self, cap_exec, make_envelope):
+        """Regression: cancellation must close the executor stream so adapter
+        resources (HTTP/streaming contexts) are released, not leaked.
+        """
+        token = make_token()
+        envelope = make_envelope(cancel_token=token)
+        trace = []
+        loop = IntentLoop(cap_exec, trace, current_depth=0)
+
+        closed = {"flag": False}
+
+        class TrackingStream:
+            def __init__(self):
+                self._events = iter([
+                    ExecutorEvent(kind=ExecutorEventKind.TEXT, payload={"text": "a"}, node_id="n1"),
+                    ExecutorEvent(kind=ExecutorEventKind.TEXT, payload={"text": "b"}, node_id="n1"),
+                    ExecutorEvent(kind=ExecutorEventKind.STOP, payload={"usage": {}}, node_id="n1"),
+                ])
+
+            def __aiter__(self):
+                return self
+
+            async def __anext__(self):
+                await asyncio.sleep(0.05)
+                try:
+                    return next(self._events)
+                except StopIteration:
+                    raise StopAsyncIteration
+
+            async def aclose(self):
+                closed["flag"] = True
+
+        stream = TrackingStream()
+
+        async def cancel_soon():
+            await asyncio.sleep(0.07)
+            token.cancel(CancelReason.USER_ABORT)
+
+        async def collect():
+            async for _ in loop.run(stream, envelope):
+                pass
+
+        await asyncio.gather(cancel_soon(), collect())
+        assert closed["flag"] is True
+
+    @pytest.mark.asyncio
+    async def test_unexpected_tool_exception_is_logged_and_denied(
+        self, make_envelope, caplog,
+    ):
+        """Regression: programming bugs in handlers used to vanish silently as
+        denials. They still convert to denial (so the conversation continues),
+        but a full traceback is logged so the bug is visible.
+        """
+        class BoomHandler(ToolHandler):
+            @property
+            def name(self): return "read"
+            async def execute(self, args):
+                raise RuntimeError("internal handler bug")
+
+        cap_exec = CapabilityExecutor()
+        cap_exec.register(BoomHandler())
+
+        envelope = make_envelope()
+        trace = []
+        loop = IntentLoop(cap_exec, trace, current_depth=0)
+
+        events = [
+            ExecutorEvent(
+                kind=ExecutorEventKind.TOOL_USE,
+                payload={"tool": "read", "tool_use_id": "x", "args": {"path": "/a"}},
+                node_id="n1",
+            ),
+            ExecutorEvent(kind=ExecutorEventKind.STOP, payload={"usage": {}}, node_id="n1"),
+        ]
+
+        collected = []
+        with caplog.at_level("ERROR", logger="axor.intent_loop"):
+            async for e in loop.run(make_stream(*events), envelope):
+                collected.append(e)
+
+        # Logged the unexpected exception with traceback.
+        assert any("internal handler bug" in r.message for r in caplog.records)
+        # Conversation still produced a denial event for the model to see.
+        denied = [e for e in trace if e.kind == TraceEventKind.INTENT_DENIED]
+        assert len(denied) == 1
+        assert "RuntimeError" in denied[0].reason
+
+    @pytest.mark.asyncio
     async def test_token_usage_recorded_in_trace(self, cap_exec, make_envelope):
         envelope = make_envelope()
         trace = []
@@ -134,6 +222,52 @@ class TestIntentLoop:
         assert len(spent) == 1
         assert spent[0].input_tokens == 200
         assert spent[0].output_tokens == 100
+
+    @pytest.mark.asyncio
+    async def test_cache_tokens_propagated_to_trace(self, cap_exec, make_envelope):
+        envelope = make_envelope()
+        trace = []
+        loop = IntentLoop(cap_exec, trace, current_depth=0)
+
+        events = [
+            ExecutorEvent(kind=ExecutorEventKind.STOP,
+                payload={"usage": {
+                    "input_tokens": 200, "output_tokens": 100, "tool_tokens": 0,
+                    "cache_creation_input_tokens": 1000,
+                    "cache_read_input_tokens":     8000,
+                }},
+                node_id="n1"),
+        ]
+
+        async for _ in loop.run(make_stream(*events), envelope):
+            pass
+
+        from axor_core.contracts.trace import TokensSpentEvent
+        spent = [e for e in trace if isinstance(e, TokensSpentEvent)]
+        assert len(spent) == 1
+        assert spent[0].cache_creation_input_tokens == 1000
+        assert spent[0].cache_read_input_tokens == 8000
+
+    @pytest.mark.asyncio
+    async def test_cache_tokens_default_zero_when_absent(self, cap_exec, make_envelope):
+        # Older models / providers without cache fields → defaults stay 0.
+        envelope = make_envelope()
+        trace = []
+        loop = IntentLoop(cap_exec, trace, current_depth=0)
+
+        events = [
+            ExecutorEvent(kind=ExecutorEventKind.STOP,
+                payload={"usage": {"input_tokens": 100, "output_tokens": 50}},
+                node_id="n1"),
+        ]
+
+        async for _ in loop.run(make_stream(*events), envelope):
+            pass
+
+        from axor_core.contracts.trace import TokensSpentEvent
+        spent = [e for e in trace if isinstance(e, TokensSpentEvent)]
+        assert spent[0].cache_creation_input_tokens == 0
+        assert spent[0].cache_read_input_tokens == 0
 
 
 class TestExportFilter:

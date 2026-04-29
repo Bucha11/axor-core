@@ -12,19 +12,30 @@ Principle:
     But "tighten what we can, at the moment we can".
 """
 
-from axor_core.budget.tracker import BudgetTracker, NodeBudget
+from axor_core.budget.tracker import (
+    BudgetTracker,
+    CacheSummary,
+    CostSummary,
+    NodeBudget,
+    TokenCostRates,
+)
 from axor_core.budget.estimator import BudgetEstimator
 from axor_core.budget.policy_engine import (
     BudgetPolicyEngine,
+    BudgetThresholds,
     OptimizationDecision,
     OptimizationAction,
 )
 
 __all__ = [
     "BudgetTracker",
+    "CacheSummary",
+    "CostSummary",
     "NodeBudget",
+    "TokenCostRates",
     "BudgetEstimator",
     "BudgetPolicyEngine",
+    "BudgetThresholds",
     "OptimizationDecision",
     "OptimizationAction",
 ]

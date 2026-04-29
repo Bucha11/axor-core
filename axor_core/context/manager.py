@@ -102,12 +102,8 @@ class ContextManager:
             value="knowledge",
             turn=self._turn,
         )
-        # replace existing knowledge from same source
-        self._all_fragments = [
-            f for f in self._all_fragments if f.source != source
-        ]
-        self._all_fragments.append(fragment)
-        self._evict_if_needed()
+        # Route through the public API: dedup-by-source + eviction live there.
+        self.ingest_fragments([fragment])
 
     def ingest_fragments(self, fragments: list[ContextFragment]) -> None:
         """
@@ -224,8 +220,9 @@ class ContextManager:
                 relevance=0.7,
                 turn=self._turn,
             )
-            self._all_fragments.append(fragment)
-            self._evict_if_needed()
+            # Route through the public API so eviction and dedup apply
+            # uniformly — bare `.append` previously skipped both.
+            self.ingest_fragments([fragment])
 
     def record_file_read(self, path: str, content: str) -> None:
         """
@@ -243,11 +240,9 @@ class ContextManager:
             relevance=1.0,
             turn=self._turn,
         )
-        # replace existing fragment for this path or append
-        self._all_fragments = [
-            f for f in self._all_fragments if f.source != path
-        ]
-        self._all_fragments.append(fragment)
+        # Route through the public API: ingest_fragments handles
+        # source-dedup AND triggers eviction when over max_fragments.
+        self.ingest_fragments([fragment])
 
     def is_cached(self, path: str) -> bool:
         """Check if file is already cached — prevents unnecessary rereads."""

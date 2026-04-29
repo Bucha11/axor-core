@@ -62,12 +62,25 @@ class TokenUsage:
     """
     Actual token consumption for one node execution.
     Reported to budget/tracker.py after execution completes.
+
+    cache_creation_input_tokens / cache_read_input_tokens:
+        Anthropic prompt-cache accounting. cache_creation tokens are billed
+        at 1.25x normal input price; cache_read tokens at 0.1x. Anthropic
+        reports these as separate counters from input_tokens, so sum them with
+        input_tokens when calculating full processed input volume.
     """
     input_tokens: int
     output_tokens: int
     tool_tokens: int        # tokens spent on tool definitions in envelope
     context_tokens: int     # tokens in ContextView
+    cache_creation_input_tokens: int = 0
+    cache_read_input_tokens: int = 0
 
     @property
     def total(self) -> int:
-        return self.input_tokens + self.output_tokens
+        return (
+            self.input_tokens
+            + self.cache_creation_input_tokens
+            + self.cache_read_input_tokens
+            + self.output_tokens
+        )

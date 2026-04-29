@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+import traceback
 from typing import AsyncIterator, Any, Callable, Awaitable
 
 from axor_core.contracts.envelope import ExecutionEnvelope
@@ -16,9 +18,26 @@ from axor_core.contracts.trace import (
 from axor_core.capability.executor import CapabilityExecutor
 from axor_core.errors.exceptions import (
     ToolNotAllowedError,
+    ToolNotFoundError,
     ChildNotAllowedError,
     MaxDepthExceededError,
     ContextExpansionDeniedError,
+)
+
+log = logging.getLogger("axor.intent_loop")
+
+# Exception types from a tool execution that are expected and should be
+# converted to a structured denial. Anything outside this set is a real
+# programming error that we still convert to a denial (so the user-facing
+# conversation continues) but log loudly so the bug isn't invisible.
+_KNOWN_TOOL_EXCEPTIONS: tuple[type[BaseException], ...] = (
+    ToolNotAllowedError,
+    ToolNotFoundError,
+    ValueError,
+    OSError,
+    PermissionError,
+    FileNotFoundError,
+    TimeoutError,
 )
 
 # Optional callback fired after each tool executes.
@@ -80,7 +99,27 @@ class IntentLoop:
         Process the executor stream under governance.
         Yields governed events — tool_use events are replaced by their results.
         Checks cancel_token at every event boundary — cooperative cancellation.
+
+        On cancellation or generator-close the underlying executor stream is
+        explicitly `aclose()`'d so adapter resources (HTTP connections, SDK
+        streaming contexts) are released promptly.
         """
+        try:
+            async for event in self._run_inner(stream, envelope):
+                yield event
+        finally:
+            aclose = getattr(stream, "aclose", None)
+            if aclose is not None:
+                try:
+                    await aclose()
+                except Exception:
+                    log.debug("executor stream aclose() raised", exc_info=True)
+
+    async def _run_inner(
+        self,
+        stream: AsyncIterator[ExecutorEvent],
+        envelope: ExecutionEnvelope,
+    ) -> AsyncIterator[ExecutorEvent]:
         async for event in stream:
 
             # cooperative cancellation — check before every event
@@ -202,8 +241,26 @@ class IntentLoop:
                 result=result,
                 transformed_payload=decision.transformed_payload,
             )
-        except (ToolNotAllowedError, Exception) as exc:
+        except _KNOWN_TOOL_EXCEPTIONS as exc:
             reason = str(exc)
+            self._record_denial(intent, reason, envelope)
+            return ResolvedIntent(
+                intent=intent,
+                approved=False,
+                reason=reason,
+                result=_denial_result(tool_name, reason),
+            )
+        except Exception as exc:
+            # Unexpected exception — likely a programming bug in the handler.
+            # Log the full traceback so the bug isn't silent, but still convert
+            # to a denial so the conversation continues. The user gets a
+            # readable error; the operator gets a stack trace in logs.
+            tb = traceback.format_exc()
+            log.error(
+                "Unhandled exception in tool '%s' (node=%s): %s\n%s",
+                tool_name, envelope.node_id, exc, tb,
+            )
+            reason = f"tool execution failed: {type(exc).__name__}: {exc}"
             self._record_denial(intent, reason, envelope)
             return ResolvedIntent(
                 intent=intent,
@@ -301,6 +358,8 @@ class IntentLoop:
             output_tokens=usage.get("output_tokens", 0),
             tool_tokens=usage.get("tool_tokens", 0),
             context_tokens=envelope.context.token_count,
+            cache_creation_input_tokens=usage.get("cache_creation_input_tokens", 0),
+            cache_read_input_tokens=usage.get("cache_read_input_tokens", 0),
         )
         self._trace_events.append(
             TokensSpentEvent(
@@ -312,6 +371,8 @@ class IntentLoop:
                 tool_tokens=self._token_totals.tool,
                 context_tokens=self._token_totals.context,
                 cumulative=self._token_totals.total,
+                cache_creation_input_tokens=self._token_totals.cache_creation,
+                cache_read_input_tokens=self._token_totals.cache_read,
             )
         )
 
@@ -365,6 +426,8 @@ class _TokenAccumulator:
         self.output = 0
         self.tool = 0
         self.context = 0
+        self.cache_creation = 0
+        self.cache_read = 0
 
     def add(
         self,
@@ -372,12 +435,16 @@ class _TokenAccumulator:
         output_tokens: int,
         tool_tokens: int,
         context_tokens: int,
+        cache_creation_input_tokens: int = 0,
+        cache_read_input_tokens: int     = 0,
     ) -> None:
         self.input   += input_tokens
         self.output  += output_tokens
         self.tool    += tool_tokens
         self.context += context_tokens
+        self.cache_creation += cache_creation_input_tokens
+        self.cache_read     += cache_read_input_tokens
 
     @property
     def total(self) -> int:
-        return self.input + self.output
+        return self.input + self.cache_creation + self.cache_read + self.output

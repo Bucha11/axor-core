@@ -4,8 +4,11 @@ from __future__ import annotations
 import asyncio
 import pytest
 from axor_core import GovernedSession, presets
+from axor_core.budget import TokenCostRates
 from axor_core.contracts.cancel import CancelReason
+from axor_core.contracts.result import ExecutorEvent, ExecutorEventKind
 from axor_core.contracts.trace import TraceConfig
+from axor_core.contracts.invokable import Invokable
 
 
 class TestGovernedSessionIntegration:
@@ -81,8 +84,91 @@ class TestGovernedSessionIntegration:
     async def test_slash_cost_command(self, session):
         await session.run("write a test")
         result = await session.run("/cost")
-        assert "Tokens" in result.output
+        assert "Total billable tokens" in result.output
         assert result.metadata["class"] == "governance"
+
+    @pytest.mark.asyncio
+    async def test_slash_cost_command_includes_money_when_rates_configured(
+        self, echo_executor, cap_executor
+    ):
+        session = GovernedSession(
+            executor=echo_executor,
+            capability_executor=cap_executor,
+            trace_config=TraceConfig(local_only=True, persist_inputs=False),
+            token_cost_rates=TokenCostRates(input_per_m=3.0, output_per_m=15.0),
+        )
+        await session.run("write a test")
+
+        result = await session.run("/cost")
+
+        assert "estimated cost:" in result.output
+        assert "USD" in result.output
+
+    @pytest.mark.asyncio
+    async def test_slash_cost_command_includes_cache_tokens(
+        self, cap_executor
+    ):
+        class CachedUsageExecutor(Invokable):
+            async def stream(self, envelope):
+                yield ExecutorEvent(
+                    kind=ExecutorEventKind.TEXT,
+                    payload={"text": "ok"},
+                    node_id=envelope.node_id,
+                )
+                yield ExecutorEvent(
+                    kind=ExecutorEventKind.STOP,
+                    payload={
+                        "usage": {
+                            "input_tokens": 100,
+                            "output_tokens": 50,
+                            "cache_creation_input_tokens": 1_000,
+                            "cache_read_input_tokens": 8_000,
+                        }
+                    },
+                    node_id=envelope.node_id,
+                )
+
+        session = GovernedSession(
+            executor=CachedUsageExecutor(),
+            capability_executor=cap_executor,
+            trace_config=TraceConfig(local_only=True, persist_inputs=False),
+        )
+        await session.run("write a test")
+
+        result = await session.run("/cost")
+
+        assert "Total billable tokens: 9,150" in result.output
+        assert "Tokens (uncached input + output): 150" in result.output
+        assert "cache writes:     1,000" in result.output
+        assert "cache reads:      8,000" in result.output
+
+    @pytest.mark.asyncio
+    async def test_root_tokens_counted_exactly_once(self, cap_executor):
+        """Regression: session.py records root tokens; node.run() itself must
+        NOT also write them to the tracker. Double-counting would inflate
+        cost summaries and trip BudgetThresholds prematurely.
+        """
+        class FixedUsage(Invokable):
+            async def stream(self, envelope):
+                yield ExecutorEvent(
+                    kind=ExecutorEventKind.TEXT,
+                    payload={"text": "ok"},
+                    node_id=envelope.node_id,
+                )
+                yield ExecutorEvent(
+                    kind=ExecutorEventKind.STOP,
+                    payload={"usage": {"input_tokens": 200, "output_tokens": 100}},
+                    node_id=envelope.node_id,
+                )
+
+        session = GovernedSession(
+            executor=FixedUsage(),
+            capability_executor=cap_executor,
+            trace_config=TraceConfig(local_only=True, persist_inputs=False),
+        )
+        await session.run("write a test")
+        # 200 + 100 = 300, not 600.
+        assert session.total_tokens_spent() == 300
 
     @pytest.mark.asyncio
     async def test_slash_policy_command(self, session):

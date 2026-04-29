@@ -30,42 +30,80 @@ class OptimizationDecision:
     suggested_export: ExportMode | None = None
 
 
+@dataclass(frozen=True)
+class BudgetThresholds:
+    """
+    Fractions of soft_limit at which the policy engine fires actions.
+
+    Defaults are heuristics, not measurements. Tune for your workload:
+      - Long research tasks with broad context: lower compress, lower hard_stop
+        (e.g. 0.50 / 0.70 / 0.85 / 0.95) so headroom is preserved earlier.
+      - Interactive REPL with short turns: raise everything
+        (e.g. 0.70 / 0.85 / 0.95 / 0.99) so a chatty session isn't throttled.
+
+    Order invariant (validated): compress < deny_child < restrict_export < hard_stop.
+    """
+    compress: float      = 0.60
+    deny_child: float    = 0.80
+    restrict_export: float = 0.90
+    hard_stop: float     = 0.95
+
+    def __post_init__(self) -> None:
+        ordered = (self.compress, self.deny_child, self.restrict_export, self.hard_stop)
+        if not all(0.0 < v <= 1.0 for v in ordered):
+            raise ValueError("budget thresholds must be in (0, 1]")
+        if not (ordered[0] < ordered[1] < ordered[2] < ordered[3]):
+            raise ValueError(
+                "budget thresholds must be strictly increasing: "
+                f"compress={self.compress} < deny_child={self.deny_child} "
+                f"< restrict_export={self.restrict_export} < hard_stop={self.hard_stop}"
+            )
+
+
 class BudgetPolicyEngine:
     """
     Real-time optimizer. Fires on every execution event.
 
-    Principle: minimum sufficient for quality — not a hard cap.
+    Principle: minimum sufficient for quality. Most thresholds are advisory —
+    the engine *suggests* compression/restriction and the node decides how to
+    react. The single exception is `hard_stop`: when the spent ratio crosses
+    that threshold inside `on_intent_arrived()`, the engine fires
+    `cancel_token.cancel(BUDGET_EXHAUSTED)` to terminate the active node
+    immediately. Set `BudgetThresholds(hard_stop=1.0)` to disable the
+    hard-stop and make the engine purely advisory.
 
     The engine does not decompose tasks.
-    The engine does not block execution.
-    The engine suggests what to tighten on the next step.
 
     Three moments it fires:
-        on_intent_arrived()    — before envelope is built for this intent
-        on_result_arrived()    — after tool result, before writing to context
-        on_child_requested()   — before child node is created
+        on_intent_arrived()    — before envelope is built for this intent.
+                                 May fire `cancel_token` (the only blocking action).
+        on_result_arrived()    — after tool result, before writing to context.
+                                 Always advisory.
+        on_child_requested()   — before child node is created.
+                                 Always advisory.
 
     Each returns an OptimizationDecision that the node acts on.
-    """
 
-    # Token thresholds for optimization signals
-    # These are session-level totals, not per-node caps
-    _COMPRESS_THRESHOLD   = 0.60   # at 60% → suggest compression
-    _DENY_CHILD_THRESHOLD = 0.80   # at 80% → deny new children
-    _RESTRICT_EXPORT      = 0.90   # at 90% → downgrade export mode
-    _HARD_STOP_THRESHOLD  = 0.95   # at 95% → cancel active node
+    Thresholds are configurable via the `thresholds` constructor arg.
+    The defaults (0.60 / 0.80 / 0.90 / 0.95) are starting heuristics, not
+    measurements — see BudgetThresholds docstring for tuning guidance.
+    """
 
     def __init__(
         self,
         tracker: BudgetTracker,
         estimator: BudgetEstimator,
         soft_limit: int | None = None,
+        thresholds: BudgetThresholds | None = None,
     ) -> None:
         self._tracker   = tracker
         self._estimator = estimator
         # soft_limit is advisory — not a hard cap
         # None means no budget guidance, always PROCEED
         self._soft_limit = soft_limit
+        self._thresholds = (
+            thresholds if thresholds is not None else BudgetThresholds()
+        )
 
     def on_intent_arrived(
         self,
@@ -82,7 +120,7 @@ class BudgetPolicyEngine:
         ratio  = spent / self._soft_limit
 
         # hard stop — cancel the active node via token
-        if ratio >= self._HARD_STOP_THRESHOLD:
+        if ratio >= self._thresholds.hard_stop:
             from axor_core.contracts.cancel import CancelReason
             envelope.cancel_token.cancel(
                 CancelReason.BUDGET_EXHAUSTED,
@@ -93,7 +131,7 @@ class BudgetPolicyEngine:
                 reason=f"hard stop triggered at {ratio:.0%} — cancel token fired",
             )
 
-        if ratio >= self._COMPRESS_THRESHOLD:
+        if ratio >= self._thresholds.compress:
             headroom = self._estimator.compression_headroom(
                 envelope.context, envelope.policy
             )
@@ -122,14 +160,14 @@ class BudgetPolicyEngine:
         projected = self._tracker.total_tokens() + result_token_estimate
         ratio = projected / self._soft_limit
 
-        if ratio >= self._RESTRICT_EXPORT:
+        if ratio >= self._thresholds.restrict_export:
             return OptimizationDecision(
                 action=OptimizationAction.RESTRICT_EXPORT,
                 reason=f"projected {ratio:.0%} of soft limit — restrict export",
                 suggested_export=ExportMode.SUMMARY,
             )
 
-        if ratio >= self._COMPRESS_THRESHOLD:
+        if ratio >= self._thresholds.compress:
             return OptimizationDecision(
                 action=OptimizationAction.COMPRESS_CONTEXT,
                 reason=f"projected {ratio:.0%} — compress result before context write",
@@ -156,7 +194,7 @@ class BudgetPolicyEngine:
         spent = self._tracker.total_tokens()
         ratio = spent / self._soft_limit
 
-        if ratio >= self._DENY_CHILD_THRESHOLD:
+        if ratio >= self._thresholds.deny_child:
             return OptimizationDecision(
                 action=OptimizationAction.DENY_CHILD,
                 reason=f"spent {ratio:.0%} of soft limit — deny child to preserve budget",
@@ -190,6 +228,8 @@ class BudgetPolicyEngine:
         output_tokens: int = 0,
         tool_tokens: int = 0,
         context_tokens: int = 0,
+        cache_creation_input_tokens: int = 0,
+        cache_read_input_tokens: int = 0,
     ) -> None:
         """Record token usage from a completed child node into the tracker."""
         self._tracker.record(
@@ -198,6 +238,8 @@ class BudgetPolicyEngine:
             output_tokens=output_tokens,
             tool_tokens=tool_tokens,
             context_tokens=context_tokens,
+            cache_creation_input_tokens=cache_creation_input_tokens,
+            cache_read_input_tokens=cache_read_input_tokens,
         )
 
 

@@ -75,6 +75,32 @@ class TestContextCache:
         snap = cache.snapshot_files()
         assert set(snap.keys()) == {"a.py", "b.py"}
 
+    def test_file_cache_evicts_lru_over_cap(self):
+        """Regression: long sessions used to grow _files unboundedly."""
+        cache = ContextCache(max_files=3)
+        cache.put_file("a.py", "1")
+        cache.put_file("b.py", "2")
+        cache.put_file("c.py", "3")
+        # Touch 'a' so it becomes most recently used.
+        cache.get_file("a.py")
+        # Fourth entry — 'b' is now LRU and must be evicted.
+        cache.put_file("d.py", "4")
+
+        assert cache.get_file("b.py") is None
+        assert cache.get_file("a.py") is not None
+        assert cache.get_file("c.py") is not None
+        assert cache.get_file("d.py") is not None
+
+    def test_tool_result_cache_evicts_over_cap(self):
+        cache = ContextCache(max_tool_results=2)
+        cache.put_tool_result("bash", {"cmd": "a"}, "ra")
+        cache.put_tool_result("bash", {"cmd": "b"}, "rb")
+        cache.put_tool_result("bash", {"cmd": "c"}, "rc")
+        # Oldest ('a') should have been evicted.
+        assert cache.get_tool_result("bash", {"cmd": "a"}) is None
+        assert cache.get_tool_result("bash", {"cmd": "b"}) == "rb"
+        assert cache.get_tool_result("bash", {"cmd": "c"}) == "rc"
+
 
 class TestContextCompressor:
 
@@ -201,6 +227,26 @@ class TestContextManager:
         assert ctx.node_id == lineage.node_id
         assert ctx.token_count > 0
         assert len(ctx.visible_fragments) > 0
+
+    def test_context_view_fields_are_immutable(self, manager, lineage):
+        """Regression: frozen=True with list-typed fields used to leak
+        mutability — `view.visible_fragments.append(...)` would silently
+        mutate a "frozen" view. Tuples close that hole.
+        """
+        state = RawExecutionState(
+            task="refactor auth", session_id="s1",
+            parent_export=None, session_state={},
+            memory_fragments=[], lineage=None,
+        )
+        ctx = manager.build(state, lineage, policy=make_policy())
+        assert isinstance(ctx.visible_fragments, tuple)
+        assert isinstance(ctx.active_constraints, tuple)
+        with pytest.raises(AttributeError):
+            ctx.visible_fragments.append(None)  # type: ignore[attr-defined]
+        # LineageSummary likewise
+        assert isinstance(lineage.ancestry_ids, tuple)
+        with pytest.raises(AttributeError):
+            lineage.ancestry_ids.append("x")  # type: ignore[attr-defined]
 
     def test_record_file_read_caches_content(self, manager, lineage):
         manager.record_file_read("auth.py", "def authenticate(): pass")

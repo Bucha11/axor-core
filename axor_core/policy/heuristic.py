@@ -22,6 +22,12 @@ _COEFFICIENTS_PATH = Path(__file__).parent / "heuristic_coefficients.json"
 
 _REGEX_FLAGS = {"i": re.IGNORECASE, "m": re.MULTILINE, "s": re.DOTALL}
 
+# Cap on individual regex source length. The coefficients file is
+# checked in, but defending against accidental editor-induced gigantic
+# patterns keeps `import axor_core.policy.heuristic` predictable and
+# avoids ReDoS-amplification on adversarial prompt input later.
+_MAX_REGEX_SOURCE = 1024
+
 
 def _compile_flags(spec: str) -> int:
     flags = 0
@@ -33,15 +39,52 @@ def _compile_flags(spec: str) -> int:
     return flags
 
 
+# Empty fallback used if the coefficients file is missing or malformed.
+# Keeping the module importable degrades classification to "no signal"
+# instead of crashing every consumer of axor-core at import time.
+_EMPTY_PATTERNS: dict[str, list[tuple[re.Pattern[str], float]]] = {
+    "complexity.expansive": [],
+    "complexity.moderate":  [],
+    "nature.readonly":      [],
+    "nature.mutative":      [],
+    "nature.generative":    [],
+}
+
+
 def _load_patterns() -> dict[str, list[tuple[re.Pattern[str], float]]]:
-    with _COEFFICIENTS_PATH.open(encoding="utf-8") as fh:
-        data = json.load(fh)
+    try:
+        with _COEFFICIENTS_PATH.open(encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        # File missing, unreadable, or malformed JSON. Fall back to empty
+        # patterns so classification reports "focused / unknown" but the
+        # rest of axor-core remains usable.
+        return dict(_EMPTY_PATTERNS)
+
+    raw_patterns = (data or {}).get("patterns", {})
+    if not isinstance(raw_patterns, dict):
+        return dict(_EMPTY_PATTERNS)
+
     out: dict[str, list[tuple[re.Pattern[str], float]]] = {}
-    for group, entries in data["patterns"].items():
-        out[group] = [
-            (re.compile(entry["regex"], _compile_flags(entry.get("flags", ""))), float(entry["weight"]))
-            for entry in entries
-        ]
+    for group, entries in raw_patterns.items():
+        compiled: list[tuple[re.Pattern[str], float]] = []
+        if not isinstance(entries, list):
+            out[group] = compiled
+            continue
+        for entry in entries:
+            try:
+                regex_src = str(entry["regex"])
+                if len(regex_src) > _MAX_REGEX_SOURCE:
+                    continue
+                weight = float(entry["weight"])
+                compiled.append((re.compile(regex_src, _compile_flags(entry.get("flags", ""))), weight))
+            except (KeyError, ValueError, TypeError, re.error):
+                # Skip malformed entries individually rather than aborting the load.
+                continue
+        out[group] = compiled
+    # Ensure every expected group is present (consumers index by name).
+    for k, v in _EMPTY_PATTERNS.items():
+        out.setdefault(k, list(v))
     return out
 
 

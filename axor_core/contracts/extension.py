@@ -2,7 +2,23 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any
+from types import MappingProxyType
+from typing import Any, Mapping
+
+
+def _freeze_mapping(value: Any) -> Mapping[str, Any]:
+    """Coerce a dict to a read-only MappingProxyType view.
+
+    Frozen dataclasses with `dict` fields otherwise leak mutability —
+    `frag.policy_overrides["allow_bash"] = True` would silently rewrite a
+    "frozen" extension fragment. The proxy keeps dict-style access (`get`,
+    `[]`, `in`, `.items()`) while blocking writes.
+    """
+    if isinstance(value, MappingProxyType):
+        return value
+    if value is None:
+        return MappingProxyType({})
+    return MappingProxyType(dict(value))
 
 
 # ── What an extension contributes ─────────────────────────────────────────────
@@ -24,8 +40,12 @@ class ExtensionFragment:
     name: str
     context_fragment: str              # text injected into ContextView
     required_tools: tuple[str, ...]    # tool names this extension needs
-    policy_overrides: dict[str, Any]   # requested policy changes — may be denied
+    policy_overrides: Mapping[str, Any]  # requested policy changes — may be denied
     source: str                        # human-readable origin, for trace
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.policy_overrides, MappingProxyType):
+            object.__setattr__(self, "policy_overrides", _freeze_mapping(self.policy_overrides))
 
 
 @dataclass(frozen=True)
@@ -38,8 +58,12 @@ class ExtensionTool:
     """
     name: str
     description: str
-    parameters: dict[str, Any]
+    parameters: Mapping[str, Any]
     source: str                        # which extension registered this
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.parameters, MappingProxyType):
+            object.__setattr__(self, "parameters", _freeze_mapping(self.parameters))
 
 
 @dataclass(frozen=True)

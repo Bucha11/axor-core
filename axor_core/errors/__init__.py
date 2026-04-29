@@ -1,5 +1,6 @@
 from axor_core.errors.exceptions import (
     AxorError,
+    BudgetExceededError,
     PolicyError,
     IntentDeniedError,
     IntentResolutionError,
@@ -15,6 +16,7 @@ from axor_core.errors.exceptions import (
 
 __all__ = [
     "AxorError",
+    "BudgetExceededError",
     "PolicyError",
     "IntentDeniedError",
     "IntentResolutionError",

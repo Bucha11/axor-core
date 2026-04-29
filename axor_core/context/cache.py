@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import time
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -23,6 +24,9 @@ class CachedToolResult:
     result: Any
     cached_at: float
     ttl_seconds: float      # how long this result is valid
+    # Original args, kept so invalidator can selectively drop entries
+    # by content (e.g. only `git`-class bash commands, not all bash output).
+    args: dict = field(default_factory=dict)
 
 
 # TTL per tool type — some results go stale faster
@@ -50,11 +54,28 @@ class ContextCache:
 
     Cache is session-scoped. One cache per GovernedSession.
     Child nodes share parent cache via lineage (read-only access).
+
+    Both layers are bounded — long sessions reading many files used to grow
+    the dicts without limit. `max_files` and `max_tool_results` cap each
+    layer at LRU; the oldest entry is evicted when the cap is exceeded.
     """
 
-    def __init__(self) -> None:
-        self._files: dict[str, CachedFile] = {}
-        self._tool_results: dict[str, CachedToolResult] = {}
+    DEFAULT_MAX_FILES = 256
+    DEFAULT_MAX_TOOL_RESULTS = 512
+
+    def __init__(
+        self,
+        max_files: int = DEFAULT_MAX_FILES,
+        max_tool_results: int = DEFAULT_MAX_TOOL_RESULTS,
+    ) -> None:
+        if max_files <= 0 or max_tool_results <= 0:
+            raise ValueError("cache caps must be positive")
+        self._max_files = max_files
+        self._max_tool_results = max_tool_results
+        # OrderedDict preserves insertion order; we move-to-end on read so
+        # eviction picks the genuinely-coldest entry, not just the oldest.
+        self._files: OrderedDict[str, CachedFile] = OrderedDict()
+        self._tool_results: OrderedDict[str, CachedToolResult] = OrderedDict()
         self._current_turn: int = 0
 
     def advance_turn(self) -> None:
@@ -63,7 +84,10 @@ class ContextCache:
     # ── File cache ─────────────────────────────────────────────────────────────
 
     def get_file(self, path: str) -> CachedFile | None:
-        return self._files.get(path)
+        cached = self._files.get(path)
+        if cached is not None:
+            self._files.move_to_end(path)
+        return cached
 
     def put_file(self, path: str, content: str) -> CachedFile:
         content_hash = _hash(content)
@@ -76,6 +100,10 @@ class ContextCache:
             token_estimate=len(content) // 4,
         )
         self._files[path] = cached
+        self._files.move_to_end(path)
+        # LRU eviction — drop oldest entries when over cap.
+        while len(self._files) > self._max_files:
+            self._files.popitem(last=False)
         return cached
 
     def file_changed(self, path: str, new_content: str) -> bool:
@@ -108,6 +136,7 @@ class ContextCache:
         if time.time() - cached.cached_at > cached.ttl_seconds:
             del self._tool_results[key]
             return None
+        self._tool_results.move_to_end(key)
         return cached.result
 
     def put_tool_result(self, tool: str, args: dict, result: Any) -> None:
@@ -119,7 +148,13 @@ class ContextCache:
             result=result,
             cached_at=time.time(),
             ttl_seconds=ttl,
+            # Store a shallow copy of args so callers cannot mutate the
+            # cached version after the fact.
+            args=dict(args),
         )
+        self._tool_results.move_to_end(key)
+        while len(self._tool_results) > self._max_tool_results:
+            self._tool_results.popitem(last=False)
 
     def invalidate_tool_results(self, tool: str | None = None) -> None:
         """Invalidate all results for a tool, or all results if tool=None."""
@@ -129,6 +164,23 @@ class ContextCache:
             keys = [k for k, v in self._tool_results.items() if v.tool == tool]
             for k in keys:
                 del self._tool_results[k]
+
+    def invalidate_tool_results_where(
+        self,
+        predicate,  # Callable[[CachedToolResult], bool]
+    ) -> int:
+        """Invalidate cached tool results matching `predicate`.
+
+        Use this when you need finer granularity than tool-name (e.g. drop
+        only `bash` results whose args look like git commands while keeping
+        `bash` results from other commands cached).
+
+        Returns the number of entries invalidated.
+        """
+        keys = [k for k, v in self._tool_results.items() if predicate(v)]
+        for k in keys:
+            del self._tool_results[k]
+        return len(keys)
 
     # ── Stats ──────────────────────────────────────────────────────────────────
 

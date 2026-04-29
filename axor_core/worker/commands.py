@@ -117,7 +117,52 @@ class SlashCommandRouter:
 
             case "cost":
                 total = session.total_tokens_spent()
-                return f"Tokens spent this session: {total:,}"
+                summary = session.cache_summary()
+                inp = summary["input_tokens"]
+                out = summary["output_tokens"]
+                cw  = summary["cache_creation_input_tokens"]
+                cr  = summary["cache_read_input_tokens"]
+                hit = summary["hit_rate"]
+                has_cache = bool(cw or cr)
+
+                lines = [f"Total billable tokens: {total:,}"]
+                if has_cache:
+                    lines.extend([
+                        f"  input (incl. cache): {summary['total_input_tokens']:,}",
+                        f"    uncached input:   {inp:,}",
+                        f"    cache writes:     {cw:,} (billed at 1.25x input)",
+                        f"    cache reads:      {cr:,} (billed at 0.1x input)",
+                        f"    cache hit rate:   {hit:.1%}",
+                        f"  output:              {out:,}",
+                        "",
+                        f"Tokens (uncached input + output): {inp + out:,}",
+                    ])
+                else:
+                    lines.extend([
+                        f"  input:  {inp:,}",
+                        f"  output: {out:,}",
+                    ])
+
+                cost = session.cost_summary()
+                if cost is not None:
+                    currency = cost["currency"]
+                    lines.append("")
+                    lines.append(
+                        f"estimated cost: {cost['total_cost']:.6f} {currency}"
+                    )
+                    if has_cache:
+                        lines.extend([
+                            f"  uncached input: {cost['input_cost']:.6f}",
+                            f"  cache writes:   {cost['cache_creation_cost']:.6f}",
+                            f"  cache reads:    {cost['cache_read_cost']:.6f}",
+                            f"  output:         {cost['output_cost']:.6f}",
+                        ])
+                    else:
+                        lines.extend([
+                            f"  input:  {cost['input_cost']:.6f}",
+                            f"  output: {cost['output_cost']:.6f}",
+                        ])
+                return "\n".join(lines)
 
             case "policy":
                 traces = session.all_traces()

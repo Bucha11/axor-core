@@ -230,7 +230,7 @@ class TraceCollector:
                 ]
                 if spent_events:
                     # last TokensSpentEvent has cumulative total
-                    total += spent_events[-1].output_tokens + spent_events[-1].input_tokens
+                    total += spent_events[-1].cumulative
             return total
 
     def had_policy_adjustments(self) -> bool:

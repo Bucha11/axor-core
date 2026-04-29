@@ -15,7 +15,15 @@ from axor_core.policy.analyzer import TaskAnalyzer
 from axor_core.policy.heuristic import HeuristicClassifier
 from axor_core.policy.selector import PolicySelector
 from axor_core.policy.composer import PolicyComposer
-from axor_core.policy import presets
+from axor_core.policy import presets, topics
+from axor_core.policy.keyword_relevance import (
+    compute_topic_strength,
+    expand_with_synonyms,
+    extract_query_keywords,
+    name_has_destructive_token,
+    score_tool_relevance,
+    tool_topics,
+)
 
 __all__ = [
     "TaskAnalyzer",
@@ -23,4 +31,12 @@ __all__ = [
     "PolicySelector",
     "PolicyComposer",
     "presets",
+    "topics",
+    # Keyword-relevance heuristic (used by adapters for tool gating)
+    "compute_topic_strength",
+    "expand_with_synonyms",
+    "extract_query_keywords",
+    "name_has_destructive_token",
+    "score_tool_relevance",
+    "tool_topics",
 ]
