@@ -66,3 +66,18 @@ class ExecutionEnvelope:
     lineage: LineageSummary
     cancel_token: CancelToken = field(default_factory=make_token)
     parent_metadata: dict[str, Any] = field(default_factory=dict)
+
+    # ── Added in 0.5.0: adapter-facing fields ─────────────────────────────────
+    cache_hints: "CacheHints | None" = None
+    deterministic: bool = False
+    depth: int = 0
+    parent_node_id: str | None = None
+
+
+@dataclass(frozen=True)
+class CacheHints:
+    """Typed cache directives for adapters that support prefix-caching."""
+    ttl: str | None = None
+    cacheable_blocks: tuple[str, ...] = ()
+    response_cache_allowed: bool = False
+    relevance_k: int | None = None
