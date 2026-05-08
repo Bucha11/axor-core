@@ -40,6 +40,19 @@ class ExportContract:
     max_export_tokens: int | None      # None = no limit
 
 
+@dataclass(frozen=True)
+class CacheHints:
+    """Typed cache directives for adapters that support prefix-caching.
+
+    Adapters that do not support caching silently ignore this object.
+    Core never populates it — adapters read it, callers set it.
+    """
+    ttl: str | None = None
+    cacheable_blocks: tuple[str, ...] = ()
+    response_cache_allowed: bool = False
+    relevance_k: int | None = None
+
+
 @dataclass
 class ExecutionEnvelope:
     """
@@ -68,18 +81,7 @@ class ExecutionEnvelope:
     parent_metadata: dict[str, Any] = field(default_factory=dict)
 
     # ── Added in 0.5.0: adapter-facing optimisation hints ─────────────────────
-    #
-    # cache_hints: directives for adapters that support prefix-caching.
-    # Structure:
-    #   {
-    #     "ttl": "5m" | "1h",               # cache TTL
-    #     "blocks": ["system", "tools",      # which blocks to mark as cacheable
-    #                "context_top_k"],
-    #     "k": int,                           # how many top-K context fragments
-    #   }
-    # Adapters that do not support caching silently ignore this field.
-    # Core never populates it — only adapters read and write it.
-    cache_hints: dict[str, Any] | None = None
+    cache_hints: CacheHints | None = None
 
     # deterministic: True when the executor is expected to produce reproducible
     # output (temperature=0 or equivalent). Adapters may enable response-level

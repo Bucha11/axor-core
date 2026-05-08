@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import pytest
 
+from axor_core.contracts.envelope import CacheHints
+
 
 def test_envelope_default_fields(make_envelope):
     env = make_envelope()
@@ -13,10 +15,29 @@ def test_envelope_default_fields(make_envelope):
 
 
 def test_envelope_cache_hints_set(make_envelope):
+    hints = CacheHints(cacheable_blocks=("system",), ttl="5m")
     env = make_envelope()
-    # ExecutionEnvelope is a regular (non-frozen) dataclass
-    env.cache_hints = {"blocks": ["system"], "ttl": "5m"}
-    assert env.cache_hints["ttl"] == "5m"
+    env.cache_hints = hints
+    assert env.cache_hints.ttl == "5m"
+    assert "system" in env.cache_hints.cacheable_blocks
+
+
+def test_cache_hints_defaults():
+    hints = CacheHints()
+    assert hints.ttl is None
+    assert hints.cacheable_blocks == ()
+    assert hints.response_cache_allowed is False
+    assert hints.relevance_k is None
+
+
+def test_cache_hints_response_cache_allowed():
+    hints = CacheHints(response_cache_allowed=True)
+    assert hints.response_cache_allowed is True
+
+
+def test_cache_hints_relevance_k():
+    hints = CacheHints(relevance_k=5)
+    assert hints.relevance_k == 5
 
 
 def test_envelope_deterministic_set(make_envelope):
