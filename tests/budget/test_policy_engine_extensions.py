@@ -8,25 +8,26 @@ from axor_core.budget import BudgetEstimator, BudgetPolicyEngine, BudgetTracker
 
 @pytest.fixture()
 def tracker():
-    return BudgetTracker()
+    tr = BudgetTracker()
+    tr.register_node("n1", None, 0)
+    return tr
 
 
 @pytest.fixture()
 def engine(tracker):
-    tr = tracker
-    tr.register_node("n1", None, 0)
     return BudgetPolicyEngine(
-        tracker=tr,
+        tracker=tracker,
         estimator=BudgetEstimator(),
         soft_limit=100_000,
     )
 
 
-# ── suggest_tier_shift ────────────────────────────────────────────────────────
+# ── suggest_tier_shift ─────────────────────────────────────────────────────
 
-def test_suggest_tier_shift_zero_when_no_limit(tracker):
+def test_suggest_tier_shift_zero_when_no_limit():
+    tr = BudgetTracker()
     engine = BudgetPolicyEngine(
-        tracker=tracker, estimator=BudgetEstimator(), soft_limit=None
+        tracker=tr, estimator=BudgetEstimator(), soft_limit=None
     )
     assert engine.suggest_tier_shift() == 0
 
@@ -38,7 +39,7 @@ def test_suggest_tier_shift_plus1_when_very_low_spend(tracker, engine):
 
 def test_suggest_tier_shift_zero_at_moderate_spend(tracker, engine):
     tracker.record("n1", input_tokens=40_000, output_tokens=0)
-    # ratio = 0.40, between compress*0.5=0.30 and compress=0.60 → 0
+    # ratio = 0.40: not < 0.30, not >= 0.60 → 0
     assert engine.suggest_tier_shift() == 0
 
 
@@ -55,50 +56,65 @@ def test_suggest_tier_shift_minus1_at_restrict_export_threshold(tracker, engine)
 
 
 # ── on_threshold_crossed ────────────────────────────────────────────────────
+#
+# _maybe_notify_threshold is the only path that fires callbacks.
+# It is called by on_intent_arrived(); we invoke it directly here
+# to keep tests self-contained (avoids building a full ExecutionEnvelope).
 
-def test_on_threshold_crossed_fires_at_compress(tracker, engine):
+def test_on_threshold_crossed_fires_at_compress(engine):
     fired = []
     engine.on_threshold_crossed(lambda name, ratio: fired.append((name, ratio)))
-    tracker.record("n1", input_tokens=62_000, output_tokens=0)
-
-    # Trigger the check by calling on_intent_arrived
-    from axor_core.contracts.policy import ExecutionPolicy
-    env = pytest.importorskip("axor_core.contracts.envelope")
-    # Use policy engine's internal check via on_result_arrived
-    from axor_core.budget.policy_engine import BudgetPolicyEngine
-    engine.on_result_arrived("n1", 0, ExecutionPolicy())
-
+    # ratio 0.65 ≥ compress=0.60
+    engine._maybe_notify_threshold(0.65)
     assert len(fired) == 1
     assert fired[0][0] == "compress"
     assert fired[0][1] >= 0.60
 
 
-def test_on_threshold_crossed_fires_once_per_bucket(tracker, engine):
+def test_on_threshold_crossed_fires_once_per_bucket(engine):
     fired = []
     engine.on_threshold_crossed(lambda name, ratio: fired.append(name))
-    from axor_core.contracts.policy import ExecutionPolicy
-
-    tracker.record("n1", input_tokens=62_000, output_tokens=0)
-    engine.on_result_arrived("n1", 0, ExecutionPolicy())
-    # Second call at same level should NOT re-fire
-    engine.on_result_arrived("n1", 0, ExecutionPolicy())
+    engine._maybe_notify_threshold(0.65)  # first crossing → fires
+    engine._maybe_notify_threshold(0.65)  # same bucket → deduped
     assert fired.count("compress") == 1
 
 
-def test_on_threshold_crossed_unsubscribe(tracker, engine):
+def test_on_threshold_crossed_unsubscribe(engine):
     fired = []
     unsub = engine.on_threshold_crossed(lambda name, ratio: fired.append(name))
     unsub()
-    from axor_core.contracts.policy import ExecutionPolicy
-    tracker.record("n1", input_tokens=62_000, output_tokens=0)
-    engine.on_result_arrived("n1", 0, ExecutionPolicy())
+    engine._maybe_notify_threshold(0.65)
     assert fired == []
 
 
-def test_on_threshold_crossed_deny_child(tracker, engine):
+def test_on_threshold_crossed_deny_child(engine):
     fired = []
     engine.on_threshold_crossed(lambda name, ratio: fired.append(name))
-    from axor_core.contracts.policy import ExecutionPolicy
-    tracker.record("n1", input_tokens=82_000, output_tokens=0)
-    engine.on_result_arrived("n1", 0, ExecutionPolicy())
+    # ratio 0.82 ≥ deny_child=0.80
+    engine._maybe_notify_threshold(0.82)
     assert "deny_child" in fired
+
+
+def test_on_threshold_crossed_restrict_export(engine):
+    fired = []
+    engine.on_threshold_crossed(lambda name, ratio: fired.append(name))
+    engine._maybe_notify_threshold(0.91)
+    assert "restrict_export" in fired
+
+
+def test_on_threshold_crossed_escalates_to_highest_bucket(engine):
+    """Jumping straight to deny_child fires deny_child, not compress."""
+    fired = []
+    engine.on_threshold_crossed(lambda name, ratio: fired.append(name))
+    engine._maybe_notify_threshold(0.82)  # crosses deny_child directly
+    assert fired == ["deny_child"]
+
+
+def test_callback_exception_does_not_break_other_callbacks(engine):
+    good = []
+    def bad_cb(name, ratio):
+        raise RuntimeError("boom")
+    engine.on_threshold_crossed(bad_cb)
+    engine.on_threshold_crossed(lambda n, r: good.append(n))
+    engine._maybe_notify_threshold(0.65)  # bad_cb raises, good_cb must still run
+    assert "compress" in good
