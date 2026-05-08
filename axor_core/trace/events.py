@@ -11,6 +11,9 @@ from axor_core.contracts.trace import (
     TokensSpentEvent,
     CommandRoutedEvent,
     PluginDeniedEvent,
+    CacheEvent,
+    RoutingEvent,
+    CostThresholdEvent,
 )
 
 
@@ -25,7 +28,7 @@ def signal_chosen(
     return SignalChosenEvent(
         kind=TraceEventKind.SIGNAL_CHOSEN,
         node_id=node_id,
-        sequence=0,   # stamped by collector
+        sequence=0,
         raw_input=raw_input,
         signal=signal,
         confidence=confidence,
@@ -40,10 +43,10 @@ def policy_chosen(node_id: str, policy: ExecutionPolicy) -> TraceEvent:
         node_id=node_id,
         sequence=0,
         payload={
-            "policy_name":    policy.name,
-            "context_mode":   policy.context_mode.value,
-            "child_mode":     policy.child_mode.value,
-            "export_mode":    policy.export_mode.value,
+            "policy_name":     policy.name,
+            "context_mode":    policy.context_mode.value,
+            "child_mode":      policy.child_mode.value,
+            "export_mode":     policy.export_mode.value,
             "max_child_depth": policy.max_child_depth,
         },
     )
@@ -56,10 +59,6 @@ def policy_adjusted(
     reason: str,
     tokens_before: int,
 ) -> PolicyAdjustedEvent:
-    """
-    Most valuable training signal.
-    Records that the initial classification was wrong and how much it cost.
-    """
     return PolicyAdjustedEvent(
         kind=TraceEventKind.POLICY_ADJUSTED,
         node_id=node_id,
@@ -174,7 +173,7 @@ def context_compressed(
 def extension_loaded(
     node_id: str,
     name: str,
-    kind: str,   # "fragment" | "tool" | "command" | "hook"
+    kind: str,
     source: str,
 ) -> TraceEvent:
     return TraceEvent(
@@ -182,4 +181,67 @@ def extension_loaded(
         node_id=node_id,
         sequence=0,
         payload={"name": name, "kind": kind, "source": source},
+    )
+
+
+# ── New in 0.5.0: adapter observability factories ──────────────────────────────
+
+def cache_event(
+    node_id: str,
+    kind: TraceEventKind,    # CACHE_HIT | CACHE_MISS | CACHE_WRITE
+    tokens: int,
+    ttl: int = 0,
+    breakpoint_block: str = "",
+) -> CacheEvent:
+    """Factory for CACHE_HIT, CACHE_MISS, CACHE_WRITE events."""
+    return CacheEvent(
+        kind=kind,
+        node_id=node_id,
+        sequence=0,
+        hit=(kind == TraceEventKind.CACHE_HIT),
+        tokens=tokens,
+        ttl=ttl,
+        breakpoint_block=breakpoint_block,
+    )
+
+
+def routing_decision(
+    node_id: str,
+    provider: str,
+    model: str,
+    tier: int = 0,
+    sort_strategy: str = "",
+    fallback_index: int = 0,
+) -> RoutingEvent:
+    """Factory for ROUTING_DECISION events."""
+    return RoutingEvent(
+        kind=TraceEventKind.ROUTING_DECISION,
+        node_id=node_id,
+        sequence=0,
+        provider=provider,
+        model=model,
+        tier=tier,
+        sort_strategy=sort_strategy,
+        fallback_index=fallback_index,
+    )
+
+
+def cost_threshold(
+    node_id: str,
+    spent: int,
+    cap: int,
+    ratio: float,
+    threshold_name: str = "",
+    tier_shift: int = 0,
+) -> CostThresholdEvent:
+    """Factory for COST_THRESHOLD events."""
+    return CostThresholdEvent(
+        kind=TraceEventKind.COST_THRESHOLD,
+        node_id=node_id,
+        sequence=0,
+        spent=spent,
+        cap=cap,
+        ratio=ratio,
+        threshold_name=threshold_name,
+        tier_shift=tier_shift,
     )

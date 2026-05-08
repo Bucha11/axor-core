@@ -66,3 +66,31 @@ class ExecutionEnvelope:
     lineage: LineageSummary
     cancel_token: CancelToken = field(default_factory=make_token)
     parent_metadata: dict[str, Any] = field(default_factory=dict)
+
+    # ── Added in 0.5.0: adapter-facing optimisation hints ─────────────────────
+    #
+    # cache_hints: directives for adapters that support prefix-caching.
+    # Structure:
+    #   {
+    #     "ttl": "5m" | "1h",               # cache TTL
+    #     "blocks": ["system", "tools",      # which blocks to mark as cacheable
+    #                "context_top_k"],
+    #     "k": int,                           # how many top-K context fragments
+    #   }
+    # Adapters that do not support caching silently ignore this field.
+    # Core never populates it — only adapters read and write it.
+    cache_hints: dict[str, Any] | None = None
+
+    # deterministic: True when the executor is expected to produce reproducible
+    # output (temperature=0 or equivalent). Adapters may enable response-level
+    # caching when this flag is set.
+    deterministic: bool = False
+
+    # depth: depth of this node in the execution tree.
+    # Mirror of lineage.depth — provided as a direct field to avoid lineage
+    # traversal in hot paths (cascade tier selection, routing decisions).
+    depth: int = 0
+
+    # parent_node_id: shortcut to lineage.parent_id.
+    # Avoids None-guard on lineage in adapter hot paths.
+    parent_node_id: str | None = None

@@ -17,7 +17,7 @@ class TraceEventKind(str, Enum):
     # policy
     SIGNAL_CHOSEN      = "signal_chosen"
     POLICY_CHOSEN      = "policy_chosen"
-    POLICY_ADJUSTED    = "policy_adjusted"      # initial signal was wrong — valuable training data
+    POLICY_ADJUSTED    = "policy_adjusted"
 
     # intents
     INTENT_APPROVED    = "intent_approved"
@@ -29,23 +29,35 @@ class TraceEventKind(str, Enum):
     CHILD_COMPLETED    = "child_completed"
 
     # context
-    CONTEXT_COMPRESSED = "context_compressed"
+    CONTEXT_COMPRESSED    = "context_compressed"
     CONTEXT_SLICE_DERIVED = "context_slice_derived"
 
     # budget
-    TOKENS_SPENT       = "tokens_spent"
-    BUDGET_WARNING     = "budget_warning"
+    TOKENS_SPENT    = "tokens_spent"
+    BUDGET_WARNING  = "budget_warning"
 
     # commands
-    COMMAND_ROUTED     = "command_routed"
+    COMMAND_ROUTED = "command_routed"
 
     # extensions
-    EXTENSION_LOADED   = "extension_loaded"
-    PLUGIN_DENIED      = "plugin_denied"        # plugin tried to register something policy blocked
-    SKILL_ACTIVATED    = "skill_activated"
+    EXTENSION_LOADED = "extension_loaded"
+    PLUGIN_DENIED    = "plugin_denied"
+    SKILL_ACTIVATED  = "skill_activated"
 
     # cancellation
-    CANCELLED          = "cancelled"            # node execution was cancelled
+    CANCELLED = "cancelled"
+
+    # ── Added in 0.5.0: adapter observability ─────────────────────────────────
+    # Emitted by adapters that support prefix-caching (e.g. axor-openrouter).
+    CACHE_HIT   = "cache_hit"    # tokens served from cache
+    CACHE_MISS  = "cache_miss"   # cache miss — full prompt processed
+    CACHE_WRITE = "cache_write"  # breakpoint written to cache
+
+    # Emitted by adapters when a routing decision is made (model, provider, tier).
+    ROUTING_DECISION = "routing_decision"
+
+    # Emitted by BudgetPolicyEngine when spend/cap crosses a threshold.
+    COST_THRESHOLD = "cost_threshold"
 
 
 @dataclass(frozen=True)
@@ -53,7 +65,7 @@ class TraceEvent:
     """Base for all trace events."""
     kind: TraceEventKind
     node_id: str
-    sequence: int            # global sequence number for ordering
+    sequence: int
     payload: dict[str, Any] = field(default_factory=dict)
 
 
@@ -61,34 +73,15 @@ class TraceEvent:
 
 @dataclass(frozen=True)
 class SignalChosenEvent(TraceEvent):
-    """
-    Records which classifier produced the TaskSignal and with what confidence.
-    Used for classifier performance tracking.
-
-    `scores` carries the full classifier distribution when available,
-    not just the winning signal. Keys are namespaced: `complexity.focused`,
-    `nature.readonly`, `domain.coding`. Empty when the classifier does not
-    expose a distribution (e.g. injected external classifier without
-    `classify_with_scores` overridden).
-    """
-    raw_input: str           = ""
+    raw_input: str            = ""
     signal: TaskSignal | None = None
-    confidence: float        = 0.0
-    classifier: str          = "heuristic"   # "heuristic" | "local" | "cloud"
-    scores: dict[str, float] = field(default_factory=dict)
+    confidence: float         = 0.0
+    classifier: str           = "heuristic"
+    scores: dict[str, float]  = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
 class PolicyAdjustedEvent(TraceEvent):
-    """
-    Policy was corrected mid-execution because the initial signal was wrong.
-
-    This is the most valuable training signal for classifiers:
-    - what was the input
-    - what signal was chosen
-    - what signal was actually needed
-    - how many tokens were wasted before correction
-    """
     original_signal: TaskSignal | None  = None
     adjusted_signal: TaskSignal | None  = None
     reason: str                         = ""
@@ -105,7 +98,7 @@ class IntentDeniedEvent(TraceEvent):
 class ChildSpawnedEvent(TraceEvent):
     child_node_id: str      = ""
     child_depth: int        = 0
-    context_fraction: float = 0.0    # how much of parent context the child received
+    context_fraction: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -114,8 +107,7 @@ class TokensSpentEvent(TraceEvent):
     output_tokens: int  = 0
     tool_tokens: int    = 0
     context_tokens: int = 0
-    cumulative: int     = 0          # total for this lineage tree so far
-    # Anthropic prompt-cache accounting (separate from input_tokens)
+    cumulative: int     = 0
     cache_creation_input_tokens: int = 0
     cache_read_input_tokens: int     = 0
 
@@ -123,26 +115,74 @@ class TokensSpentEvent(TraceEvent):
 @dataclass(frozen=True)
 class CommandRoutedEvent(TraceEvent):
     command_name: str   = ""
-    command_class: str  = ""         # governance | context | passthrough
+    command_class: str  = ""
     allowed: bool       = True
 
 
 @dataclass(frozen=True)
 class PluginDeniedEvent(TraceEvent):
     plugin_name: str    = ""
-    denied_item: str    = ""         # tool name, command name, etc.
+    denied_item: str    = ""
     reason: str         = ""
 
 
 @dataclass(frozen=True)
 class CancelledEvent(TraceEvent):
+    reason: str           = ""
+    detail: str           = ""
+    completed_intents: int = 0
+
+
+# ── New in 0.5.0: adapter observability events ─────────────────────────────────
+
+@dataclass(frozen=True)
+class CacheEvent(TraceEvent):
     """
-    Node execution was cancelled before completion.
-    Partial result was returned.
+    Emitted by caching-aware adapters (e.g. axor-openrouter) to record
+    whether a prefix-cache was hit, missed, or written.
+
+    hit=True  → tokens were served from cache (CACHE_HIT kind)
+    hit=False → cache miss or write (CACHE_MISS / CACHE_WRITE kind)
+
+    Pairs of CACHE_WRITE followed by CACHE_HIT events across turns allow
+    downstream tools to compute cache efficiency and guide TTL tuning.
     """
-    reason: str          = ""   # CancelReason value
-    detail: str          = ""
-    completed_intents: int = 0  # how many intents completed before cancel
+    hit: bool = True
+    tokens: int = 0                # tokens involved in this cache event
+    ttl: int = 0                   # TTL in seconds (0 = provider default)
+    breakpoint_block: str = ""     # "system" | "tools" | "context_top_k"
+
+
+@dataclass(frozen=True)
+class RoutingEvent(TraceEvent):
+    """
+    Emitted by routing-aware adapters when a model/provider is selected.
+
+    Enables post-session analysis of:
+    - which tier handled each depth
+    - how often fallbacks were triggered
+    - whether sort strategy correlated with cost savings
+    """
+    provider: str = ""
+    model: str = ""
+    tier: int = 0                  # 0 = root/best, higher = cheaper
+    sort_strategy: str = ""        # "price" | "throughput" | "latency" | ""
+    fallback_index: int = 0        # 0 = primary, 1+ = Nth fallback used
+
+
+@dataclass(frozen=True)
+class CostThresholdEvent(TraceEvent):
+    """
+    Emitted by BudgetPolicyEngine when the spend/cap ratio crosses a threshold.
+
+    Enables the adaptive router to shift tier down (or back up) in real time.
+    Recorded in trace for post-session budget analysis.
+    """
+    spent: int = 0
+    cap: int = 0
+    ratio: float = 0.0
+    threshold_name: str = ""       # "compress" | "deny_child" | "restrict_export"
+    tier_shift: int = 0            # -1 = shifted to cheaper tier, 0 = hold, 1 = shifted up
 
 
 # ── Telemetry contracts ───────────────────────────────────────────────────────
@@ -150,91 +190,33 @@ class CancelledEvent(TraceEvent):
 
 @runtime_checkable
 class Embedder(Protocol):
-    """
-    Produces a fixed-dimension numeric fingerprint of raw input text.
-
-    Core ships no implementation — the default pipeline passes None when no
-    embedder is attached. axor-telemetry provides MinHashEmbedder (char-3
-    n-grams, 128 hashes). External packages may provide semantic embedders.
-    """
-
     @property
-    def kind(self) -> str:
-        """Identifier like 'minhash_v1' for downstream schema matching."""
-        ...
-
-    def embed(self, text: str) -> list[float]:
-        """Return a fixed-dim vector for the given text."""
-        ...
+    def kind(self) -> str: ...
+    def embed(self, text: str) -> list[float]: ...
 
 
 class TelemetrySink(ABC):
-    """
-    Destination for AnonymizedTraceRecord batches.
-
-    Core ships no implementation. axor-telemetry provides FileTelemetrySink
-    (local JSONL queue) and HTTPTelemetrySink (remote ingest endpoint).
-
-    Implementations must be safe to call concurrently — the pipeline may
-    flush from a background task while the user's code records events.
-    """
-
     @abstractmethod
-    async def send(self, records: list["AnonymizedTraceRecord"]) -> None:
-        """Enqueue or ship a batch. Must not raise on transient failures."""
-        ...
-
+    async def send(self, records: list["AnonymizedTraceRecord"]) -> None: ...
     @abstractmethod
-    async def flush(self) -> None:
-        """Force in-memory buffers to their underlying durable store."""
-        ...
-
+    async def flush(self) -> None: ...
     async def aclose(self) -> None:
-        """Release resources. Default: flush only."""
         await self.flush()
 
 
-# ── AnonymizedTraceRecord — for classifier training ───────────────────────────
-
 @dataclass(frozen=True)
 class AnonymizedTraceRecord:
-    """
-    What leaves the machine for cloud classifier training.
-
-    Critically: no raw_input, no user code, no file contents.
-    Only embeddings and governance metadata.
-
-    Users must explicitly opt in to training_opt_in=True in TraceConfig.
-
-    `input_embedding` is Optional because the embedder lives in a separate
-    package (axor-telemetry). When axor-core alone is installed, records
-    are emitted with embedding=None and fingerprint_kind="" — still useful
-    for aggregate stats, unusable for classifier training.
-    """
     signal_chosen: TaskSignal
     classifier_used: str
     confidence: float
     tokens_spent: int
-    policy_adjusted: bool                    # was the initial signal wrong?
+    policy_adjusted: bool
     input_embedding: list[float] | None = None
-    fingerprint_kind: str = ""               # e.g. "minhash_v1"; "" when no embedder
-    # deliberately no: raw_input, session_id, user_id, code content
+    fingerprint_kind: str = ""
 
-
-# ── TraceConfig ────────────────────────────────────────────────────────────────
 
 @dataclass(frozen=True)
 class TraceConfig:
-    """
-    Controls what trace data is persisted and where.
-
-    Defaults are maximally private:
-    - local_only=True      traces never leave the machine
-    - persist_inputs=False raw inputs are not written even locally
-    - persist_to_disk=True events stream to JSONL per session (honours local_only)
-    - training_opt_in=False anonymized records not sent for cloud training
-    - retention_days=30    JSONL files older than this are deleted on collector init
-    """
     local_only: bool       = True
     persist_inputs: bool   = False
     persist_to_disk: bool  = True
@@ -243,14 +225,8 @@ class TraceConfig:
     retention_days: int    = 30
 
 
-# ── DecisionTrace ──────────────────────────────────────────────────────────────
-
 @dataclass
 class DecisionTrace:
-    """
-    Full trace for one node execution.
-    Belongs to lineage — not flat logging.
-    """
     node_id: str
     parent_id: str | None
     depth: int
