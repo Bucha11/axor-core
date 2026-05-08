@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
+from typing import Callable
 
 from axor_core.budget.estimator import BudgetEstimator
 from axor_core.budget.tracker import BudgetTracker
-from axor_core.contracts.context import ContextView
 from axor_core.contracts.envelope import ExecutionEnvelope
 from axor_core.contracts.policy import (
     ExecutionPolicy,
@@ -16,10 +16,10 @@ from axor_core.contracts.policy import (
 
 
 class OptimizationAction(str, Enum):
-    PROCEED          = "proceed"           # execute as-is
-    COMPRESS_CONTEXT = "compress_context"  # tighten compression before proceeding
-    DENY_CHILD       = "deny_child"        # deny spawn_child — budget pressure
-    RESTRICT_EXPORT  = "restrict_export"   # downgrade export mode
+    PROCEED          = "proceed"
+    COMPRESS_CONTEXT = "compress_context"
+    DENY_CHILD       = "deny_child"
+    RESTRICT_EXPORT  = "restrict_export"
 
 
 @dataclass(frozen=True)
@@ -35,18 +35,12 @@ class BudgetThresholds:
     """
     Fractions of soft_limit at which the policy engine fires actions.
 
-    Defaults are heuristics, not measurements. Tune for your workload:
-      - Long research tasks with broad context: lower compress, lower hard_stop
-        (e.g. 0.50 / 0.70 / 0.85 / 0.95) so headroom is preserved earlier.
-      - Interactive REPL with short turns: raise everything
-        (e.g. 0.70 / 0.85 / 0.95 / 0.99) so a chatty session isn't throttled.
-
-    Order invariant (validated): compress < deny_child < restrict_export < hard_stop.
+    Order invariant: compress < deny_child < restrict_export < hard_stop.
     """
-    compress: float      = 0.60
-    deny_child: float    = 0.80
+    compress: float        = 0.60
+    deny_child: float      = 0.80
     restrict_export: float = 0.90
-    hard_stop: float     = 0.95
+    hard_stop: float       = 0.95
 
     def __post_init__(self) -> None:
         ordered = (self.compress, self.deny_child, self.restrict_export, self.hard_stop)
@@ -60,33 +54,26 @@ class BudgetThresholds:
             )
 
 
+# Callback type for threshold events (new in 0.5.0).
+# Receives (threshold_name, ratio) where threshold_name is one of:
+# "compress", "deny_child", "restrict_export", "hard_stop"
+ThresholdCallback = Callable[[str, float], None]
+
+
 class BudgetPolicyEngine:
     """
     Real-time optimizer. Fires on every execution event.
 
-    Principle: minimum sufficient for quality. Most thresholds are advisory —
-    the engine *suggests* compression/restriction and the node decides how to
-    react. The single exception is `hard_stop`: when the spent ratio crosses
-    that threshold inside `on_intent_arrived()`, the engine fires
-    `cancel_token.cancel(BUDGET_EXHAUSTED)` to terminate the active node
-    immediately. Set `BudgetThresholds(hard_stop=1.0)` to disable the
-    hard-stop and make the engine purely advisory.
-
-    The engine does not decompose tasks.
+    Principle: minimum sufficient for quality.
 
     Three moments it fires:
         on_intent_arrived()    — before envelope is built for this intent.
-                                 May fire `cancel_token` (the only blocking action).
-        on_result_arrived()    — after tool result, before writing to context.
-                                 Always advisory.
+        on_result_arrived()    — after tool result.
         on_child_requested()   — before child node is created.
-                                 Always advisory.
 
-    Each returns an OptimizationDecision that the node acts on.
-
-    Thresholds are configurable via the `thresholds` constructor arg.
-    The defaults (0.60 / 0.80 / 0.90 / 0.95) are starting heuristics, not
-    measurements — see BudgetThresholds docstring for tuning guidance.
+    New in 0.5.0:
+        on_threshold_crossed() — subscribe to threshold crossing events.
+        suggest_tier_shift()   — advisory hint for adaptive routing.
     """
 
     def __init__(
@@ -96,30 +83,77 @@ class BudgetPolicyEngine:
         soft_limit: int | None = None,
         thresholds: BudgetThresholds | None = None,
     ) -> None:
-        self._tracker   = tracker
-        self._estimator = estimator
-        # soft_limit is advisory — not a hard cap
-        # None means no budget guidance, always PROCEED
+        self._tracker    = tracker
+        self._estimator  = estimator
         self._soft_limit = soft_limit
-        self._thresholds = (
-            thresholds if thresholds is not None else BudgetThresholds()
-        )
+        self._thresholds = thresholds if thresholds is not None else BudgetThresholds()
+        self._threshold_callbacks: list[ThresholdCallback] = []
+        # Track the last threshold bucket we fired for, to avoid duplicate events.
+        self._last_threshold_fired: str = ""
+
+    # ── Threshold subscription API (new in 0.5.0) ─────────────────────────────────
+
+    def on_threshold_crossed(
+        self,
+        callback: ThresholdCallback,
+    ) -> Callable[[], None]:
+        """
+        Register a callback fired when spend/cap ratio crosses a threshold.
+
+        The callback receives (threshold_name: str, ratio: float).
+        Each threshold fires at most once per monotonic increase
+        (i.e., it does not re-fire if spend drops and rises again).
+
+        Returns a no-arg callable that removes the subscription.
+        """
+        self._threshold_callbacks.append(callback)
+
+        def _remove() -> None:
+            try:
+                self._threshold_callbacks.remove(callback)
+            except ValueError:
+                pass
+
+        return _remove
+
+    def suggest_tier_shift(self) -> int:
+        """
+        Advisory hint for adaptive routing (new in 0.5.0).
+
+        Returns:
+            -1  shift to a cheaper/lower tier (budget pressure)
+             0  hold current tier
+            +1  can afford a better tier (budget comfortable)
+
+        The hint is based on the current spend/cap ratio relative to thresholds.
+        Callers should use this as a signal, not a mandate.
+        """
+        if self._soft_limit is None:
+            return 0
+        ratio = self._tracker.total_tokens() / self._soft_limit
+        if ratio >= self._thresholds.restrict_export:
+            return -1
+        if ratio >= self._thresholds.compress:
+            return -1
+        if ratio < self._thresholds.compress * 0.5:
+            return 1
+        return 0
+
+    # ── Existing API ─────────────────────────────────────────────────────────────────
 
     def on_intent_arrived(
         self,
         envelope: ExecutionEnvelope,
         tool_count: int,
     ) -> OptimizationDecision:
-        """
-        Before executing an intent — should we tighten context?
-        """
         if self._soft_limit is None:
             return _proceed("no soft limit set")
 
-        spent  = self._tracker.total_tokens()
-        ratio  = spent / self._soft_limit
+        spent = self._tracker.total_tokens()
+        ratio = spent / self._soft_limit
 
-        # hard stop — cancel the active node via token
+        self._maybe_notify_threshold(ratio)
+
         if ratio >= self._thresholds.hard_stop:
             from axor_core.contracts.cancel import CancelReason
             envelope.cancel_token.cancel(
@@ -150,10 +184,6 @@ class BudgetPolicyEngine:
         result_token_estimate: int,
         policy: ExecutionPolicy,
     ) -> OptimizationDecision:
-        """
-        After tool result arrives — should we compress before writing to context?
-        Result compression happens here, not in the executor.
-        """
         if self._soft_limit is None:
             return _proceed("no soft limit set")
 
@@ -181,13 +211,6 @@ class BudgetPolicyEngine:
         parent_envelope: ExecutionEnvelope,
         child_task: str,
     ) -> OptimizationDecision:
-        """
-        Before spawning a child node — is the budget healthy enough?
-
-        Does not block the agent's decision to spawn.
-        Returns DENY_CHILD only under severe budget pressure.
-        The node may still override this if task quality requires it.
-        """
         if self._soft_limit is None:
             return _proceed("no soft limit set")
 
@@ -200,7 +223,6 @@ class BudgetPolicyEngine:
                 reason=f"spent {ratio:.0%} of soft limit — deny child to preserve budget",
             )
 
-        # also check if the child's context slice will be sufficient
         slice_tokens = self._estimator.estimate_child_slice_tokens(
             parent_context=parent_envelope.context,
             fraction=parent_envelope.policy.child_context_fraction,
@@ -212,7 +234,6 @@ class BudgetPolicyEngine:
         )
 
         if not sufficient:
-            # slice too small for quality — suggest compression to free up headroom
             return OptimizationDecision(
                 action=OptimizationAction.COMPRESS_CONTEXT,
                 reason="child context slice may be insufficient — compress parent context first",
@@ -231,7 +252,6 @@ class BudgetPolicyEngine:
         cache_creation_input_tokens: int = 0,
         cache_read_input_tokens: int = 0,
     ) -> None:
-        """Record token usage from a completed child node into the tracker."""
         self._tracker.record(
             node_id=node_id,
             input_tokens=input_tokens,
@@ -241,6 +261,32 @@ class BudgetPolicyEngine:
             cache_creation_input_tokens=cache_creation_input_tokens,
             cache_read_input_tokens=cache_read_input_tokens,
         )
+
+    # ── Private ─────────────────────────────────────────────────────────────────────
+
+    def _maybe_notify_threshold(self, ratio: float) -> None:
+        """Fire threshold callbacks once per threshold bucket crossing."""
+        if not self._threshold_callbacks or self._soft_limit is None:
+            return
+
+        # Determine which bucket we're in (highest crossed wins)
+        name = ""
+        if ratio >= self._thresholds.hard_stop:
+            name = "hard_stop"
+        elif ratio >= self._thresholds.restrict_export:
+            name = "restrict_export"
+        elif ratio >= self._thresholds.deny_child:
+            name = "deny_child"
+        elif ratio >= self._thresholds.compress:
+            name = "compress"
+
+        if name and name != self._last_threshold_fired:
+            self._last_threshold_fired = name
+            for cb in self._threshold_callbacks:
+                try:
+                    cb(name, ratio)
+                except Exception:
+                    pass
 
 
 def _proceed(reason: str) -> OptimizationDecision:

@@ -3,7 +3,7 @@ from __future__ import annotations
 import threading
 from collections import deque
 from dataclasses import dataclass, field
-from typing import TypedDict
+from typing import Callable, TypedDict
 
 
 class CacheSummary(TypedDict):
@@ -63,15 +63,14 @@ class NodeBudget:
     node_id: str
     parent_id: str | None
     depth: int
-    input_tokens: int  = 0
-    output_tokens: int = 0
-    tool_tokens: int   = 0
+    input_tokens: int   = 0
+    output_tokens: int  = 0
+    tool_tokens: int    = 0
     context_tokens: int = 0
-    # Anthropic prompt-cache accounting. These counters are separate from
-    # input_tokens as returned by the Messages API. Keep them split so cost
-    # calculation can apply per-class multipliers (1.25x creation, 0.1x read).
     cache_creation_input_tokens: int = 0
     cache_read_input_tokens: int     = 0
+    # Optional tier label (e.g. "tier_0", "tier_1") set by adapter cascade
+    tier: str | None = None
 
     @property
     def total_input_tokens(self) -> int:
@@ -97,10 +96,30 @@ class NodeBudget:
 
     @property
     def cache_hit_rate(self) -> float:
-        """Fraction of full input volume that was served from cache."""
         cached = self.cache_read_input_tokens
         denom  = self.input_tokens + self.cache_read_input_tokens
         return cached / denom if denom > 0 else 0.0
+
+
+# ── Subscription types (new in 0.5.0) ─────────────────────────────────────────────
+
+class RecordEvent(TypedDict):
+    """Payload passed to BudgetTracker subscribers on every record() call."""
+    node_id: str
+    input_tokens: int
+    output_tokens: int
+    tool_tokens: int
+    context_tokens: int
+    cache_creation_input_tokens: int
+    cache_read_input_tokens: int
+    tier: str | None
+    cumulative_total: int    # session-wide total after this record
+
+
+# Callable that receives a RecordEvent. Return value is ignored.
+BudgetSubscriber = Callable[[RecordEvent], None]
+# Returned by subscribe() — call it to unsubscribe.
+Unsubscribe = Callable[[], None]
 
 
 class BudgetTracker:
@@ -113,23 +132,60 @@ class BudgetTracker:
     Provides data to policy_engine.py which makes decisions.
 
     One tracker per GovernedSession — shared across all child nodes.
+
+    Subscriptions (new in 0.5.0)
+    ────────────────────────────
+    Subscribers (e.g. the adaptive router in axor-openrouter) can register
+    callbacks to react to real-time token spend without polling:
+
+        unsub = tracker.subscribe(lambda e: print(e["cumulative_total"]))
+        # … later …
+        unsub()  # remove subscription
+
+    Callbacks are called synchronously inside record() while holding the lock.
+    Keep them short; do not call tracker methods from inside a callback.
     """
 
     def __init__(self) -> None:
-        self._lock   = threading.Lock()
+        self._lock        = threading.Lock()
         self._nodes: dict[str, NodeBudget] = {}
+        self._subscribers: list[BudgetSubscriber] = []
+
+    # ── Subscription API ──────────────────────────────────────────────────────────
+
+    def subscribe(self, callback: BudgetSubscriber) -> Unsubscribe:
+        """
+        Register a callback fired after every record() call.
+
+        Returns a no-arg callable that removes the subscription.
+        """
+        with self._lock:
+            self._subscribers.append(callback)
+
+        def _unsubscribe() -> None:
+            with self._lock:
+                try:
+                    self._subscribers.remove(callback)
+                except ValueError:
+                    pass
+
+        return _unsubscribe
+
+    # ── Core API ───────────────────────────────────────────────────────────────────
 
     def register_node(
         self,
         node_id: str,
         parent_id: str | None,
         depth: int,
+        tier: str | None = None,
     ) -> None:
         with self._lock:
             self._nodes[node_id] = NodeBudget(
                 node_id=node_id,
                 parent_id=parent_id,
                 depth=depth,
+                tier=tier,
             )
 
     def record(
@@ -137,20 +193,23 @@ class BudgetTracker:
         node_id: str,
         input_tokens: int,
         output_tokens: int,
-        tool_tokens: int   = 0,
+        tool_tokens: int    = 0,
         context_tokens: int = 0,
         cache_creation_input_tokens: int = 0,
         cache_read_input_tokens: int     = 0,
+        tier: str | None = None,
     ) -> None:
+        """Record token usage for a node. Notifies subscribers after updating."""
         with self._lock:
             if node_id not in self._nodes:
-                # node registered late — create on the fly
                 self._nodes[node_id] = NodeBudget(
                     node_id=node_id,
                     parent_id=None,
                     depth=0,
+                    tier=tier,
                 )
             budget = self._nodes[node_id]
+            effective_tier = tier if tier is not None else budget.tier
             self._nodes[node_id] = NodeBudget(
                 node_id=budget.node_id,
                 parent_id=budget.parent_id,
@@ -165,43 +224,41 @@ class BudgetTracker:
                 cache_read_input_tokens=(
                     budget.cache_read_input_tokens + cache_read_input_tokens
                 ),
+                tier=effective_tier,
             )
+            cumulative = sum(n.total for n in self._nodes.values())
+            event: RecordEvent = {
+                "node_id":                      node_id,
+                "input_tokens":                 input_tokens,
+                "output_tokens":                output_tokens,
+                "tool_tokens":                  tool_tokens,
+                "context_tokens":               context_tokens,
+                "cache_creation_input_tokens":  cache_creation_input_tokens,
+                "cache_read_input_tokens":      cache_read_input_tokens,
+                "tier":                         effective_tier,
+                "cumulative_total":              cumulative,
+            }
+            # notify inside the lock so subscribers see a consistent state
+            for cb in self._subscribers:
+                try:
+                    cb(event)
+                except Exception:
+                    pass  # subscriber errors must never break execution
 
-    # ── Queries ────────────────────────────────────────────────────────────────
+    # ── Queries ───────────────────────────────────────────────────────────────────
 
     def total_tokens(self) -> int:
-        """Total processed token volume across all nodes in this session."""
         with self._lock:
             return sum(n.total for n in self._nodes.values())
 
     def total_billable_tokens(self) -> int:
-        """
-        Total billable token volume across all nodes.
-
-        This is an unweighted token count: input + cache_creation + cache_read
-        + output. Provider-specific dollar cost can apply different
-        multipliers to each input class.
-        """
         return self.total_tokens()
 
     def estimated_cost(self, rates: TokenCostRates) -> float:
-        """Estimated money cost across all nodes using the supplied rates."""
         with self._lock:
             return sum(n.estimated_cost(rates) for n in self._nodes.values())
 
     def cache_summary(self) -> CacheSummary:
-        """
-        Aggregate cache accounting across the whole session.
-
-        Returns:
-            input_tokens:                non-cached input tokens
-            cache_creation_input_tokens: tokens billed at 1.25x to populate cache
-            cache_read_input_tokens:     tokens billed at 0.1x served from cache
-            total_input_tokens:          input + cache_creation + cache_read
-            output_tokens:               output tokens
-            total_tokens:                total_input_tokens + output
-            hit_rate:                    cache_read / (input + cache_read)
-        """
         with self._lock:
             inp = sum(n.input_tokens for n in self._nodes.values())
             out = sum(n.output_tokens for n in self._nodes.values())
@@ -219,49 +276,68 @@ class BudgetTracker:
             }
 
     def cost_summary(self, rates: TokenCostRates) -> CostSummary:
-        """
-        Aggregate token and money accounting across the whole session.
-
-        Money fields use the supplied provider/model rates per million tokens.
-        """
         with self._lock:
             inp = sum(n.input_tokens for n in self._nodes.values())
             out = sum(n.output_tokens for n in self._nodes.values())
             cw  = sum(n.cache_creation_input_tokens for n in self._nodes.values())
             cr  = sum(n.cache_read_input_tokens for n in self._nodes.values())
             uncached_input_cost = inp / 1_000_000 * rates.input_per_m
-            cache_write_cost = (
-                cw / 1_000_000 * rates.effective_cache_creation_input_per_m
-            )
-            cache_read_cost = (
-                cr / 1_000_000 * rates.effective_cache_read_input_per_m
-            )
-            output_cost = out / 1_000_000 * rates.output_per_m
+            cache_write_cost    = cw  / 1_000_000 * rates.effective_cache_creation_input_per_m
+            cache_read_cost     = cr  / 1_000_000 * rates.effective_cache_read_input_per_m
+            output_cost         = out / 1_000_000 * rates.output_per_m
             return {
-                "currency": rates.currency,
-                "input_tokens": inp,
-                "output_tokens": out,
+                "currency":                    rates.currency,
+                "input_tokens":                inp,
+                "output_tokens":               out,
                 "cache_creation_input_tokens": cw,
-                "cache_read_input_tokens": cr,
-                "total_input_tokens": inp + cw + cr,
-                "total_tokens": inp + cw + cr + out,
-                "input_cost": uncached_input_cost,
-                "cache_creation_cost": cache_write_cost,
-                "cache_read_cost": cache_read_cost,
-                "output_cost": output_cost,
-                "total_cost": (
-                    uncached_input_cost
-                    + cache_write_cost
-                    + cache_read_cost
-                    + output_cost
+                "cache_read_input_tokens":     cr,
+                "total_input_tokens":          inp + cw + cr,
+                "total_tokens":                inp + cw + cr + out,
+                "input_cost":                  uncached_input_cost,
+                "cache_creation_cost":         cache_write_cost,
+                "cache_read_cost":             cache_read_cost,
+                "output_cost":                 output_cost,
+                "total_cost":                  (
+                    uncached_input_cost + cache_write_cost
+                    + cache_read_cost   + output_cost
                 ),
-                "input_per_m": rates.input_per_m,
-                "cache_creation_input_per_m": (
-                    rates.effective_cache_creation_input_per_m
-                ),
-                "cache_read_input_per_m": rates.effective_cache_read_input_per_m,
-                "output_per_m": rates.output_per_m,
+                "input_per_m":                 rates.input_per_m,
+                "cache_creation_input_per_m":  rates.effective_cache_creation_input_per_m,
+                "cache_read_input_per_m":       rates.effective_cache_read_input_per_m,
+                "output_per_m":                rates.output_per_m,
             }
+
+    def tier_summary(self) -> dict[str, CacheSummary]:
+        """
+        Per-tier token summary (new in 0.5.0).
+
+        Returns a dict keyed by tier label (e.g. "tier_0", "tier_1").
+        Nodes without a tier label are grouped under the key "untiered".
+        Useful for analysing cost distribution across cascade tiers.
+        """
+        with self._lock:
+            tiers: dict[str, list[NodeBudget]] = {}
+            for n in self._nodes.values():
+                key = n.tier if n.tier is not None else "untiered"
+                tiers.setdefault(key, []).append(n)
+
+        result: dict[str, CacheSummary] = {}
+        for key, nodes in tiers.items():
+            inp = sum(n.input_tokens for n in nodes)
+            out = sum(n.output_tokens for n in nodes)
+            cw  = sum(n.cache_creation_input_tokens for n in nodes)
+            cr  = sum(n.cache_read_input_tokens for n in nodes)
+            denom = inp + cr
+            result[key] = {
+                "input_tokens":                inp,
+                "output_tokens":               out,
+                "cache_creation_input_tokens": cw,
+                "cache_read_input_tokens":     cr,
+                "total_input_tokens":          inp + cw + cr,
+                "total_tokens":                inp + cw + cr + out,
+                "hit_rate":                    (cr / denom) if denom > 0 else 0.0,
+            }
+        return result
 
     def node_tokens(self, node_id: str) -> int:
         with self._lock:
@@ -269,7 +345,6 @@ class BudgetTracker:
             return node.total if node else 0
 
     def subtree_tokens(self, node_id: str) -> int:
-        """Total tokens for a node and all its descendants."""
         with self._lock:
             ids = self._subtree_ids(node_id)
             return sum(
@@ -279,7 +354,6 @@ class BudgetTracker:
             )
 
     def depth_tokens(self, depth: int) -> int:
-        """Total tokens spent at a specific depth level."""
         with self._lock:
             return sum(
                 n.total for n in self._nodes.values()
@@ -290,16 +364,11 @@ class BudgetTracker:
         with self._lock:
             return dict(self._nodes)
 
-    # ── Private ────────────────────────────────────────────────────────────────
-
     def _subtree_ids(self, root_id: str) -> set[str]:
-        """Collect node_id + all descendant ids via BFS."""
-        # build parent→children index for O(n) traversal
         children: dict[str, list[str]] = {}
         for node in self._nodes.values():
             if node.parent_id is not None:
                 children.setdefault(node.parent_id, []).append(node.node_id)
-
         result: set[str] = set()
         queue = deque([root_id])
         while queue:

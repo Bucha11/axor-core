@@ -7,9 +7,13 @@ Token optimization. Fires on every execution event.
     BudgetEstimator     — cost estimates and slice sufficiency checks
     BudgetPolicyEngine  — real-time optimizer: minimum sufficient, not hard cap
 
-Principle:
-    Not "deny if over limit".
-    But "tighten what we can, at the moment we can".
+New in 0.5.0:
+    BudgetTracker.subscribe()        — live spend notifications
+    BudgetTracker.tier_summary()     — per-tier token breakdown
+    BudgetPolicyEngine.on_threshold_crossed() — threshold events for adaptive routing
+    BudgetPolicyEngine.suggest_tier_shift()   — advisory tier direction
+    NodeBudget.tier                  — optional tier label
+    RecordEvent, BudgetSubscriber, Unsubscribe, ThresholdCallback
 """
 
 from axor_core.budget.tracker import (
@@ -18,6 +22,9 @@ from axor_core.budget.tracker import (
     CostSummary,
     NodeBudget,
     TokenCostRates,
+    RecordEvent,
+    BudgetSubscriber,
+    Unsubscribe,
 )
 from axor_core.budget.estimator import BudgetEstimator
 from axor_core.budget.policy_engine import (
@@ -25,6 +32,7 @@ from axor_core.budget.policy_engine import (
     BudgetThresholds,
     OptimizationDecision,
     OptimizationAction,
+    ThresholdCallback,
 )
 
 __all__ = [
@@ -33,9 +41,13 @@ __all__ = [
     "CostSummary",
     "NodeBudget",
     "TokenCostRates",
+    "RecordEvent",
+    "BudgetSubscriber",
+    "Unsubscribe",
     "BudgetEstimator",
     "BudgetPolicyEngine",
     "BudgetThresholds",
     "OptimizationDecision",
     "OptimizationAction",
+    "ThresholdCallback",
 ]
