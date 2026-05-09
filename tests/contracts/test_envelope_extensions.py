@@ -1,4 +1,4 @@
-"""Tests for ExecutionEnvelope 0.5.0 fields: cache_hints, deterministic, depth, parent_node_id."""
+"""Tests for ExecutionEnvelope 0.5.0+ fields."""
 from __future__ import annotations
 
 import pytest
@@ -12,6 +12,7 @@ def test_envelope_default_fields(make_envelope):
     assert env.deterministic is False
     assert env.depth == 0
     assert env.parent_node_id is None
+    assert env.routing_tier is None
 
 
 def test_envelope_cache_hints_set(make_envelope):
@@ -59,8 +60,22 @@ def test_envelope_parent_node_id_set(make_envelope):
 
 
 def test_envelope_depth_independent_of_lineage(make_envelope):
-    """depth field is a direct shortcut, independent of lineage.depth."""
+    """depth is a structural fact; routing_tier is the routing decision."""
     env = make_envelope()
     env.depth = 7
     assert env.depth == 7
-    assert env.lineage.depth == 0  # lineage unchanged
+    assert env.lineage.depth == 0
+
+
+def test_envelope_routing_tier_overrides_depth_semantically(make_envelope):
+    """routing_tier and depth are independent fields."""
+    env = make_envelope()
+    env.depth = 6          # leaf node
+    env.routing_tier = 0   # but force most-capable tier
+    assert env.depth == 6
+    assert env.routing_tier == 0
+
+
+def test_envelope_routing_tier_none_by_default(make_envelope):
+    env = make_envelope()
+    assert env.routing_tier is None

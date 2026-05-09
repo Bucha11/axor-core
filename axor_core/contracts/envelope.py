@@ -88,11 +88,18 @@ class ExecutionEnvelope:
     # caching when this flag is set.
     deterministic: bool = False
 
-    # depth: depth of this node in the execution tree.
+    # depth: depth of this node in the execution tree (structural fact).
     # Mirror of lineage.depth — provided as a direct field to avoid lineage
-    # traversal in hot paths (cascade tier selection, routing decisions).
+    # traversal in hot paths.
     depth: int = 0
 
     # parent_node_id: shortcut to lineage.parent_id.
-    # Avoids None-guard on lineage in adapter hot paths.
     parent_node_id: str | None = None
+
+    # routing_tier: explicit tier override for adapters that support cascade routing.
+    # When set, the adapter uses this tier index directly instead of deriving one
+    # from depth. Keeps depth as a structural fact and tier as a routing decision.
+    #
+    # Example: a leaf node generating a security patch may set routing_tier=0 to
+    # force the most capable model regardless of its position in the tree.
+    routing_tier: int | None = None
