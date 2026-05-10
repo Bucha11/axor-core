@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 from axor_core.contracts.context import ContextView, LineageSummary
 from axor_core.contracts.policy import ExecutionPolicy, ToolPolicy
 from axor_core.contracts.cancel import CancelToken, make_token
+
+if TYPE_CHECKING:
+    from axor_core.contracts.policy import TaskSignal
 
 
 @dataclass(frozen=True)
@@ -72,6 +75,11 @@ class ExecutionEnvelope:
     deterministic: bool = False
     depth: int = 0
     parent_node_id: str | None = None
+
+    # ── Added in 0.5.2: task signal for adapter-side model routing ─────────────
+    # Computed by TaskAnalyzer before execution; adapters may use
+    # task_signal.complexity to select an appropriate model tier.
+    task_signal: "TaskSignal | None" = None
 
 
 @dataclass(frozen=True)

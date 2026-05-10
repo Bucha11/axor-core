@@ -53,6 +53,7 @@ class EnvelopeBuilder:
         node_id: str | None = None,
         parent_metadata: dict | None = None,
         cancel_token=None,
+        task_signal=None,
     ) -> ExecutionEnvelope:
         from axor_core.contracts.cancel import make_token
         node_id = node_id or _new_node_id()
@@ -70,6 +71,7 @@ class EnvelopeBuilder:
             lineage=lineage,
             cancel_token=cancel_token or make_token(),
             parent_metadata=parent_metadata or {},
+            task_signal=task_signal,
         )
 
     def _derive_export_contract(self, policy: ExecutionPolicy) -> ExportContract:

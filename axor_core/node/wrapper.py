@@ -95,10 +95,12 @@ class GovernedNode:
         cancel_token = cancel_token or make_token()
 
         # ── 1. Policy ──────────────────────────────────────────────────────────
+        task_signal = None
         if override_policy is not None:
             policy = override_policy
         else:
             signal, signal_event = await self._analyzer.analyze(raw_state.task)
+            task_signal = signal
             trace_events.append(_stamp(signal_event, node_id="pending", sequence=0))
             policy = self._selector.select(signal)
 
@@ -146,6 +148,7 @@ class GovernedNode:
             node_id=lineage.node_id,
             parent_metadata={"session_id": raw_state.session_id},
             cancel_token=cancel_token,
+            task_signal=task_signal,
         )
 
         # ── 5. Budget pre-check ────────────────────────────────────────────────
