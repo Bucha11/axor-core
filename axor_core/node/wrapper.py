@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import dataclasses
+import logging
+
+log = logging.getLogger("axor.core.node")
 
 from axor_core.contracts.cancel import CancelToken, CancelReason, make_token
 from axor_core.contracts.context import ContextView, LineageSummary, RawExecutionState
@@ -160,6 +163,19 @@ class GovernedNode:
             if cancel_token.is_cancelled():
                 # budget engine fired hard stop
                 return self._partial_result(envelope, "", {}, trace_events)
+            if (
+                decision.action.value == "compress_context"
+                and self._context_manager is not None
+            ):
+                mode = decision.suggested_compression
+                if mode is None:
+                    from axor_core.contracts.policy import CompressionMode
+                    mode = CompressionMode.AGGRESSIVE
+                before, after = self._context_manager.compact(mode)
+                log.info(
+                    "auto-compact: %d → %d tokens (%s)",
+                    before, after, mode.value,
+                )
 
         # ── 6. Intent loop ─────────────────────────────────────────────────────
         # if executor supports ToolResultBus (e.g. ClaudeCodeExecutor),
