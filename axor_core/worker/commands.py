@@ -91,7 +91,7 @@ class SlashCommandRouter:
                 )
 
             case CommandClass.CONTEXT:
-                output = self._handle_context(command, session)
+                output = await self._handle_context_async(command, session)
                 return CommandResult(
                     command=command,
                     command_class=command_class,
@@ -184,7 +184,7 @@ class SlashCommandRouter:
             case _:
                 return f"Unknown governance command: /{command.name}"
 
-    def _handle_context(self, command: SlashCommand, session) -> str:
+    async def _handle_context_async(self, command: SlashCommand, session) -> str:
         match command.name:
             case "compact":
                 before, after = session.compact_context()
@@ -199,9 +199,79 @@ class SlashCommandRouter:
                 noun = "fragment" if removed == 1 else "fragments"
                 return f"Context cleared: {removed} {noun} removed."
             case "memory":
-                return "Memory fragments: (context subsystem not yet wired)"
+                return await self._handle_memory(command, session)
             case _:
                 return f"Unknown context command: /{command.name}"
+
+    async def _handle_memory(self, command: SlashCommand, session) -> str:
+        """
+        /memory              — list fragments in active namespace
+        /memory add <text>   — save a new fragment
+        /memory forget <key> — delete a fragment by key
+        /memory search <q>   — full-text search
+        /memory clear        — delete all fragments in namespace
+        """
+        if session._memory_provider is None:
+            return (
+                "Memory provider not configured.\n"
+                "Add memory_provider=SQLiteMemoryProvider() to your session."
+            )
+
+        args = command.args.strip()
+        ns = session.memory_namespace()
+
+        if not args or args == "list":
+            fragments = await session.list_memories(ns)
+            if not fragments:
+                return f"No memories in namespace '{ns}'."
+            lines = [f"Memories ({len(fragments)}) in '{ns}':"]
+            for f in fragments:
+                preview = f.content[:80].replace("\n", " ")
+                ellipsis = "…" if len(f.content) > 80 else ""
+                lines.append(f"  [{f.key}] ({f.value.value})  {preview}{ellipsis}")
+            return "\n".join(lines)
+
+        sub, _, rest = args.partition(" ")
+        sub = sub.lower()
+
+        if sub == "add":
+            if not rest.strip():
+                return "Usage: /memory add <text>"
+            await session.save_memory(rest.strip(), namespace=ns)
+            return f"Saved to memory (namespace: {ns})."
+
+        if sub == "forget":
+            key = rest.strip()
+            if not key:
+                return "Usage: /memory forget <key>"
+            deleted = await session.forget_memory(key, namespace=ns)
+            return f"Deleted {deleted} fragment(s)." if deleted else f"Key '{key}' not found."
+
+        if sub == "search":
+            if not rest.strip():
+                return "Usage: /memory search <query>"
+            results = await session.search_memories(rest.strip(), namespace=ns)
+            if not results:
+                return "No matches."
+            lines = [f"Search results ({len(results)}):"]
+            for f in results:
+                preview = f.content[:80].replace("\n", " ")
+                ellipsis = "…" if len(f.content) > 80 else ""
+                lines.append(f"  [{f.key}]  {preview}{ellipsis}")
+            return "\n".join(lines)
+
+        if sub == "clear":
+            if session._memory_provider is not None:
+                deleted = await session._memory_provider.delete(
+                    ns,
+                    [f.key for f in await session.list_memories(ns)],
+                )
+                return f"Cleared {deleted} fragment(s) from '{ns}'."
+            return "No memory provider."
+
+        # unknown subcommand — treat entire args as text to save
+        await session.save_memory(args, namespace=ns)
+        return f"Saved to memory (namespace: {ns})."
 
     def _handle_passthrough(
         self,

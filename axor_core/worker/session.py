@@ -315,6 +315,57 @@ class GovernedSession:
             for nid, b in self._tracker.snapshot().items()
         }
 
+    # ── Memory ────────────────────────────────────────────────────────────────
+
+    def memory_namespace(self) -> str:
+        """Active memory namespace — from agent_def or 'default'."""
+        if self._agent_def is not None and self._agent_def.memory_namespaces:
+            return self._agent_def.memory_namespaces[0]
+        return getattr(self, "_default_memory_namespace", "default")
+
+    async def list_memories(self, namespace: str | None = None) -> list:
+        if self._memory_provider is None:
+            return []
+        from axor_core.contracts.memory import MemoryQuery
+        ns = (namespace or self.memory_namespace(),)
+        return await self._memory_provider.load(MemoryQuery(namespaces=ns, max_results=50))
+
+    async def save_memory(
+        self,
+        content: str,
+        key: str | None = None,
+        namespace: str | None = None,
+        value: str = "knowledge",
+    ) -> None:
+        if self._memory_provider is None:
+            return
+        from axor_core.contracts.memory import MemoryFragment, FragmentValue
+        import hashlib
+        frag = MemoryFragment(
+            namespace=namespace or self.memory_namespace(),
+            key=key or hashlib.sha1(content.encode()).hexdigest()[:12],
+            content=content,
+            value=FragmentValue(value),
+            token_count=len(content) // 4,
+        )
+        await self._memory_provider.save([frag])
+
+    async def forget_memory(self, key: str, namespace: str | None = None) -> int:
+        if self._memory_provider is None:
+            return 0
+        return await self._memory_provider.delete(
+            namespace or self.memory_namespace(), [key]
+        )
+
+    async def search_memories(
+        self, query_text: str, namespace: str | None = None
+    ) -> list:
+        if self._memory_provider is None:
+            return []
+        return await self._memory_provider.search(
+            query_text, namespace=namespace or self.memory_namespace(), max_results=10
+        )
+
     def clear_context(self) -> int:
         """
         Drop all non-pinned context fragments and reset caches.
