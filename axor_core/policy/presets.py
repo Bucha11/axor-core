@@ -186,6 +186,38 @@ def analysis() -> ExecutionPolicy:
     )
 
 
+def planning() -> ExecutionPolicy:
+    """
+    Phase 1 policy for TwoPhaseSession.
+
+    Allows write, bash, and delete in capabilities so the agent can express
+    mutation intents — but PhantomCapabilityExecutor intercepts them before
+    they touch disk. Read and search are fully real.
+
+    Context: BROAD — the agent needs full codebase visibility to plan well.
+    Compression: LIGHT — planning requires accurate detail, not summaries.
+    Export: FULL — the phase-1 output (the plan) must leave the node intact.
+    Children: DENIED — planning is always single-node; no federation.
+    """
+    return ExecutionPolicy(
+        name="preset:planning",
+        derived_from=TaskComplexity.EXPANSIVE,
+        context_mode=ContextMode.BROAD,
+        compression_mode=CompressionMode.LIGHT,
+        child_mode=ChildMode.DENIED,
+        max_child_depth=0,
+        tool_policy=ToolPolicy(
+            allow_read=True,
+            allow_write=True,
+            allow_bash=True,
+            allow_search=True,
+            allow_spawn=False,
+        ),
+        export_mode=ExportMode.FULL,
+        child_context_fraction=0.0,
+    )
+
+
 # Named preset registry — for lookup by string name
 PRESETS: dict[str, ExecutionPolicy] = {
     "readonly":  readonly(),
@@ -195,6 +227,7 @@ PRESETS: dict[str, ExecutionPolicy] = {
     "research":  research(),
     "support":   support(),
     "analysis":  analysis(),
+    "planning":  planning(),
 }
 
 
