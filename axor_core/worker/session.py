@@ -315,6 +315,20 @@ class GovernedSession:
             for nid, b in self._tracker.snapshot().items()
         }
 
+    def clear_context(self) -> int:
+        """
+        Drop all non-pinned context fragments and reset caches.
+        Returns the number of fragments removed.
+        """
+        return self._context_manager.clear()
+
+    def compact_context(self, mode=None) -> tuple[int, int]:
+        """
+        Run the compressor over accumulated context fragments.
+        Returns (tokens_before, tokens_after).
+        """
+        return self._context_manager.compact(mode)
+
     # ── Private ────────────────────────────────────────────────────────────────
 
     def _make_node(self, context_manager: ContextManager) -> GovernedNode:

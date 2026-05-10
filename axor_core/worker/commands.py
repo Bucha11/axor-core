@@ -185,13 +185,19 @@ class SlashCommandRouter:
                 return f"Unknown governance command: /{command.name}"
 
     def _handle_context(self, command: SlashCommand, session) -> str:
-        # context subsystem operations
-        # full implementation connects to context/manager.py
         match command.name:
             case "compact":
-                return "Context compaction requested — will apply on next execution."
+                before, after = session.compact_context()
+                saved = max(0, before - after)
+                pct = int(100 * saved / before) if before > 0 else 0
+                return (
+                    f"Context compacted: {before:,} → {after:,} tokens "
+                    f"({saved:,} saved, {pct}% reduction)"
+                )
             case "clear":
-                return "Context cleared — session state reset."
+                removed = session.clear_context()
+                noun = "fragment" if removed == 1 else "fragments"
+                return f"Context cleared: {removed} {noun} removed."
             case "memory":
                 return "Memory fragments: (context subsystem not yet wired)"
             case _:

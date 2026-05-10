@@ -130,6 +130,34 @@ class ContextManager:
         self._all_fragments.sort(key=lambda f: f.relevance, reverse=True)
         self._all_fragments = self._all_fragments[:self._max_fragments]
 
+    def clear(self) -> int:
+        """
+        Drop all non-pinned fragments and reset caches.
+        Returns the number of fragments removed.
+        """
+        removed = len(self._all_fragments)
+        self._all_fragments.clear()
+        self._recent_outputs.clear()
+        self._cache._files.clear()        # type: ignore[attr-defined]
+        self._cache._tool_results.clear() # type: ignore[attr-defined]
+        self._turn = 0
+        return removed
+
+    def compact(self, mode: "CompressionMode | None" = None) -> tuple[int, int]:
+        """
+        Run the compressor over all non-pinned fragments.
+        Returns (tokens_before, tokens_after).
+        """
+        from axor_core.contracts.policy import CompressionMode as CM
+        effective_mode = mode if mode is not None else CM.BALANCED
+        result = self._compressor.compress(
+            self._all_fragments,
+            mode=effective_mode,
+            current_turn=self._turn,
+        )
+        self._all_fragments = result.fragments
+        return result.before_tokens, result.after_tokens
+
     def build(
         self,
         raw_state: RawExecutionState,
