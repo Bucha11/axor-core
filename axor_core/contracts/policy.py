@@ -99,6 +99,31 @@ class ChildMode(str, Enum):
     ALLOWED = "allowed"  # allowed up to max_child_depth
 
 
+# ── Escalation Policy ─────────────────────────────────────────────────────────
+
+@dataclass(frozen=True)
+class EscalationPolicy:
+    """
+    Governs mid-execution capability escalation via ESCALATE_POLICY intent.
+
+    When an agent encounters a task requiring tools outside its current policy,
+    it may surface an ESCALATE_POLICY intent. This policy defines whether such
+    requests are allowed and under what constraints.
+
+    allow_escalation:  master switch — False means all escalation requests denied
+    grantable_tools:   which tools may be escalated to (empty = none)
+    max_escalations:   max number of grants per execution
+    max_ops_per_grant: how many tool operations a single grant covers
+    require_human:     True = escalation_callback must approve; False = auto-approve
+                       when within policy bounds
+    """
+    allow_escalation:   bool            = False
+    grantable_tools:    tuple[str, ...] = field(default_factory=tuple)
+    max_escalations:    int             = 3
+    max_ops_per_grant:  int             = 10
+    require_human:      bool            = True
+
+
 # ── Tool Policy ────────────────────────────────────────────────────────────────
 
 @dataclass(frozen=True)
@@ -152,6 +177,9 @@ class ExecutionPolicy:
 
     # child context — how much of parent context flows to children
     child_context_fraction: float = 0.0   # 0.0 = no inheritance, 1.0 = full
+
+    # mid-execution capability escalation
+    escalation_policy: EscalationPolicy = field(default_factory=EscalationPolicy)
 
     # pass-through slash commands allowed beyond governance class
     allowed_passthrough_commands: tuple[str, ...] = field(default_factory=tuple)

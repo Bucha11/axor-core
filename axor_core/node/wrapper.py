@@ -14,7 +14,7 @@ from axor_core.contracts.extension import ExtensionBundle
 from axor_core.capability.executor import CapabilityExecutor
 from axor_core.context.manager import ContextManager
 from axor_core.node.envelope import EnvelopeBuilder
-from axor_core.node.intent_loop import IntentLoop
+from axor_core.node.intent_loop import IntentLoop, EscalationCallback
 from axor_core.node.export import ExportFilter
 from axor_core.node.spawn import ChildSpawner
 from axor_core.policy.analyzer import TaskAnalyzer
@@ -66,18 +66,20 @@ class GovernedNode:
         trace_config: TraceConfig | None = None,
         current_depth: int = 0,
         child_executor: Invokable | None = None,
+        escalation_callback: EscalationCallback | None = None,
     ) -> None:
-        self._executor         = executor
-        self._child_executor   = child_executor  # None → reuse parent executor
-        self._cap_executor     = capability_executor
-        self._analyzer         = analyzer
-        self._selector         = selector
-        self._composer         = composer
-        self._context_manager  = context_manager      # None → stub ContextView
-        self._budget_engine    = budget_engine         # None → no budget tracking
-        self._trace_collector  = trace_collector       # None → events not persisted
-        self._trace_config     = trace_config or TraceConfig()
-        self._depth            = current_depth
+        self._executor            = executor
+        self._child_executor      = child_executor  # None → reuse parent executor
+        self._cap_executor        = capability_executor
+        self._analyzer            = analyzer
+        self._selector            = selector
+        self._composer            = composer
+        self._context_manager     = context_manager      # None → stub ContextView
+        self._budget_engine       = budget_engine         # None → no budget tracking
+        self._trace_collector     = trace_collector       # None → events not persisted
+        self._trace_config        = trace_config or TraceConfig()
+        self._depth               = current_depth
+        self._escalation_callback = escalation_callback
 
         self._envelope_builder = EnvelopeBuilder()
         self._export_filter    = ExportFilter()
@@ -208,6 +210,7 @@ class GovernedNode:
             current_depth=self._depth,
             tool_result_callback=tool_result_callback,
             spawn_callback=_spawn_child_callback,
+            escalation_callback=self._escalation_callback,
         )
 
         raw_output, raw_payload = await self._collect_stream(
