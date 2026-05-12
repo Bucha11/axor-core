@@ -12,10 +12,11 @@ class IntentKind(str, Enum):
     Executors never perform these directly.
     They surface as intents — the node decides what happens.
     """
-    TOOL_CALL      = "tool_call"       # call an external tool
-    SPAWN_CHILD    = "spawn_child"     # create a child GovernedNode
-    EXPORT         = "export"          # export intermediate result
-    EXPAND_CONTEXT = "expand_context"  # request more context visibility
+    TOOL_CALL        = "tool_call"         # call an external tool
+    SPAWN_CHILD      = "spawn_child"       # create a child GovernedNode
+    EXPORT           = "export"            # export intermediate result
+    EXPAND_CONTEXT   = "expand_context"    # request more context visibility
+    ESCALATE_POLICY  = "escalate_policy"   # request scoped capability grant
 
 
 @dataclass(frozen=True)
@@ -27,10 +28,11 @@ class Intent:
     The node intercepts it before execution and resolves it against policy.
 
     payload contents depend on kind:
-    - tool_call:      {"tool": str, "args": dict}
-    - spawn_child:    {"task": str, "context_hint": str}
-    - export:         {"content": str, "mode": str}
-    - expand_context: {"reason": str, "scope": str}
+    - tool_call:        {"tool": str, "args": dict}
+    - spawn_child:      {"task": str, "context_hint": str}
+    - export:           {"content": str, "mode": str}
+    - expand_context:   {"reason": str, "scope": str}
+    - escalate_policy:  {"tool": str, "reason": str, "paths": list[str], "max_ops": int}
     """
     kind: IntentKind
     payload: dict[str, Any]

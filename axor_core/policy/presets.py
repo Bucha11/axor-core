@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from axor_core.contracts.policy import (
     ExecutionPolicy,
+    EscalationPolicy,
     TaskComplexity,
     ContextMode,
     CompressionMode,
@@ -15,6 +16,9 @@ def readonly() -> ExecutionPolicy:
     """
     Strict read-only. No writes, no bash, no children.
     Use for analysis, review, explanation tasks.
+
+    Escalation: agent may request write access mid-execution (e.g., found a bug
+    while reviewing and wants to apply a targeted fix). Requires human approval.
     """
     return ExecutionPolicy(
         name="preset:readonly",
@@ -31,6 +35,13 @@ def readonly() -> ExecutionPolicy:
         ),
         export_mode=ExportMode.SUMMARY,
         child_context_fraction=0.0,
+        escalation_policy=EscalationPolicy(
+            allow_escalation=True,
+            grantable_tools=("write",),
+            max_escalations=1,
+            max_ops_per_grant=5,
+            require_human=True,
+        ),
     )
 
 
@@ -112,6 +123,9 @@ def research() -> ExecutionPolicy:
     Designed for: literature review, document synthesis, knowledge gathering.
     Context: BROAD — research tasks need wide context to synthesize correctly.
     Compression: LIGHT — knowledge fragments must not be over-compressed.
+
+    Escalation: agent may request bash access mid-execution to run a fetch or
+    processing script that emerged from the research. Requires human approval.
     """
     return ExecutionPolicy(
         name="preset:research",
@@ -129,6 +143,13 @@ def research() -> ExecutionPolicy:
         ),
         export_mode=ExportMode.FULL,
         child_context_fraction=0.4,
+        escalation_policy=EscalationPolicy(
+            allow_escalation=True,
+            grantable_tools=("bash",),
+            max_escalations=2,
+            max_ops_per_grant=3,
+            require_human=True,
+        ),
     )
 
 

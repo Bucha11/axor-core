@@ -44,6 +44,10 @@ class TraceEventKind(str, Enum):
     PLUGIN_DENIED    = "plugin_denied"
     SKILL_ACTIVATED  = "skill_activated"
 
+    # policy escalation
+    ESCALATION_GRANTED = "escalation_granted"
+    ESCALATION_DENIED  = "escalation_denied"
+
     # cancellation
     CANCELLED = "cancelled"
 
@@ -124,6 +128,21 @@ class PluginDeniedEvent(TraceEvent):
     plugin_name: str    = ""
     denied_item: str    = ""
     reason: str         = ""
+
+
+@dataclass(frozen=True)
+class EscalationGrantedEvent(TraceEvent):
+    tool: str            = ""
+    paths: list[str]     = field(default_factory=list)
+    max_ops: int         = 0
+    reason: str          = ""
+    auto_approved: bool  = True   # False = human approved via callback
+
+
+@dataclass(frozen=True)
+class EscalationDeniedEvent(TraceEvent):
+    tool: str   = ""
+    reason: str = ""
 
 
 @dataclass(frozen=True)

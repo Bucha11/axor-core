@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import traceback
+from dataclasses import dataclass, field
 from typing import AsyncIterator, Any, Callable, Awaitable
 
 from axor_core.contracts.envelope import ExecutionEnvelope
@@ -14,6 +15,8 @@ from axor_core.contracts.trace import (
     IntentDeniedEvent,
     TokensSpentEvent,
     CancelledEvent,
+    EscalationGrantedEvent,
+    EscalationDeniedEvent,
 )
 from axor_core.capability.executor import CapabilityExecutor
 from axor_core.errors.exceptions import (
@@ -51,6 +54,17 @@ ToolResultCallback = Callable[[str, str, Any, bool], Awaitable[None]]
 # Implemented in wrapper.py — intent_loop stays provider-agnostic.
 SpawnCallback = Callable[[str, str, str], Awaitable[str]]
 
+# Optional callback for ESCALATE_POLICY intents requiring human approval.
+# Signature: (tool_use_id, tool, paths, max_ops) → approved bool
+EscalationCallback = Callable[[str, str, list[str], int], Awaitable[bool]]
+
+
+@dataclass
+class _GrantedEscalation:
+    tool: str
+    paths: list[str]    # empty = no path restriction
+    ops_remaining: int
+
 
 class IntentLoop:
     """
@@ -81,14 +95,18 @@ class IntentLoop:
         current_depth: int = 0,
         tool_result_callback: ToolResultCallback | None = None,
         spawn_callback: SpawnCallback | None = None,
+        escalation_callback: EscalationCallback | None = None,
     ) -> None:
         self._executor = capability_executor
         self._trace_events = trace_events
         self._depth = current_depth
         self._tool_result_callback = tool_result_callback
         self._spawn_callback = spawn_callback
+        self._escalation_callback = escalation_callback
         self._intent_sequence = 0
         self._token_totals = _TokenAccumulator()
+        self._granted_escalations: dict[str, _GrantedEscalation] = {}
+        self._escalation_count = 0
 
     async def run(
         self,
@@ -132,6 +150,19 @@ class IntentLoop:
                 case ExecutorEventKind.TOOL_USE:
                     tool_name   = event.payload.get("tool", "")
                     tool_use_id = event.payload.get("tool_use_id", "")
+
+                    # escalate_policy — mid-execution capability grant request
+                    if tool_name == "escalate_policy":
+                        result = await self._handle_escalation(event, envelope)
+                        if self._tool_result_callback is not None:
+                            await self._tool_result_callback(tool_use_id, tool_name, result, True)
+                        else:
+                            yield ExecutorEvent(
+                                kind=ExecutorEventKind.TEXT,
+                                payload={"tool_result": result, "approved": True},
+                                node_id=envelope.node_id,
+                            )
+                        continue
 
                     # spawn_child is a special intent — not a regular tool call
                     if tool_name == "spawn_child" and self._spawn_callback is not None:
@@ -278,12 +309,31 @@ class IntentLoop:
         Evaluate a tool_call intent against capabilities.
 
         Resolution order:
-        1. Is the tool in allowed_tools?            → approve
-        2. Is the tool in extra_denied?             → deny
-        3. Not in capabilities at all               → deny
+        1. Active escalation grant covers the tool?  → approve (decrement ops)
+        2. Is the tool in allowed_tools?             → approve
+        3. Is the tool in extra_denied?              → deny
+        4. Not in capabilities at all                → deny
         """
         tool_name: str = intent.payload.get("tool", "")
         caps = envelope.capabilities
+
+        grant = self._granted_escalations.get(tool_name)
+        if grant is not None:
+            if grant.paths:
+                tool_path = intent.payload.get("args", {}).get("path", "")
+                if not any(tool_path.startswith(p) for p in grant.paths):
+                    return PolicyDecision(
+                        kind=PolicyDecisionKind.DENY,
+                        reason=f"escalation grant for '{tool_name}' restricts to paths {grant.paths!r}",
+                    )
+            grant.ops_remaining -= 1
+            remaining = grant.ops_remaining
+            if remaining <= 0:
+                del self._granted_escalations[tool_name]
+            return PolicyDecision(
+                kind=PolicyDecisionKind.APPROVE,
+                reason=f"approved via escalation grant ({remaining} ops remaining)",
+            )
 
         if tool_name in caps.allowed_tools:
             return PolicyDecision(
@@ -301,6 +351,67 @@ class IntentLoop:
             kind=PolicyDecisionKind.DENY,
             reason=f"tool '{tool_name}' is not in capabilities for policy '{envelope.policy.name}'",
         )
+
+    async def _handle_escalation(
+        self,
+        event: ExecutorEvent,
+        envelope: ExecutionEnvelope,
+    ) -> dict:
+        args       = event.payload.get("args", {})
+        tool       = args.get("tool", "")
+        reason     = args.get("reason", "")
+        paths      = args.get("paths", [])
+        max_ops    = min(int(args.get("max_ops", 10)), envelope.policy.escalation_policy.max_ops_per_grant)
+        ep         = envelope.policy.escalation_policy
+        node_id    = envelope.node_id
+        tool_use_id = event.payload.get("tool_use_id", "")
+
+        def _deny(deny_reason: str) -> dict:
+            self._trace_events.append(EscalationDeniedEvent(
+                kind=TraceEventKind.ESCALATION_DENIED,
+                node_id=node_id,
+                sequence=len(self._trace_events),
+                tool=tool,
+                reason=deny_reason,
+            ))
+            return {"error": "escalation_denied", "reason": deny_reason}
+
+        if not ep.allow_escalation:
+            return _deny("escalation not allowed by policy")
+
+        if tool not in ep.grantable_tools:
+            return _deny(f"tool '{tool}' is not in grantable_tools")
+
+        if self._escalation_count >= ep.max_escalations:
+            return _deny(f"max escalations reached ({ep.max_escalations})")
+
+        auto_approved = True
+        if ep.require_human:
+            if self._escalation_callback is None:
+                return _deny("escalation requires human approval but no callback is configured")
+            approved = await self._escalation_callback(tool_use_id, tool, paths, max_ops)
+            auto_approved = False
+            if not approved:
+                return _deny("human denied escalation request")
+
+        self._granted_escalations[tool] = _GrantedEscalation(
+            tool=tool,
+            paths=paths,
+            ops_remaining=max_ops,
+        )
+        self._escalation_count += 1
+
+        self._trace_events.append(EscalationGrantedEvent(
+            kind=TraceEventKind.ESCALATION_GRANTED,
+            node_id=node_id,
+            sequence=len(self._trace_events),
+            tool=tool,
+            paths=paths,
+            max_ops=max_ops,
+            reason=reason,
+            auto_approved=auto_approved,
+        ))
+        return {"granted": True, "tool": tool, "max_ops": max_ops, "paths": paths}
 
     def resolve_spawn_intent(
         self,
