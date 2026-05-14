@@ -2,30 +2,35 @@ from __future__ import annotations
 
 import logging
 import traceback
-from dataclasses import dataclass, field
-from typing import AsyncIterator, Any, Callable, Awaitable
+from dataclasses import dataclass
+from typing import Any, AsyncIterator, Awaitable, Callable
 
+from axor_core.capability.executor import CapabilityExecutor
+from axor_core.contracts.anomaly import (
+    AnomalyClass,
+    AnomalyDetector,
+    AnomalyResult,
+    NormalizedIntent,
+)
 from axor_core.contracts.envelope import ExecutionEnvelope
 from axor_core.contracts.intent import Intent, IntentKind, ResolvedIntent
-from axor_core.contracts.policy import PolicyDecision, PolicyDecisionKind, ChildMode
-from axor_core.contracts.result import ExecutorEvent, ExecutorEventKind, TokenUsage
+from axor_core.contracts.policy import PolicyDecision, PolicyDecisionKind
+from axor_core.contracts.result import ExecutorEvent, ExecutorEventKind
 from axor_core.contracts.trace import (
-    TraceEventKind,
-    TraceEvent,
-    IntentDeniedEvent,
-    TokensSpentEvent,
     CancelledEvent,
-    EscalationGrantedEvent,
     EscalationDeniedEvent,
+    EscalationGrantedEvent,
+    IntentDeniedEvent,
+    SuspiciousIntentEvent,
+    TokensSpentEvent,
+    TraceEvent,
+    TraceEventKind,
 )
-from axor_core.capability.executor import CapabilityExecutor
 from axor_core.errors.exceptions import (
     ToolNotAllowedError,
     ToolNotFoundError,
-    ChildNotAllowedError,
-    MaxDepthExceededError,
-    ContextExpansionDeniedError,
 )
+from axor_core.node.normalizer import IntentNormalizer
 
 log = logging.getLogger("axor.intent_loop")
 
@@ -62,7 +67,7 @@ EscalationCallback = Callable[[str, str, list[str], int], Awaitable[bool]]
 @dataclass
 class _GrantedEscalation:
     tool: str
-    paths: list[str]    # empty = no path restriction
+    paths: list[str]  # empty = no path restriction
     ops_remaining: int
 
 
@@ -96,6 +101,8 @@ class IntentLoop:
         tool_result_callback: ToolResultCallback | None = None,
         spawn_callback: SpawnCallback | None = None,
         escalation_callback: EscalationCallback | None = None,
+        anomaly_detector: AnomalyDetector | None = None,
+        anomaly_window_size: int = 10,
     ) -> None:
         self._executor = capability_executor
         self._trace_events = trace_events
@@ -103,6 +110,10 @@ class IntentLoop:
         self._tool_result_callback = tool_result_callback
         self._spawn_callback = spawn_callback
         self._escalation_callback = escalation_callback
+        self._anomaly_detector = anomaly_detector
+        self._anomaly_window_size = anomaly_window_size
+        self._normalizer = IntentNormalizer()
+        self._intent_window: list[NormalizedIntent] = []
         self._intent_sequence = 0
         self._token_totals = _TokenAccumulator()
         self._granted_escalations: dict[str, _GrantedEscalation] = {}
@@ -139,43 +150,58 @@ class IntentLoop:
         envelope: ExecutionEnvelope,
     ) -> AsyncIterator[ExecutorEvent]:
         async for event in stream:
-
             # cooperative cancellation — check before every event
             if envelope.cancel_token.is_cancelled():
                 self._record_cancellation(envelope)
                 return
 
             match event.kind:
-
                 case ExecutorEventKind.TOOL_USE:
-                    tool_name   = event.payload.get("tool", "")
+                    tool_name = event.payload.get("tool", "")
                     tool_use_id = event.payload.get("tool_use_id", "")
 
                     # escalate_policy — mid-execution capability grant request
                     if tool_name == "escalate_policy":
                         result = await self._handle_escalation(event, envelope)
                         if self._tool_result_callback is not None:
-                            await self._tool_result_callback(tool_use_id, tool_name, result, True)
+                            await self._tool_result_callback(
+                                tool_use_id, tool_name, result, True
+                            )
                         else:
                             yield ExecutorEvent(
                                 kind=ExecutorEventKind.TEXT,
-                                payload={"tool_result": result, "approved": True},
+                                payload={
+                                    "tool_result": result,
+                                    "approved": True,
+                                },
                                 node_id=envelope.node_id,
                             )
                         continue
 
                     # spawn_child is a special intent — not a regular tool call
-                    if tool_name == "spawn_child" and self._spawn_callback is not None:
-                        task         = event.payload.get("args", {}).get("task", "")
-                        context_hint = event.payload.get("args", {}).get("context_hint", "")
-                        child_result = await self._spawn_callback(tool_use_id, task, context_hint)
+                    if (
+                        tool_name == "spawn_child"
+                        and self._spawn_callback is not None
+                    ):
+                        task = event.payload.get("args", {}).get("task", "")
+                        context_hint = event.payload.get("args", {}).get(
+                            "context_hint", ""
+                        )
+                        child_result = await self._spawn_callback(
+                            tool_use_id, task, context_hint
+                        )
 
                         if self._tool_result_callback is not None:
-                            await self._tool_result_callback(tool_use_id, tool_name, child_result, True)
+                            await self._tool_result_callback(
+                                tool_use_id, tool_name, child_result, True
+                            )
                         else:
                             yield ExecutorEvent(
                                 kind=ExecutorEventKind.TEXT,
-                                payload={"tool_result": child_result, "approved": True},
+                                payload={
+                                    "tool_result": child_result,
+                                    "approved": True,
+                                },
                                 node_id=envelope.node_id,
                             )
                         continue
@@ -200,7 +226,7 @@ class IntentLoop:
                             kind=ExecutorEventKind.TEXT,
                             payload={
                                 "tool_result": resolved.result,
-                                "approved":    resolved.approved,
+                                "approved": resolved.approved,
                             },
                             node_id=envelope.node_id,
                         )
@@ -246,13 +272,60 @@ class IntentLoop:
                 result=_denial_result(tool_name, decision.reason),
             )
 
+        # anomaly detection — runs after policy approval
+        if self._anomaly_detector is not None:
+            normalized = self._normalizer.normalize(intent)
+            self._intent_window.append(normalized)
+            if len(self._intent_window) > self._anomaly_window_size:
+                self._intent_window.pop(0)
+            try:
+                anomaly = await self._anomaly_detector.score(
+                    window=list(self._intent_window),
+                    policy_name=envelope.policy.name,
+                )
+            except Exception as exc:
+                log.warning("anomaly detector raised unexpectedly: %s", exc)
+                anomaly = None
+
+            if anomaly is not None and anomaly.cls == AnomalyClass.CRITICAL:
+                reason = f"anomaly detector: CRITICAL score={anomaly.score:.2f} reasons={anomaly.reasons}"
+                self._record_anomaly_event(
+                    tool_name=tool_name,
+                    normalized=normalized,
+                    anomaly=anomaly,
+                    policy_action="denied",
+                    envelope=envelope,
+                )
+                self._record_denial(intent, reason, envelope)
+                return ResolvedIntent(
+                    intent=intent,
+                    approved=False,
+                    reason=reason,
+                    result=_denial_result(tool_name, reason),
+                )
+
+            if anomaly is not None and anomaly.cls == AnomalyClass.SUSPICIOUS:
+                self._record_anomaly_event(
+                    tool_name=tool_name,
+                    normalized=normalized,
+                    anomaly=anomaly,
+                    policy_action="flagged",
+                    envelope=envelope,
+                )
+
         # approved or transformed — record approved event
-        self._trace_events.append(TraceEvent(
-            kind=TraceEventKind.INTENT_APPROVED,
-            node_id=envelope.node_id,
-            sequence=len(self._trace_events),
-            payload={"tool": tool_name, "transformed": decision.kind == PolicyDecisionKind.TRANSFORM},
-        ))
+        self._trace_events.append(
+            TraceEvent(
+                kind=TraceEventKind.INTENT_APPROVED,
+                node_id=envelope.node_id,
+                sequence=len(self._trace_events),
+                payload={
+                    "tool": tool_name,
+                    "transformed": decision.kind
+                    == PolicyDecisionKind.TRANSFORM,
+                },
+            )
+        )
 
         # approved or transformed
         effective_args = decision.transformed_payload or tool_args
@@ -264,7 +337,9 @@ class IntentLoop:
         )
 
         try:
-            result = await self._executor.execute(effective_intent, envelope.capabilities)
+            result = await self._executor.execute(
+                effective_intent, envelope.capabilities
+            )
             return ResolvedIntent(
                 intent=intent,
                 approved=True,
@@ -289,7 +364,10 @@ class IntentLoop:
             tb = traceback.format_exc()
             log.error(
                 "Unhandled exception in tool '%s' (node=%s): %s\n%s",
-                tool_name, envelope.node_id, exc, tb,
+                tool_name,
+                envelope.node_id,
+                exc,
+                tb,
             )
             reason = f"tool execution failed: {type(exc).__name__}: {exc}"
             self._record_denial(intent, reason, envelope)
@@ -357,23 +435,28 @@ class IntentLoop:
         event: ExecutorEvent,
         envelope: ExecutionEnvelope,
     ) -> dict:
-        args       = event.payload.get("args", {})
-        tool       = args.get("tool", "")
-        reason     = args.get("reason", "")
-        paths      = args.get("paths", [])
-        max_ops    = min(int(args.get("max_ops", 10)), envelope.policy.escalation_policy.max_ops_per_grant)
-        ep         = envelope.policy.escalation_policy
-        node_id    = envelope.node_id
+        args = event.payload.get("args", {})
+        tool = args.get("tool", "")
+        reason = args.get("reason", "")
+        paths = args.get("paths", [])
+        max_ops = min(
+            int(args.get("max_ops", 10)),
+            envelope.policy.escalation_policy.max_ops_per_grant,
+        )
+        ep = envelope.policy.escalation_policy
+        node_id = envelope.node_id
         tool_use_id = event.payload.get("tool_use_id", "")
 
         def _deny(deny_reason: str) -> dict:
-            self._trace_events.append(EscalationDeniedEvent(
-                kind=TraceEventKind.ESCALATION_DENIED,
-                node_id=node_id,
-                sequence=len(self._trace_events),
-                tool=tool,
-                reason=deny_reason,
-            ))
+            self._trace_events.append(
+                EscalationDeniedEvent(
+                    kind=TraceEventKind.ESCALATION_DENIED,
+                    node_id=node_id,
+                    sequence=len(self._trace_events),
+                    tool=tool,
+                    reason=deny_reason,
+                )
+            )
             return {"error": "escalation_denied", "reason": deny_reason}
 
         if not ep.allow_escalation:
@@ -388,8 +471,12 @@ class IntentLoop:
         auto_approved = True
         if ep.require_human:
             if self._escalation_callback is None:
-                return _deny("escalation requires human approval but no callback is configured")
-            approved = await self._escalation_callback(tool_use_id, tool, paths, max_ops)
+                return _deny(
+                    "escalation requires human approval but no callback is configured"
+                )
+            approved = await self._escalation_callback(
+                tool_use_id, tool, paths, max_ops
+            )
             auto_approved = False
             if not approved:
                 return _deny("human denied escalation request")
@@ -401,17 +488,24 @@ class IntentLoop:
         )
         self._escalation_count += 1
 
-        self._trace_events.append(EscalationGrantedEvent(
-            kind=TraceEventKind.ESCALATION_GRANTED,
-            node_id=node_id,
-            sequence=len(self._trace_events),
-            tool=tool,
-            paths=paths,
-            max_ops=max_ops,
-            reason=reason,
-            auto_approved=auto_approved,
-        ))
-        return {"granted": True, "tool": tool, "max_ops": max_ops, "paths": paths}
+        self._trace_events.append(
+            EscalationGrantedEvent(
+                kind=TraceEventKind.ESCALATION_GRANTED,
+                node_id=node_id,
+                sequence=len(self._trace_events),
+                tool=tool,
+                paths=paths,
+                max_ops=max_ops,
+                reason=reason,
+                auto_approved=auto_approved,
+            )
+        )
+        return {
+            "granted": True,
+            "tool": tool,
+            "max_ops": max_ops,
+            "paths": paths,
+        }
 
     def resolve_spawn_intent(
         self,
@@ -452,9 +546,11 @@ class IntentLoop:
             return PolicyDecision(
                 kind=PolicyDecisionKind.DENY,
                 reason=f"context expansion not allowed by policy '{envelope.policy.name}' "
-                       f"(context_mode={envelope.policy.context_mode})",
+                f"(context_mode={envelope.policy.context_mode})",
             )
-        return PolicyDecision(kind=PolicyDecisionKind.APPROVE, reason="context expansion approved")
+        return PolicyDecision(
+            kind=PolicyDecisionKind.APPROVE, reason="context expansion approved"
+        )
 
     # ── Token accounting ───────────────────────────────────────────────────────
 
@@ -469,7 +565,9 @@ class IntentLoop:
             output_tokens=usage.get("output_tokens", 0),
             tool_tokens=usage.get("tool_tokens", 0),
             context_tokens=envelope.context.token_count,
-            cache_creation_input_tokens=usage.get("cache_creation_input_tokens", 0),
+            cache_creation_input_tokens=usage.get(
+                "cache_creation_input_tokens", 0
+            ),
             cache_read_input_tokens=usage.get("cache_read_input_tokens", 0),
         )
         self._trace_events.append(
@@ -503,6 +601,28 @@ class IntentLoop:
             )
         )
 
+    def _record_anomaly_event(
+        self,
+        tool_name: str,
+        normalized: NormalizedIntent,
+        anomaly: AnomalyResult,
+        policy_action: str,
+        envelope: ExecutionEnvelope,
+    ) -> None:
+        self._trace_events.append(
+            SuspiciousIntentEvent(
+                kind=TraceEventKind.ANOMALY_FLAGGED,
+                node_id=envelope.node_id,
+                sequence=len(self._trace_events),
+                tool=tool_name,
+                score=anomaly.score,
+                anomaly_class=anomaly.cls,
+                reasons=anomaly.reasons,
+                policy_action=policy_action,
+                provenance=normalized.provenance,
+            )
+        )
+
     def _record_cancellation(self, envelope: ExecutionEnvelope) -> None:
         token = envelope.cancel_token
         self._trace_events.append(
@@ -518,6 +638,7 @@ class IntentLoop:
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
+
 
 def _denial_result(tool_name: str, reason: str) -> dict:
     """
@@ -547,14 +668,14 @@ class _TokenAccumulator:
         tool_tokens: int,
         context_tokens: int,
         cache_creation_input_tokens: int = 0,
-        cache_read_input_tokens: int     = 0,
+        cache_read_input_tokens: int = 0,
     ) -> None:
-        self.input   += input_tokens
-        self.output  += output_tokens
-        self.tool    += tool_tokens
+        self.input += input_tokens
+        self.output += output_tokens
+        self.tool += tool_tokens
         self.context += context_tokens
         self.cache_creation += cache_creation_input_tokens
-        self.cache_read     += cache_read_input_tokens
+        self.cache_read += cache_read_input_tokens
 
     @property
     def total(self) -> int:

@@ -5,6 +5,7 @@ from typing import Any
 from axor_core.contracts.cancel import make_token, CancelReason
 from axor_core.contracts.context import RawExecutionState, LineageSummary
 from axor_core.contracts.extension import ExtensionBundle, ExtensionLoader
+from axor_core.contracts.anomaly import AnomalyDetector
 from axor_core.contracts.invokable import Invokable
 from axor_core.contracts.policy import ExecutionPolicy, SignalClassifier
 from axor_core.contracts.result import ExecutionResult
@@ -74,6 +75,7 @@ class GovernedSession:
         executor: Invokable,
         capability_executor: CapabilityExecutor,
         classifier: SignalClassifier | None = None,
+        anomaly_detector: AnomalyDetector | None = None,
         extension_loaders: list[ExtensionLoader] | None = None,
         trace_config: TraceConfig | None = None,
         soft_token_limit: int | None = None,
@@ -88,6 +90,7 @@ class GovernedSession:
         self._executor       = executor
         self._child_executor = child_executor
         self._cap_executor   = capability_executor
+        self._anomaly_detector = anomaly_detector
         self._agent_def      = agent_def
         self._memory_provider = memory_provider
         self._trace_config   = trace_config or TraceConfig()
@@ -329,6 +332,7 @@ class GovernedSession:
             trace_collector=self._collector,
             trace_config=self._trace_config,
             child_executor=self._child_executor,
+            anomaly_detector=self._anomaly_detector,
         )
 
     async def _handle_command(self, raw: str) -> ExecutionResult:

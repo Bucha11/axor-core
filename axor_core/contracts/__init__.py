@@ -8,6 +8,13 @@ Everything in the system depends on these.
 Nothing here depends on anything else in axor_core.
 """
 
+from axor_core.contracts.anomaly import (
+    NormalizedIntent,
+    AnomalyClass,
+    AnomalyResult,
+    AnomalyDetector,
+    LLMVerifier,
+)
 from axor_core.contracts.invokable import Invokable
 from axor_core.contracts.cancel import CancelToken, CancelReason, make_token
 from axor_core.contracts.context import (
@@ -72,12 +79,15 @@ from axor_core.contracts.trace import (
     TokensSpentEvent,
     CommandRoutedEvent,
     PluginDeniedEvent,
+    SuspiciousIntentEvent,
     CancelledEvent,
     Embedder,
     TelemetrySink,
 )
 
 __all__ = [
+    # anomaly
+    "NormalizedIntent", "AnomalyClass", "AnomalyResult", "AnomalyDetector", "LLMVerifier",
     # invokable
     "Invokable",
     # cancel
@@ -103,6 +113,6 @@ __all__ = [
     "TraceEvent", "TraceEventKind", "DecisionTrace", "TraceConfig",
     "AnonymizedTraceRecord", "SignalChosenEvent", "PolicyAdjustedEvent",
     "IntentDeniedEvent", "ChildSpawnedEvent", "TokensSpentEvent",
-    "CommandRoutedEvent", "PluginDeniedEvent", "CancelledEvent",
+    "CommandRoutedEvent", "PluginDeniedEvent", "SuspiciousIntentEvent", "CancelledEvent",
     "Embedder", "TelemetrySink",
 ]

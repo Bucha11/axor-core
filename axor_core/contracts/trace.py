@@ -6,7 +6,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Protocol, runtime_checkable
 
-from axor_core.contracts.policy import TaskSignal, PolicyDecisionKind
+from axor_core.contracts.anomaly import AnomalyClass
+from axor_core.contracts.policy import TaskSignal
 
 
 def _default_trace_dir() -> str:
@@ -15,46 +16,49 @@ def _default_trace_dir() -> str:
 
 class TraceEventKind(str, Enum):
     # policy
-    SIGNAL_CHOSEN      = "signal_chosen"
-    POLICY_CHOSEN      = "policy_chosen"
-    POLICY_ADJUSTED    = "policy_adjusted"
+    SIGNAL_CHOSEN = "signal_chosen"
+    POLICY_CHOSEN = "policy_chosen"
+    POLICY_ADJUSTED = "policy_adjusted"
 
     # intents
-    INTENT_APPROVED    = "intent_approved"
-    INTENT_DENIED      = "intent_denied"
+    INTENT_APPROVED = "intent_approved"
+    INTENT_DENIED = "intent_denied"
     INTENT_TRANSFORMED = "intent_transformed"
 
     # federation
-    CHILD_SPAWNED      = "child_spawned"
-    CHILD_COMPLETED    = "child_completed"
+    CHILD_SPAWNED = "child_spawned"
+    CHILD_COMPLETED = "child_completed"
 
     # context
-    CONTEXT_COMPRESSED    = "context_compressed"
+    CONTEXT_COMPRESSED = "context_compressed"
     CONTEXT_SLICE_DERIVED = "context_slice_derived"
 
     # budget
-    TOKENS_SPENT    = "tokens_spent"
-    BUDGET_WARNING  = "budget_warning"
+    TOKENS_SPENT = "tokens_spent"
+    BUDGET_WARNING = "budget_warning"
 
     # commands
     COMMAND_ROUTED = "command_routed"
 
     # extensions
     EXTENSION_LOADED = "extension_loaded"
-    PLUGIN_DENIED    = "plugin_denied"
-    SKILL_ACTIVATED  = "skill_activated"
+    PLUGIN_DENIED = "plugin_denied"
+    SKILL_ACTIVATED = "skill_activated"
 
     # policy escalation
     ESCALATION_GRANTED = "escalation_granted"
-    ESCALATION_DENIED  = "escalation_denied"
+    ESCALATION_DENIED = "escalation_denied"
+
+    # anomaly detection
+    ANOMALY_FLAGGED = "anomaly_flagged"  # intent scored SUSPICIOUS or CRITICAL
 
     # cancellation
     CANCELLED = "cancelled"
 
     # ── Added in 0.5.0: adapter observability ─────────────────────────────────
     # Emitted by adapters that support prefix-caching (e.g. axor-openrouter).
-    CACHE_HIT   = "cache_hit"    # tokens served from cache
-    CACHE_MISS  = "cache_miss"   # cache miss — full prompt processed
+    CACHE_HIT = "cache_hit"  # tokens served from cache
+    CACHE_MISS = "cache_miss"  # cache miss — full prompt processed
     CACHE_WRITE = "cache_write"  # breakpoint written to cache
 
     # Emitted by adapters when a routing decision is made (model, provider, tier).
@@ -67,6 +71,7 @@ class TraceEventKind(str, Enum):
 @dataclass(frozen=True)
 class TraceEvent:
     """Base for all trace events."""
+
     kind: TraceEventKind
     node_id: str
     sequence: int
@@ -75,84 +80,88 @@ class TraceEvent:
 
 # ── Typed events ───────────────────────────────────────────────────────────────
 
+
 @dataclass(frozen=True)
 class SignalChosenEvent(TraceEvent):
-    raw_input: str            = ""
+    raw_input: str = ""
     signal: TaskSignal | None = None
-    confidence: float         = 0.0
-    classifier: str           = "heuristic"
-    scores: dict[str, float]  = field(default_factory=dict)
+    confidence: float = 0.0
+    classifier: str = "heuristic"
+    scores: dict[str, float] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
 class PolicyAdjustedEvent(TraceEvent):
-    original_signal: TaskSignal | None  = None
-    adjusted_signal: TaskSignal | None  = None
-    reason: str                         = ""
+    original_signal: TaskSignal | None = None
+    adjusted_signal: TaskSignal | None = None
+    reason: str = ""
     tokens_spent_before_adjustment: int = 0
 
 
 @dataclass(frozen=True)
 class IntentDeniedEvent(TraceEvent):
     intent_kind: str = ""
-    reason: str      = ""
+    reason: str = ""
 
 
 @dataclass(frozen=True)
 class ChildSpawnedEvent(TraceEvent):
-    child_node_id: str      = ""
-    child_depth: int        = 0
+    child_node_id: str = ""
+    child_depth: int = 0
     context_fraction: float = 0.0
 
 
 @dataclass(frozen=True)
 class TokensSpentEvent(TraceEvent):
-    input_tokens: int   = 0
-    output_tokens: int  = 0
-    tool_tokens: int    = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    tool_tokens: int = 0
     context_tokens: int = 0
-    cumulative: int     = 0
+    cumulative: int = 0
     cache_creation_input_tokens: int = 0
-    cache_read_input_tokens: int     = 0
+    cache_read_input_tokens: int = 0
 
 
 @dataclass(frozen=True)
 class CommandRoutedEvent(TraceEvent):
-    command_name: str   = ""
-    command_class: str  = ""
-    allowed: bool       = True
+    command_name: str = ""
+    command_class: str = ""
+    allowed: bool = True
 
 
 @dataclass(frozen=True)
 class PluginDeniedEvent(TraceEvent):
-    plugin_name: str    = ""
-    denied_item: str    = ""
-    reason: str         = ""
-
-
-@dataclass(frozen=True)
-class EscalationGrantedEvent(TraceEvent):
-    tool: str            = ""
-    paths: list[str]     = field(default_factory=list)
-    max_ops: int         = 0
-    reason: str          = ""
-    auto_approved: bool  = True   # False = human approved via callback
-
-
-@dataclass(frozen=True)
-class EscalationDeniedEvent(TraceEvent):
-    tool: str   = ""
+    plugin_name: str = ""
+    denied_item: str = ""
     reason: str = ""
 
 
 @dataclass(frozen=True)
+class SuspiciousIntentEvent(TraceEvent):
+    """
+    Emitted when an intent scores SUSPICIOUS or CRITICAL.
+
+    SUSPICIOUS: intent was allowed but flagged.ss
+    CRITICAL:   intent was denied by the anomaly detector.
+    """
+
+    tool: str = ""
+    score: float = 0.0
+    anomaly_class: AnomalyClass = AnomalyClass.NORMAL
+    reasons: tuple[str, ...] = field(default_factory=tuple)
+    policy_action: str = ""  # "flagged" | "denied"
+    provenance: str = ""  # NormalizedIntent.provenance value
+
+
+@dataclass(frozen=True)
 class CancelledEvent(TraceEvent):
-    reason: str           = ""
-    detail: str           = ""
+    reason: str = ""
+    detail: str = ""
     completed_intents: int = 0
 
 
 # ── New in 0.5.0: adapter observability events ─────────────────────────────────
+
 
 @dataclass(frozen=True)
 class CacheEvent(TraceEvent):
@@ -166,10 +175,11 @@ class CacheEvent(TraceEvent):
     Pairs of CACHE_WRITE followed by CACHE_HIT events across turns allow
     downstream tools to compute cache efficiency and guide TTL tuning.
     """
+
     hit: bool = True
-    tokens: int = 0                # tokens involved in this cache event
-    ttl: int = 0                   # TTL in seconds (0 = provider default)
-    breakpoint_block: str = ""     # "system" | "tools" | "context_top_k"
+    tokens: int = 0  # tokens involved in this cache event
+    ttl: int = 0  # TTL in seconds (0 = provider default)
+    breakpoint_block: str = ""  # "system" | "tools" | "context_top_k"
 
 
 @dataclass(frozen=True)
@@ -182,11 +192,12 @@ class RoutingEvent(TraceEvent):
     - how often fallbacks were triggered
     - whether sort strategy correlated with cost savings
     """
+
     provider: str = ""
     model: str = ""
-    tier: int = 0                  # 0 = root/best, higher = cheaper
-    sort_strategy: str = ""        # "price" | "throughput" | "latency" | ""
-    fallback_index: int = 0        # 0 = primary, 1+ = Nth fallback used
+    tier: int = 0  # 0 = root/best, higher = cheaper
+    sort_strategy: str = ""  # "price" | "throughput" | "latency" | ""
+    fallback_index: int = 0  # 0 = primary, 1+ = Nth fallback used
 
 
 @dataclass(frozen=True)
@@ -197,11 +208,14 @@ class CostThresholdEvent(TraceEvent):
     Enables the adaptive router to shift tier down (or back up) in real time.
     Recorded in trace for post-session budget analysis.
     """
+
     spent: int = 0
     cap: int = 0
     ratio: float = 0.0
-    threshold_name: str = ""       # "compress" | "deny_child" | "restrict_export"
-    tier_shift: int = 0            # -1 = shifted to cheaper tier, 0 = hold, 1 = shifted up
+    threshold_name: str = ""  # "compress" | "deny_child" | "restrict_export"
+    tier_shift: int = (
+        0  # -1 = shifted to cheaper tier, 0 = hold, 1 = shifted up
+    )
 
 
 # ── Telemetry contracts ───────────────────────────────────────────────────────
@@ -236,12 +250,12 @@ class AnonymizedTraceRecord:
 
 @dataclass(frozen=True)
 class TraceConfig:
-    local_only: bool       = True
-    persist_inputs: bool   = False
-    persist_to_disk: bool  = True
-    training_opt_in: bool  = False
-    trace_dir: str         = field(default_factory=_default_trace_dir)
-    retention_days: int    = 30
+    local_only: bool = True
+    persist_inputs: bool = False
+    persist_to_disk: bool = True
+    training_opt_in: bool = False
+    trace_dir: str = field(default_factory=_default_trace_dir)
+    retention_days: int = 30
 
 
 @dataclass
@@ -265,4 +279,6 @@ class DecisionTrace:
 
     @property
     def had_policy_adjustment(self) -> bool:
-        return any(e.kind == TraceEventKind.POLICY_ADJUSTED for e in self.events)
+        return any(
+            e.kind == TraceEventKind.POLICY_ADJUSTED for e in self.events
+        )

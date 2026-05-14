@@ -2,27 +2,36 @@ from __future__ import annotations
 
 import dataclasses
 
-from axor_core.contracts.cancel import CancelToken, CancelReason, make_token
-from axor_core.contracts.context import ContextView, LineageSummary, RawExecutionState
-from axor_core.contracts.envelope import ExecutionEnvelope
-from axor_core.contracts.invokable import Invokable
-from axor_core.contracts.intent import Intent, IntentKind
-from axor_core.contracts.policy import ExecutionPolicy
-from axor_core.contracts.result import ExecutionResult, ExecutorEventKind, TokenUsage
-from axor_core.contracts.trace import TraceConfig, TraceEventKind
-from axor_core.contracts.extension import ExtensionBundle
+from axor_core import trace as trace_mod
+from axor_core.budget.policy_engine import BudgetPolicyEngine
 from axor_core.capability.executor import CapabilityExecutor
 from axor_core.context.manager import ContextManager
+from axor_core.contracts.anomaly import AnomalyDetector
+from axor_core.contracts.cancel import CancelToken, make_token
+from axor_core.contracts.context import (
+    ContextView,
+    LineageSummary,
+    RawExecutionState,
+)
+from axor_core.contracts.envelope import ExecutionEnvelope
+from axor_core.contracts.extension import ExtensionBundle
+from axor_core.contracts.intent import Intent, IntentKind
+from axor_core.contracts.invokable import Invokable
+from axor_core.contracts.policy import ExecutionPolicy
+from axor_core.contracts.result import (
+    ExecutionResult,
+    ExecutorEventKind,
+    TokenUsage,
+)
+from axor_core.contracts.trace import TraceConfig, TraceEventKind
 from axor_core.node.envelope import EnvelopeBuilder
-from axor_core.node.intent_loop import IntentLoop, EscalationCallback
 from axor_core.node.export import ExportFilter
+from axor_core.node.intent_loop import IntentLoop
 from axor_core.node.spawn import ChildSpawner
 from axor_core.policy.analyzer import TaskAnalyzer
-from axor_core.policy.selector import PolicySelector
 from axor_core.policy.composer import PolicyComposer
-from axor_core.budget.policy_engine import BudgetPolicyEngine
+from axor_core.policy.selector import PolicySelector
 from axor_core.trace.collector import TraceCollector
-from axor_core import trace as trace_mod
 
 
 class GovernedNode:
@@ -66,24 +75,24 @@ class GovernedNode:
         trace_config: TraceConfig | None = None,
         current_depth: int = 0,
         child_executor: Invokable | None = None,
-        escalation_callback: EscalationCallback | None = None,
+        anomaly_detector: AnomalyDetector | None = None,
     ) -> None:
-        self._executor            = executor
-        self._child_executor      = child_executor  # None → reuse parent executor
-        self._cap_executor        = capability_executor
-        self._analyzer            = analyzer
-        self._selector            = selector
-        self._composer            = composer
-        self._context_manager     = context_manager      # None → stub ContextView
-        self._budget_engine       = budget_engine         # None → no budget tracking
-        self._trace_collector     = trace_collector       # None → events not persisted
-        self._trace_config        = trace_config or TraceConfig()
-        self._depth               = current_depth
-        self._escalation_callback = escalation_callback
+        self._executor = executor
+        self._child_executor = child_executor  # None → reuse parent executor
+        self._cap_executor = capability_executor
+        self._analyzer = analyzer
+        self._selector = selector
+        self._composer = composer
+        self._context_manager = context_manager  # None → stub ContextView
+        self._budget_engine = budget_engine  # None → no budget tracking
+        self._trace_collector = trace_collector  # None → events not persisted
+        self._trace_config = trace_config or TraceConfig()
+        self._depth = current_depth
+        self._anomaly_detector = anomaly_detector  # None → no anomaly scoring
 
         self._envelope_builder = EnvelopeBuilder()
-        self._export_filter    = ExportFilter()
-        self._child_spawner    = ChildSpawner()
+        self._export_filter = ExportFilter()
+        self._child_spawner = ChildSpawner()
 
     async def run(
         self,
@@ -101,10 +110,14 @@ class GovernedNode:
             policy = override_policy
         else:
             signal, signal_event = await self._analyzer.analyze(raw_state.task)
-            trace_events.append(_stamp(signal_event, node_id="pending", sequence=0))
+            trace_events.append(
+                _stamp(signal_event, node_id="pending", sequence=0)
+            )
             policy = self._selector.select(signal)
 
-        extension_fragments = list(extension_bundle.fragments) if extension_bundle else []
+        extension_fragments = (
+            list(extension_bundle.fragments) if extension_bundle else []
+        )
         policy = self._composer.compose(
             base=policy,
             extensions=extension_fragments,
@@ -129,16 +142,22 @@ class GovernedNode:
             ]
 
         # policy chosen event
-        trace_events.append(trace_mod.events.policy_chosen(lineage.node_id, policy))
+        trace_events.append(
+            trace_mod.events.policy_chosen(lineage.node_id, policy)
+        )
 
         # ── 3. Context ─────────────────────────────────────────────────────────
         if self._context_manager is not None:
-            context = self._context_manager.build(raw_state, lineage, policy=policy)
+            context = self._context_manager.build(
+                raw_state, lineage, policy=policy
+            )
         else:
             context = self._stub_context_view(raw_state, policy, lineage)
 
         # ── 4. Envelope ────────────────────────────────────────────────────────
-        extension_tools = list(extension_bundle.tools) if extension_bundle else []
+        extension_tools = (
+            list(extension_bundle.tools) if extension_bundle else []
+        )
         envelope = self._envelope_builder.build(
             task=raw_state.task,
             context=context,
@@ -168,26 +187,38 @@ class GovernedNode:
         if hasattr(self._executor, "get_bus"):
             bus = self._executor.get_bus()
             if bus is not None:
+
                 async def _push_to_bus(
-                    tool_use_id: str, tool_name: str, result: object, approved: bool
+                    tool_use_id: str,
+                    tool_name: str,
+                    result: object,
+                    approved: bool,
                 ) -> None:
                     bus.push(tool_use_id, result)
+
                 tool_result_callback = _push_to_bus
 
         # spawn_callback — routes spawn_child intents to _handle_spawn_child
         # captures closure variables needed for child construction
-        _ext_bundle   = extension_bundle
-        _parent_pol   = policy
+        _ext_bundle = extension_bundle
+        _parent_pol = policy
         _trace_events = trace_events
 
         async def _spawn_child_callback(
             tool_use_id: str, task: str, context_hint: str
         ) -> str:
-            from axor_core.errors.exceptions import ChildNotAllowedError, MaxDepthExceededError
+            from axor_core.errors.exceptions import (
+                ChildNotAllowedError,
+                MaxDepthExceededError,
+            )
+
             child_intent = Intent(
                 kind=IntentKind.SPAWN_CHILD,
-                payload={"task": task, "context_hint": context_hint,
-                         "tool_use_id": tool_use_id},
+                payload={
+                    "task": task,
+                    "context_hint": context_hint,
+                    "tool_use_id": tool_use_id,
+                },
                 node_id=envelope.node_id,
                 sequence=0,
             )
@@ -211,6 +242,7 @@ class GovernedNode:
             tool_result_callback=tool_result_callback,
             spawn_callback=_spawn_child_callback,
             escalation_callback=self._escalation_callback,
+            anomaly_detector=self._anomaly_detector,
         )
 
         raw_output, raw_payload = await self._collect_stream(
@@ -256,7 +288,6 @@ class GovernedNode:
         raw_stream = self._executor.stream(envelope)
 
         async for event in intent_loop.run(raw_stream, envelope):
-
             match event.kind:
                 case ExecutorEventKind.TEXT:
                     # budget check on result arrival
@@ -276,7 +307,9 @@ class GovernedNode:
                         args = event.payload.get("args", {})
                         path = args.get("path", "")
                         if path and isinstance(tool_result, str):
-                            self._context_manager.record_file_read(path, tool_result)
+                            self._context_manager.record_file_read(
+                                path, tool_result
+                            )
 
                     content = text or str(tool_result or "")
                     output_parts.append(content)
@@ -311,11 +344,15 @@ class GovernedNode:
             if envelope.cancel_token.is_cancelled():
                 return "[child spawn denied: budget exhausted]"
 
-        child_task_str, child_policy, child_lineage = self._child_spawner.prepare_child(
-            spawn_intent=intent,
-            parent_envelope=envelope,
-            intent_loop=IntentLoop(self._cap_executor, trace_events, self._depth),
-            trace_events=trace_events,
+        child_task_str, child_policy, child_lineage = (
+            self._child_spawner.prepare_child(
+                spawn_intent=intent,
+                parent_envelope=envelope,
+                intent_loop=IntentLoop(
+                    self._cap_executor, trace_events, self._depth
+                ),
+                trace_events=trace_events,
+            )
         )
 
         child_raw_state = RawExecutionState(
@@ -338,7 +375,8 @@ class GovernedNode:
             trace_collector=self._trace_collector,
             trace_config=self._trace_config,
             current_depth=self._depth + 1,
-            child_executor=self._child_executor,  # grandchildren use same child executor
+            child_executor=self._child_executor,
+            anomaly_detector=self._anomaly_detector,
         )
 
         child_cancel = envelope.cancel_token.child_token()
@@ -350,22 +388,29 @@ class GovernedNode:
         )
 
         # emit child_completed into parent trace
-        from axor_core.contracts.trace import TraceEvent, TraceEventKind
-        trace_events.append(TraceEvent(
-            kind=TraceEventKind.CHILD_COMPLETED,
-            node_id=envelope.node_id,
-            sequence=len(trace_events),
-            payload={
-                "child_node_id": child_raw_state.lineage.node_id if child_raw_state.lineage else "unknown",
-                "tokens": child_result.token_usage.total,
-                "cancelled": child_result.metadata.get("cancelled", False),
-            },
-        ))
+        from axor_core.contracts.trace import TraceEvent
+
+        trace_events.append(
+            TraceEvent(
+                kind=TraceEventKind.CHILD_COMPLETED,
+                node_id=envelope.node_id,
+                sequence=len(trace_events),
+                payload={
+                    "child_node_id": child_raw_state.lineage.node_id
+                    if child_raw_state.lineage
+                    else "unknown",
+                    "tokens": child_result.token_usage.total,
+                    "cancelled": child_result.metadata.get("cancelled", False),
+                },
+            )
+        )
 
         # record child tokens in parent budget tracker so total_tokens_spent() is accurate
         if self._budget_engine:
             self._budget_engine.record_child_tokens(
-                node_id=child_raw_state.lineage.node_id if child_raw_state.lineage else "child",
+                node_id=child_raw_state.lineage.node_id
+                if child_raw_state.lineage
+                else "child",
                 input_tokens=child_result.token_usage.input_tokens,
                 output_tokens=child_result.token_usage.output_tokens,
                 tool_tokens=child_result.token_usage.tool_tokens,
@@ -386,6 +431,7 @@ class GovernedNode:
         if raw_state.lineage is not None:
             return raw_state.lineage
         from axor_core.node.envelope import _new_node_id
+
         return LineageSummary(
             node_id=_new_node_id(),
             parent_id=None,
@@ -402,6 +448,7 @@ class GovernedNode:
     ) -> ContextView:
         """Minimal ContextView when no ContextManager is injected."""
         from axor_core.contracts.context import ContextFragment
+
         fragments = [
             ContextFragment(
                 kind="fact",
@@ -411,18 +458,23 @@ class GovernedNode:
             )
         ]
         if raw_state.parent_export:
-            fragments.append(ContextFragment(
-                kind="parent_export",
-                content=raw_state.parent_export,
-                token_estimate=len(raw_state.parent_export) // 4,
-                source="parent_node",
-            ))
+            fragments.append(
+                ContextFragment(
+                    kind="parent_export",
+                    content=raw_state.parent_export,
+                    token_estimate=len(raw_state.parent_export) // 4,
+                    source="parent_node",
+                )
+            )
         total = sum(f.token_estimate for f in fragments)
         return ContextView(
             node_id=lineage.node_id,
             working_summary=raw_state.task,
             visible_fragments=fragments,
-            active_constraints=[policy.context_mode.value, policy.compression_mode.value],
+            active_constraints=[
+                policy.context_mode.value,
+                policy.compression_mode.value,
+            ],
             lineage=lineage,
             token_count=total,
             compression_ratio=1.0,
@@ -434,8 +486,13 @@ class GovernedNode:
         context: ContextView,
     ) -> TokenUsage:
         from axor_core.contracts.trace import TokensSpentEvent
+
         spent = next(
-            (e for e in reversed(trace_events) if isinstance(e, TokensSpentEvent)),
+            (
+                e
+                for e in reversed(trace_events)
+                if isinstance(e, TokensSpentEvent)
+            ),
             None,
         )
         if spent:
@@ -448,8 +505,10 @@ class GovernedNode:
                 cache_read_input_tokens=spent.cache_read_input_tokens,
             )
         return TokenUsage(
-            input_tokens=0, output_tokens=0,
-            tool_tokens=0, context_tokens=context.token_count,
+            input_tokens=0,
+            output_tokens=0,
+            tool_tokens=0,
+            context_tokens=context.token_count,
         )
 
     def _partial_result(
@@ -470,7 +529,8 @@ class GovernedNode:
                 "policy": envelope.policy.name,
                 "cancelled": True,
                 "cancel_reason": envelope.cancel_token.reason.value
-                    if envelope.cancel_token.reason else "unknown",
+                if envelope.cancel_token.reason
+                else "unknown",
             },
         )
 
