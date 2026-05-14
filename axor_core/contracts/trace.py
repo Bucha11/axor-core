@@ -160,6 +160,21 @@ class CancelledEvent(TraceEvent):
     completed_intents: int = 0
 
 
+@dataclass(frozen=True)
+class EscalationDeniedEvent(TraceEvent):
+    tool: str = ""
+    reason: str = ""
+
+
+@dataclass(frozen=True)
+class EscalationGrantedEvent(TraceEvent):
+    tool: str = ""
+    paths: tuple[str, ...] = field(default_factory=tuple)
+    max_ops: int = 0
+    reason: str = ""
+    auto_approved: bool = True
+
+
 # ── New in 0.5.0: adapter observability events ─────────────────────────────────
 
 

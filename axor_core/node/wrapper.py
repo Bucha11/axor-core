@@ -76,6 +76,7 @@ class GovernedNode:
         current_depth: int = 0,
         child_executor: Invokable | None = None,
         anomaly_detector: AnomalyDetector | None = None,
+        escalation_callback=None,
     ) -> None:
         self._executor = executor
         self._child_executor = child_executor  # None → reuse parent executor
@@ -89,6 +90,7 @@ class GovernedNode:
         self._trace_config = trace_config or TraceConfig()
         self._depth = current_depth
         self._anomaly_detector = anomaly_detector  # None → no anomaly scoring
+        self._escalation_callback = escalation_callback  # None → auto-deny escalation
 
         self._envelope_builder = EnvelopeBuilder()
         self._export_filter = ExportFilter()
@@ -377,6 +379,7 @@ class GovernedNode:
             current_depth=self._depth + 1,
             child_executor=self._child_executor,
             anomaly_detector=self._anomaly_detector,
+            escalation_callback=self._escalation_callback,
         )
 
         child_cancel = envelope.cancel_token.child_token()
