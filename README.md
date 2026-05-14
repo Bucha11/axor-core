@@ -78,6 +78,13 @@ Memory providers are optional — install only if you need cross-session persist
 pip install axor-memory-sqlite   # SQLite, local, zero extra dependencies
 ```
 
+Classifiers are optional — install only if you need ML-based classification or anomaly detection:
+
+```bash
+pip install axor-classifier-simple[ml]  # ML task signal classifier + anomaly detector
+pip install axor-classifier-llm[llm]    # LLM gray-zone verifier (requires Anthropic SDK)
+```
+
 `axor-core` has **zero required dependencies** by design.
 
 ---
@@ -247,7 +254,7 @@ Two modes in `IntentLoop`:
 The `ContextManager` is session-scoped (persists across turns) and eliminates eleven categories of waste:
 
 | Waste | Mechanism |
-|-------|-----------|
+|-------|----------|
 | Verbose old assistant prose | `compressor.py` — extracts key decisions, discards verbose text |
 | Oversized command outputs | Smart truncation: head + tail, not naive cut |
 | Stale git/branch history | `invalidator.py` — git TTL-based cache invalidation |
@@ -349,7 +356,7 @@ for trace in session.all_traces():
 ### Policies that allow children
 
 | Policy | child_mode | max_depth |
-|--------|-----------|-----------|
+|--------|-----------|----------|
 | focused_* | DENIED | 0 |
 | moderate_* | SHALLOW | 1 |
 | expansive | ALLOWED | 3 |
@@ -411,8 +418,67 @@ session = GovernedSession(
 ```
 
 Classifier packages:
+- `axor-classifier-simple` — TF-IDF + LogisticRegression, trains in seconds on synthetic data, < 1ms inference
 - `axor-classifier-local` — trained on your own traces (coming soon)
 - `axor-classifier-cloud` — trained on anonymized traces from all users (coming soon)
+
+```python
+# drop-in with axor-classifier-simple
+from axor_classifier_simple import TaskSignalClassifier
+
+session = GovernedSession(
+    executor=MyExecutor(),
+    capability_executor=cap_executor,
+    classifier=TaskSignalClassifier(),  # loads ~/.axor/models/task_signal.joblib
+)
+```
+
+### Anomaly Detection
+
+The anomaly subsystem monitors behavioral trajectories during execution. Every tool intent that passes through `IntentLoop` can be observed as a `NormalizedIntent` — a behavioral abstraction that describes *what the agent tried to do* without carrying raw content.
+
+`AnomalyDetector` is a protocol defined in `axor_core.contracts.anomaly`:
+
+```python
+from axor_core.contracts.anomaly import AnomalyDetector, AnomalyResult, AnomalyClass, NormalizedIntent
+
+class MyDetector:
+    async def score(
+        self,
+        window: list[NormalizedIntent],
+        task_signal_hint: str = "",
+        policy_name: str = "",
+    ) -> AnomalyResult:
+        ...
+```
+
+**AnomalyResult:**
+
+```python
+@dataclass
+class AnomalyResult:
+    score: float              # 0.0 – 1.0
+    cls: AnomalyClass         # NORMAL | SUSPICIOUS | CRITICAL
+    reasons: tuple[str, ...]  # human-readable trigger reasons
+```
+
+**Score thresholds:**
+
+| Class | Score | Meaning |
+|-------|-------|--------|
+| `NORMAL` | `[0.0, 0.40)` | Expected behavior |
+| `SUSPICIOUS` | `[0.40, 0.75)` | Unusual — logged and traced |
+| `CRITICAL` | `[0.75, 1.0]` | High-risk — cancel session |
+
+**NormalizedIntent fields:** `tool`, `operation`, `target_kind`, `destination_kind`, `provenance`, `data_flow`, and boolean flags: `reads_secret_like_data`, `writes_outside_workdir`, `executes_generated_code`, `after_external_read`, `after_secret_access`.
+
+The key security property: `NormalizedIntent` carries only behavioral metadata. Raw tool outputs, file contents, and chain-of-thought never pass through the anomaly subsystem — this isolates it from content-level prompt injection.
+
+For the two-stage pattern where a statistical model escalates uncertain cases to an LLM verifier, see `axor-classifier-simple` + `axor-classifier-llm`.
+
+Anomaly detector packages:
+- `axor-classifier-simple` — `MLAnomalyDetector`: GradientBoostingClassifier, < 1ms, optional LLM escalation
+- `axor-classifier-llm` — `LLMAnomalyVerifier`: Anthropic Claude gray-zone verifier
 
 ### Extensions
 
@@ -796,6 +862,7 @@ axor-core/
     │   ├── trace.py       DecisionTrace, 17 typed TraceEvent kinds
     │   ├── agent.py       AgentDefinition, AgentDomain, TrustLevel
     │   ├── memory.py      MemoryFragment, FragmentValue, MemoryProvider, MemoryQuery
+    │   ├── anomaly.py     NormalizedIntent, AnomalyResult, AnomalyClass, AnomalyDetector, LLMVerifier
     │   └── context.py     ContextFragment (+ value field), ContextView, LineageSummary
     │
     ├── policy/            dynamic policy selection
@@ -878,6 +945,8 @@ axor-core/
 **Context policy is per-turn.** `ContextManager.build(raw_state, lineage, policy=policy)` receives the actual policy selected for each task. A `rewrite repo` task gets `BROAD` context with `LIGHT` compression. A `write test` task gets `MINIMAL` context with `BALANCED` compression. The session-scoped manager remembers files and symbols across turns regardless.
 
 **Privacy by default.** `TraceConfig(local_only=True, persist_inputs=False)`. Nothing leaves the machine without explicit `training_opt_in=True`.
+
+**Anomaly detection operates on behavioral metadata only.** `NormalizedIntent` carries only abstracted behavioral signals — never raw content. This isolates the anomaly subsystem from prompt injection via tool outputs or external data.
 
 ---
 
