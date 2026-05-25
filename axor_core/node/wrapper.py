@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import dataclasses
+import logging
 
 from axor_core import trace as trace_mod
-from axor_core.budget.policy_engine import BudgetPolicyEngine
+from axor_core.budget.policy_engine import BudgetPolicyEngine, OptimizationAction
 from axor_core.capability.executor import CapabilityExecutor
 from axor_core.context.manager import ContextManager
 from axor_core.contracts.anomaly import AnomalyDetector
@@ -24,6 +25,9 @@ from axor_core.contracts.result import (
     TokenUsage,
 )
 from axor_core.contracts.trace import TraceConfig, TraceEventKind
+from axor_core.capability.locked import governance_context
+from axor_core.taint.engine import TaintEngine
+from axor_core.degradation.engine import DegradationEngine
 from axor_core.node.envelope import EnvelopeBuilder
 from axor_core.node.export import ExportFilter
 from axor_core.node.intent_loop import IntentLoop
@@ -32,6 +36,9 @@ from axor_core.policy.analyzer import TaskAnalyzer
 from axor_core.policy.composer import PolicyComposer
 from axor_core.policy.selector import PolicySelector
 from axor_core.trace.collector import TraceCollector
+
+
+log = logging.getLogger("axor.wrapper")
 
 
 class GovernedNode:
@@ -77,6 +84,8 @@ class GovernedNode:
         child_executor: Invokable | None = None,
         anomaly_detector: AnomalyDetector | None = None,
         escalation_callback=None,
+        taint_engine: TaintEngine | None = None,
+        degradation_engine: "DegradationEngine | None" = None,
     ) -> None:
         self._executor = executor
         self._child_executor = child_executor  # None → reuse parent executor
@@ -91,6 +100,8 @@ class GovernedNode:
         self._depth = current_depth
         self._anomaly_detector = anomaly_detector  # None → no anomaly scoring
         self._escalation_callback = escalation_callback  # None → auto-deny escalation
+        self._taint_engine = taint_engine if taint_engine is not None else TaintEngine()
+        self._degradation_engine = degradation_engine
 
         self._envelope_builder = EnvelopeBuilder()
         self._export_filter = ExportFilter()
@@ -125,6 +136,15 @@ class GovernedNode:
             extensions=extension_fragments,
             parent_policy=parent_policy,
         )
+
+        # When running as a child node, assert the derived policy actually
+        # respects the parent ceiling. apply_parent_restrictions in compose()
+        # enforces this, but we validate explicitly so any regression is caught
+        # immediately rather than silently producing an over-privileged child.
+        if parent_policy is not None and self._depth > 0:
+            from axor_core.node.spawn import _validate_child_policy
+            from axor_core.errors.exceptions import SpawnValidationError
+            _validate_child_policy(policy, parent_policy, self._depth)
 
         # ── 2. Lineage ─────────────────────────────────────────────────────────
         lineage = self._build_lineage(raw_state)
@@ -180,6 +200,11 @@ class GovernedNode:
             if cancel_token.is_cancelled():
                 # budget engine fired hard stop
                 return self._partial_result(envelope, "", {}, trace_events)
+            if decision.action == OptimizationAction.COMPRESS_CONTEXT:
+                log.warning(
+                    "budget: context compression recommended (node=%s, reason=%s)",
+                    envelope.node_id, decision.reason,
+                )
 
         # ── 6. Intent loop ─────────────────────────────────────────────────────
         # if executor supports ToolResultBus (e.g. ClaudeCodeExecutor),
@@ -245,6 +270,8 @@ class GovernedNode:
             spawn_callback=_spawn_child_callback,
             escalation_callback=self._escalation_callback,
             anomaly_detector=self._anomaly_detector,
+            taint_engine=self._taint_engine,
+            degradation_engine=self._degradation_engine,
         )
 
         raw_output, raw_payload = await self._collect_stream(
@@ -287,37 +314,45 @@ class GovernedNode:
         output_parts: list[str] = []
         payload: dict = {}
 
-        raw_stream = self._executor.stream(envelope)
+        with governance_context():
+            raw_stream = self._executor.stream(envelope)
+            async for event in intent_loop.run(raw_stream, envelope):
+                match event.kind:
+                    case ExecutorEventKind.TEXT:
+                        # budget check on result arrival
+                        text = event.payload.get("text", "")
+                        tool_result = event.payload.get("tool_result")
 
-        async for event in intent_loop.run(raw_stream, envelope):
-            match event.kind:
-                case ExecutorEventKind.TEXT:
-                    # budget check on result arrival
-                    text = event.payload.get("text", "")
-                    tool_result = event.payload.get("tool_result")
-
-                    if tool_result and self._budget_engine:
-                        estimate = len(str(tool_result)) // 4
-                        self._budget_engine.on_result_arrived(
-                            node_id=envelope.node_id,
-                            result_token_estimate=estimate,
-                            policy=envelope.policy,
-                        )
-
-                    # record file reads into context manager
-                    if tool_result and self._context_manager:
-                        args = event.payload.get("args", {})
-                        path = args.get("path", "")
-                        if path and isinstance(tool_result, str):
-                            self._context_manager.record_file_read(
-                                path, tool_result
+                        if tool_result and self._budget_engine:
+                            estimate = len(str(tool_result)) // 4
+                            result_decision = self._budget_engine.on_result_arrived(
+                                node_id=envelope.node_id,
+                                result_token_estimate=estimate,
+                                policy=envelope.policy,
                             )
+                            if result_decision.action in (
+                                OptimizationAction.COMPRESS_CONTEXT,
+                                OptimizationAction.RESTRICT_EXPORT,
+                            ):
+                                log.warning(
+                                    "budget: %s recommended after result (node=%s, reason=%s)",
+                                    result_decision.action.value, envelope.node_id, result_decision.reason,
+                                )
 
-                    content = text or str(tool_result or "")
-                    output_parts.append(content)
+                        # record file reads into context manager
+                        if tool_result and self._context_manager:
+                            args = event.payload.get("args", {})
+                            path = args.get("path", "")
+                            if path and isinstance(tool_result, str):
+                                self._context_manager.record_file_read(
+                                    path, tool_result
+                                )
 
-                case ExecutorEventKind.STOP:
-                    payload = event.payload
+                        content = text or str(tool_result or "")
+                        output_parts.append(content)
+
+                    case ExecutorEventKind.STOP:
+                        payload = event.payload
 
         return "".join(output_parts), payload
 
@@ -345,8 +380,15 @@ class GovernedNode:
             )
             if envelope.cancel_token.is_cancelled():
                 return "[child spawn denied: budget exhausted]"
+            if decision.action == OptimizationAction.DENY_CHILD:
+                return f"[child spawn denied: {decision.reason}]"
+            if decision.action == OptimizationAction.COMPRESS_CONTEXT:
+                log.warning(
+                    "budget: context compression recommended before child spawn (node=%s, reason=%s)",
+                    envelope.node_id, decision.reason,
+                )
 
-        child_task_str, child_policy, child_lineage = (
+        child_task_str, child_lineage = (
             self._child_spawner.prepare_child(
                 spawn_intent=intent,
                 parent_envelope=envelope,
@@ -380,7 +422,12 @@ class GovernedNode:
             child_executor=self._child_executor,
             anomaly_detector=self._anomaly_detector,
             escalation_callback=self._escalation_callback,
+            degradation_engine=self._degradation_engine,
         )
+        # Child inherits parent taint — isolation boundary does not clear taint.
+        parent_taint = self._taint_engine.state
+        if parent_taint.is_tainted:
+            child_node._taint_engine.inherit_from_parent(parent_taint)
 
         child_cancel = envelope.cancel_token.child_token()
         child_result = await child_node.run(

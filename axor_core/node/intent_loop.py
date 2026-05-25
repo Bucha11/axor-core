@@ -3,9 +3,10 @@ from __future__ import annotations
 import logging
 import traceback
 from dataclasses import dataclass
-from typing import Any, AsyncIterator, Awaitable, Callable
+from typing import TYPE_CHECKING, Any, AsyncIterator, Awaitable, Callable
 
 from axor_core.capability.executor import CapabilityExecutor
+from axor_core.capability.flood import EscalationFloodGuard
 from axor_core.contracts.anomaly import (
     AnomalyClass,
     AnomalyDetector,
@@ -26,11 +27,22 @@ from axor_core.contracts.trace import (
     TraceEvent,
     TraceEventKind,
 )
+from axor_core.contracts.denial import DenialResponse
 from axor_core.errors.exceptions import (
     ToolNotAllowedError,
     ToolNotFoundError,
 )
+from axor_core.capability.lease_validator import LeaseValidator, path_matches_allowlist
+from axor_core.contracts.lease import LeaseAuthorityType
+from axor_core.contracts.degradation import DegradationLevel
+from axor_core.contracts.taint import TaintScope, TaintSource, TaintState
+from axor_core.degradation.engine import _LOCKED_ALLOWED_TOOLS
 from axor_core.node.normalizer import IntentNormalizer
+
+if TYPE_CHECKING:
+    from axor_core.contracts.lease import CapabilityLease
+    from axor_core.degradation.engine import DegradationEngine
+    from axor_core.taint.engine import TaintEngine
 
 log = logging.getLogger("axor.intent_loop")
 
@@ -103,6 +115,8 @@ class IntentLoop:
         escalation_callback: EscalationCallback | None = None,
         anomaly_detector: AnomalyDetector | None = None,
         anomaly_window_size: int = 10,
+        taint_engine: "TaintEngine | None" = None,
+        degradation_engine: "DegradationEngine | None" = None,
     ) -> None:
         self._executor = capability_executor
         self._trace_events = trace_events
@@ -112,12 +126,17 @@ class IntentLoop:
         self._escalation_callback = escalation_callback
         self._anomaly_detector = anomaly_detector
         self._anomaly_window_size = anomaly_window_size
+        self._taint_engine = taint_engine
+        self._degradation_engine = degradation_engine
         self._normalizer = IntentNormalizer()
         self._intent_window: list[NormalizedIntent] = []
         self._intent_sequence = 0
         self._token_totals = _TokenAccumulator()
         self._granted_escalations: dict[str, _GrantedEscalation] = {}
+        self._capability_leases: dict[str, "CapabilityLease"] = {}
+        self._lease_validator = LeaseValidator()
         self._escalation_count = 0
+        self._flood_guard = EscalationFloodGuard()
 
     async def run(
         self,
@@ -183,6 +202,39 @@ class IntentLoop:
                         tool_name == "spawn_child"
                         and self._spawn_callback is not None
                     ):
+                        self._intent_sequence += 1
+                        spawn_intent = Intent(
+                            kind=IntentKind.SPAWN_CHILD,
+                            payload=event.payload,
+                            node_id=envelope.node_id,
+                            sequence=self._intent_sequence,
+                        )
+                        # Capability check BEFORE dispatching to callback —
+                        # denial must be recorded in the trace regardless of
+                        # whether the callback would catch the exception.
+                        spawn_decision = self.resolve_spawn_intent(
+                            spawn_intent, envelope
+                        )
+                        if spawn_decision.kind == PolicyDecisionKind.DENY:
+                            self._record_denial(
+                                spawn_intent, spawn_decision.reason, envelope
+                            )
+                            denial = _denial_result(tool_name, spawn_decision.reason)
+                            if self._tool_result_callback is not None:
+                                await self._tool_result_callback(
+                                    tool_use_id, tool_name, denial, False
+                                )
+                            else:
+                                yield ExecutorEvent(
+                                    kind=ExecutorEventKind.TEXT,
+                                    payload={
+                                        "tool_result": denial,
+                                        "approved": False,
+                                    },
+                                    node_id=envelope.node_id,
+                                )
+                            continue
+
                         task = event.payload.get("args", {}).get("task", "")
                         context_hint = event.payload.get("args", {}).get(
                             "context_hint", ""
@@ -265,16 +317,44 @@ class IntentLoop:
 
         if decision.kind == PolicyDecisionKind.DENY:
             self._record_denial(intent, decision.reason, envelope)
+            denial_resp = _make_denial_response(decision.reason)
+            self._record_degradation_signal(intent, denial_resp)
             return ResolvedIntent(
                 intent=intent,
                 approved=False,
                 reason=decision.reason,
-                result=_denial_result(tool_name, decision.reason),
+                result=denial_resp.to_tool_result(),
             )
 
-        # anomaly detection — runs after policy approval
-        if self._anomaly_detector is not None:
+        # normalize intent once — shared by anomaly detection, taint, and degradation
+        needs_normalized = (
+            self._anomaly_detector is not None
+            or self._taint_engine is not None
+            or self._degradation_engine is not None
+        )
+        normalized: NormalizedIntent | None = None
+        if needs_normalized:
             normalized = self._normalizer.normalize(intent)
+
+        # degradation pre-check — enforce narrowed policy from previous signals
+        if self._degradation_engine is not None and normalized is not None:
+            taint_state = self._taint_engine.state if self._taint_engine is not None else None
+            degradation_denial = self._check_degradation_denial(
+                tool_name, normalized, taint_state, envelope
+            )
+            if degradation_denial is not None:
+                self._record_denial(intent, degradation_denial, envelope)
+                denial_resp = _make_denial_response(degradation_denial)
+                self._record_degradation_signal(intent, denial_resp, normalized)
+                return ResolvedIntent(
+                    intent=intent,
+                    approved=False,
+                    reason=degradation_denial,
+                    result=denial_resp.to_tool_result(),
+                )
+
+        # anomaly detection — runs after policy approval
+        if self._anomaly_detector is not None and normalized is not None:
             self._intent_window.append(normalized)
             if len(self._intent_window) > self._anomaly_window_size:
                 self._intent_window.pop(0)
@@ -284,8 +364,15 @@ class IntentLoop:
                     policy_name=envelope.policy.name,
                 )
             except Exception as exc:
-                log.warning("anomaly detector raised unexpectedly: %s", exc)
-                anomaly = None
+                reason = f"anomaly detector raised unexpectedly: {type(exc).__name__}: {exc}"
+                log.error("anomaly detector error — failing closed: %s", exc, exc_info=True)
+                self._record_denial(intent, reason, envelope)
+                return ResolvedIntent(
+                    intent=intent,
+                    approved=False,
+                    reason=reason,
+                    result=_denial_result(tool_name, reason),
+                )
 
             if anomaly is not None and anomaly.cls == AnomalyClass.CRITICAL:
                 reason = f"anomaly detector: CRITICAL score={anomaly.score:.2f} reasons={anomaly.reasons}"
@@ -311,6 +398,31 @@ class IntentLoop:
                     anomaly=anomaly,
                     policy_action="flagged",
                     envelope=envelope,
+                )
+
+        # taint enforcement — deny high-risk operations on a tainted session
+        if (
+            self._taint_engine is not None
+            and normalized is not None
+            and self._taint_engine.state.is_tainted
+        ):
+            risky = (
+                normalized.writes_outside_workdir
+                or normalized.executes_generated_code
+            )
+            if risky:
+                reason = (
+                    "taint enforcement: session is tainted by external input "
+                    f"(sources={[s.value for s in self._taint_engine.state.sources]}) "
+                    f"and tool '{tool_name}' performs a high-risk operation "
+                    "(writes_outside_workdir or executes_generated_code)"
+                )
+                self._record_denial(intent, reason, envelope)
+                return ResolvedIntent(
+                    intent=intent,
+                    approved=False,
+                    reason=reason,
+                    result=_denial_result(tool_name, reason),
                 )
 
         # approved or transformed — record approved event
@@ -340,6 +452,19 @@ class IntentLoop:
             result = await self._executor.execute(
                 effective_intent, envelope.capabilities
             )
+            # Propagate taint after any successful privileged read.
+            if self._taint_engine is not None:
+                normalized_check = normalized or self._normalizer.normalize(effective_intent)
+                if normalized_check.target_kind in (
+                    "external_url", "cloud_metadata", "docker_socket"
+                ) or normalized_check.operation == "network_request":
+                    self._taint_engine.propagate(TaintSource.WEB, TaintScope.SESSION)
+                elif normalized_check.target_kind == "outside_workdir":
+                    # File reads outside the trusted workspace may introduce
+                    # adversarial content — taint with FILE source.
+                    self._taint_engine.propagate(TaintSource.FILE, TaintScope.SESSION)
+                self._taint_engine.tick_intent()
+            self._record_degradation_signal(intent, None)
             return ResolvedIntent(
                 intent=intent,
                 approved=True,
@@ -395,11 +520,30 @@ class IntentLoop:
         tool_name: str = intent.payload.get("tool", "")
         caps = envelope.capabilities
 
+        # Check CapabilityLease first (authoritative — validates TTL + max_uses)
+        lease = self._capability_leases.get(tool_name)
+        if lease is not None:
+            if not self._lease_validator.is_valid(lease):
+                del self._capability_leases[tool_name]
+                if tool_name in self._granted_escalations:
+                    del self._granted_escalations[tool_name]
+                return PolicyDecision(
+                    kind=PolicyDecisionKind.DENY,
+                    reason=f"capability lease for '{tool_name}' has expired or been exhausted",
+                )
+            tool_path = intent.payload.get("args", {}).get("path", "")
+            if not self._lease_validator.check_path_allowed(lease, tool_path):
+                return PolicyDecision(
+                    kind=PolicyDecisionKind.DENY,
+                    reason=f"lease for '{tool_name}' restricts to paths {lease.allowed_paths!r}",
+                )
+            lease.increment_use()
+
         grant = self._granted_escalations.get(tool_name)
         if grant is not None:
-            if grant.paths:
+            if grant.paths and not lease:
                 tool_path = intent.payload.get("args", {}).get("path", "")
-                if not any(tool_path.startswith(p) for p in grant.paths):
+                if not path_matches_allowlist(tool_path, grant.paths):
                     return PolicyDecision(
                         kind=PolicyDecisionKind.DENY,
                         reason=f"escalation grant for '{tool_name}' restricts to paths {grant.paths!r}",
@@ -468,6 +612,16 @@ class IntentLoop:
         if self._escalation_count >= ep.max_escalations:
             return _deny(f"max escalations reached ({ep.max_escalations})")
 
+        flood_denial = self._flood_guard.check(
+            tool=tool,
+            paths=paths,
+            reason=reason,
+            session_id=envelope.node_id,
+            node_id=envelope.node_id,
+        )
+        if flood_denial is not None:
+            return _deny(flood_denial)
+
         auto_approved = True
         if ep.require_human:
             if self._escalation_callback is None:
@@ -486,7 +640,25 @@ class IntentLoop:
             paths=paths,
             ops_remaining=max_ops,
         )
+        # Also create a CapabilityLease for auditable enforcement.
+        lease, lease_err = self._lease_validator.create_lease(
+            granted_by="operator" if ep.require_human else "auto_policy",
+            authority_type=(
+                LeaseAuthorityType.HUMAN_OPERATOR
+                if ep.require_human
+                else LeaseAuthorityType.AUTOMATED_POLICY
+            ),
+            allowed_tools=[tool],
+            parent_policy=envelope.policy,
+            allowed_paths=paths,
+            ttl_seconds=300.0,
+            max_uses=max_ops,
+            reason_code=reason,
+        )
+        if lease_err is None:
+            self._capability_leases[tool] = lease
         self._escalation_count += 1
+        self._flood_guard.record_approval()
 
         self._trace_events.append(
             EscalationGrantedEvent(
@@ -636,20 +808,96 @@ class IntentLoop:
             )
         )
 
+    # ── Degradation helpers ────────────────────────────────────────────────────
+
+    def _record_degradation_signal(
+        self,
+        intent: Intent,
+        denial: "DenialResponse | None",
+        normalized: NormalizedIntent | None = None,
+    ) -> None:
+        """Call record_signal on degradation engine and flush its events into the trace."""
+        if self._degradation_engine is None:
+            return
+        taint_state = self._taint_engine.state if self._taint_engine is not None else TaintState()
+        ni = normalized if normalized is not None else self._normalizer.normalize(intent)
+        self._degradation_engine.record_signal(ni, denial, taint_state)
+        for event in self._degradation_engine.drain_events():
+            self._trace_events.append(event)
+
+    def _check_degradation_denial(
+        self,
+        tool_name: str,
+        normalized: NormalizedIntent,
+        taint_state: "TaintState | None",
+        envelope: ExecutionEnvelope,
+    ) -> str | None:
+        """
+        Return a denial reason string if degradation state forbids this tool call, else None.
+        Called before the main cascade — enforces apply_to_policy narrowing.
+        """
+        if self._degradation_engine is None:
+            return None
+        ts = taint_state or TaintState()
+        source_id = self._degradation_engine.derive_source_id(normalized, ts)
+        effective = self._degradation_engine.apply_to_policy(envelope.policy, source_id)
+        # LOCKED/TERMINAL: only read + escalate allowed
+        level = self._degradation_engine.state.level
+        if level >= DegradationLevel.LOCKED:
+            if tool_name.lower() not in _LOCKED_ALLOWED_TOOLS:
+                return (
+                    f"degradation enforcement: session is {level.name} — "
+                    f"tool '{tool_name}' is not permitted (only read/escalate allowed)"
+                )
+        # RESTRICTED: write/bash/export removed for quarantined source
+        elif level == DegradationLevel.RESTRICTED:
+            if not effective.tool_policy.allow_bash and tool_name.lower() in {"bash", "shell", "execute", "run"}:
+                return (
+                    f"degradation enforcement: source '{source_id}' is quarantined — "
+                    f"tool '{tool_name}' (bash/execute) is restricted"
+                )
+            if not effective.tool_policy.allow_write and tool_name.lower() in {"write", "edit", "multiedit"}:
+                return (
+                    f"degradation enforcement: source '{source_id}' is quarantined — "
+                    f"tool '{tool_name}' (write) is restricted"
+                )
+        return None
+
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
 
 def _denial_result(tool_name: str, reason: str) -> dict:
     """
-    Structured denial returned to executor as tool result.
-    Executor sees this as a tool response — not a governance event.
+    Coarse denial returned to executor as tool result.
+
+    Workers receive only category + opaque decision_id.
+    Full reason is in the trace (operator-only access).
     """
-    return {
-        "error": "tool_denied",
-        "tool": tool_name,
-        "reason": reason,
-    }
+    return _make_denial_response(reason).to_tool_result()
+
+
+def _make_denial_response(reason: str) -> DenialResponse:
+    """Create a DenialResponse for a given reason (used by degradation signal recording)."""
+    category = _classify_denial(reason)
+    return DenialResponse(status="denied", coarse_category=category)
+
+
+def _classify_denial(reason: str) -> str:
+    reason_lower = reason.lower()
+    if "spawn" in reason_lower or "child" in reason_lower:
+        return "spawn_denied"
+    if "export" in reason_lower:
+        return "export_denied"
+    if (
+        "anomaly" in reason_lower
+        or "score" in reason_lower
+        or "governance" in reason_lower
+        or "auto-denied" in reason_lower
+        or "suspicious" in reason_lower
+    ):
+        return "governance_error"
+    return "tool_denied"
 
 
 class _TokenAccumulator:

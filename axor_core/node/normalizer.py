@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import ipaddress
+from pathlib import Path
 import re
+from urllib.parse import urlparse
+
 from axor_core.contracts.anomaly import NormalizedIntent
 from axor_core.contracts.intent import Intent
 
@@ -24,8 +28,7 @@ _SYSTEM_PATH_PATTERN = re.compile(r"^/(etc|usr|var|sys|proc|root|home/)")
 _SSH_PATH_PATTERN = re.compile(r"~/\.ssh|/\.ssh/")
 _CLOUD_METADATA_PATTERN = re.compile(r"169\.254\.169\.254|metadata\.google\.internal")
 _DOCKER_SOCKET_PATTERN = re.compile(r"/var/run/docker\.sock")
-_PRIVATE_NETWORK_PATTERN = re.compile(r"^(10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|localhost|127\.)")
-_EXTERNAL_URL_PATTERN = re.compile(r"https?://(?!localhost|127\.|192\.168\.|10\.|172\.)")
+_URL_PATTERN = re.compile(r"https?://[^\s'\"<>]+", re.IGNORECASE)
 
 
 class IntentNormalizer:
@@ -38,7 +41,7 @@ class IntentNormalizer:
     """
 
     def __init__(self, workdir: str | None = None) -> None:
-        self._workdir = workdir
+        self._workdir = str(Path(workdir).expanduser().resolve(strict=False)) if workdir else None
         self._written_files: set[str] = set()
         self._external_read_seen: bool = False
         self._secret_accessed: bool = False
@@ -76,9 +79,23 @@ class IntentNormalizer:
     def _is_system_path(self, path: str) -> bool:
         if not _SYSTEM_PATH_PATTERN.match(path):
             return False
-        if self._workdir and path.startswith(self._workdir):
+        if self._workdir and self._path_is_within(path, self._workdir):
             return False
         return True
+
+    def _path_is_within(self, path: str, root: str) -> bool:
+        candidate = Path(path).expanduser()
+        if not candidate.is_absolute():
+            candidate = Path(root) / candidate
+        candidate = candidate.resolve(strict=False)
+        root_path = Path(root).expanduser().resolve(strict=False)
+        if candidate == root_path:
+            return True
+        try:
+            candidate.relative_to(root_path)
+            return True
+        except ValueError:
+            return False
 
     # ── Operation classification ───────────────────────────────────────────────
 
@@ -137,14 +154,11 @@ class IntentNormalizer:
         if self._is_system_path(target):
             return "system_path"
 
-        url = args.get("url", args.get("command", ""))
-        if isinstance(url, str):
-            if _EXTERNAL_URL_PATTERN.search(url):
-                return "external_url"
-            if _PRIVATE_NETWORK_PATTERN.search(url):
-                return "private_network"
-            if "localhost" in url or "127." in url:
-                return "localhost"
+        url_target = args.get("url", args.get("command", ""))
+        if isinstance(url_target, str):
+            url_kind = self._classify_url_target(url_target)
+            if url_kind:
+                return url_kind
 
         return "workdir"
 
@@ -157,11 +171,12 @@ class IntentNormalizer:
 
         if _CLOUD_METADATA_PATTERN.search(target):
             return "cloud_metadata"
-        if _EXTERNAL_URL_PATTERN.search(target):
+        url_kind = self._classify_url_target(target)
+        if url_kind == "external_url":
             return "external_domain"
-        if _PRIVATE_NETWORK_PATTERN.search(target):
+        if url_kind == "private_network":
             return "private_network"
-        if "localhost" in target or "127." in target:
+        if url_kind == "localhost":
             return "localhost"
         return "none"
 
@@ -171,10 +186,10 @@ class IntentNormalizer:
         if self._external_read_seen:
             return "external_web"
         url = str(args.get("url", ""))
-        if _EXTERNAL_URL_PATTERN.search(url):
+        if self._classify_url_target(url) == "external_url":
             return "external_web"
         cmd = str(args.get("command", ""))
-        if _EXTERNAL_URL_PATTERN.search(cmd):
+        if self._classify_url_target(cmd) == "external_url":
             return "external_web"
         path = str(args.get("path", args.get("file_path", "")))
         if path.startswith(".") or "/" not in path:
@@ -193,8 +208,18 @@ class IntentNormalizer:
         if tool.lower() not in _WRITE_TOOLS:
             return False
         path = str(args.get("path", args.get("file_path", "")))
-        return bool(self._is_system_path(path) or path.startswith("/tmp")
-                    or path.startswith("~/"))
+        if not path:
+            return False
+        if self._workdir:
+            return not self._path_is_within(path, self._workdir)
+        normalized = str(Path(path).expanduser())
+        return bool(
+            self._is_system_path(path)
+            or normalized.startswith("/tmp")
+            or path.startswith("~/")
+            or normalized == ".."
+            or normalized.startswith("../")
+        )
 
     def _executes_generated_code(self, tool: str, args: dict) -> bool:
         t = tool.lower()
@@ -215,6 +240,27 @@ class IntentNormalizer:
         if target_kind == "external_url":
             return "local_to_external"
         return "none"
+
+    def _classify_url_target(self, text: str) -> str | None:
+        for url in _URL_PATTERN.findall(text):
+            parsed = urlparse(url)
+            host = (parsed.hostname or "").strip().lower()
+            if not host:
+                continue
+            if host == "localhost":
+                return "localhost"
+            try:
+                addr = ipaddress.ip_address(host)
+            except ValueError:
+                if host.endswith(".local"):
+                    return "private_network"
+                return "external_url"
+            if addr.is_loopback:
+                return "localhost"
+            if addr.is_private or addr.is_link_local:
+                return "private_network"
+            return "external_url"
+        return None
 
     # ── State update ───────────────────────────────────────────────────────────
 

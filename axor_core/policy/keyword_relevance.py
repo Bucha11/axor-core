@@ -43,7 +43,7 @@ from axor_core.policy.topics import (
 
 
 _TOKEN_SPLIT = re.compile(r"[\W_]+")
-_WORD_RE = re.compile(r"[A-Za-z][A-Za-z0-9_]+")
+_WORD_RE = re.compile(r"\w[\w\d_]+", re.UNICODE)
 
 
 def extract_query_keywords(text: str | None) -> set[str]:

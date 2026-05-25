@@ -63,6 +63,33 @@ def _detect_domain(raw_input: str, agent_domain: str = "general") -> str:
     return best if counts[best] > 0 else "coding"
 
 
+def _detect_language(text: str) -> str:
+    """
+    Lightweight Unicode-block heuristic — no external deps, no tokenization.
+
+    Counts codepoints in major script blocks and returns the dominant tag.
+    Ties and unknowns fall back to "en".
+    """
+    counts: dict[str, int] = {}
+    for ch in text:
+        cp = ord(ch)
+        if 0x0400 <= cp <= 0x04FF:
+            counts["ru"] = counts.get("ru", 0) + 1
+        elif 0x4E00 <= cp <= 0x9FFF:
+            counts["zh"] = counts.get("zh", 0) + 1
+        elif 0x0600 <= cp <= 0x06FF:
+            counts["ar"] = counts.get("ar", 0) + 1
+        elif 0x0900 <= cp <= 0x097F:
+            counts["hi"] = counts.get("hi", 0) + 1
+        elif 0xAC00 <= cp <= 0xD7FF:
+            counts["ko"] = counts.get("ko", 0) + 1
+        elif 0x0590 <= cp <= 0x05FF:
+            counts["he"] = counts.get("he", 0) + 1
+    if not counts:
+        return "en"
+    return max(counts, key=lambda k: counts[k])
+
+
 def _marginal_domain_scores(raw_input: str) -> dict[str, float]:
     """
     Normalized marginal distribution over domains, namespaced `domain.*`.
@@ -133,7 +160,9 @@ class TaskAnalyzer:
         # assignment is a policy override, not a probabilistic statement.
         scores = {**scores, **_marginal_domain_scores(raw_input)}
 
-        # rebuild signal with domain
+        language = _detect_language(raw_input)
+
+        # rebuild signal with domain and language
         signal = TaskSignal(
             raw_input=signal.raw_input,
             complexity=signal.complexity,
@@ -142,6 +171,7 @@ class TaskAnalyzer:
             requires_children=signal.requires_children,
             requires_mutation=signal.requires_mutation,
             domain=domain,
+            language=language,
         )
 
         event = SignalChosenEvent(

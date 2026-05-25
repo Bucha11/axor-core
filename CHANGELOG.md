@@ -1,5 +1,64 @@
 # Changelog
 
+## 0.5.0 — 2026-05-25
+
+### Added
+
+- **`DegradationEngine`** (`axor_core/degradation/`) — source-aware session degradation
+  state machine. Converts accumulated taint and denial signals into a monotonically
+  increasing `DegradationLevel` that progressively narrows the capability surface.
+  Unlike a simple global counter, degradation is per-source: one malicious document
+  quarantines its origin while clean sources remain at full capability until session-level
+  thresholds are crossed.
+
+  Levels: `NORMAL → CAUTIOUS → RESTRICTED → LOCKED → TERMINAL`.
+
+  Key behaviours:
+  - Any cross-origin export denial (`destination_kind=external_domain/private_network`)
+    escalates to `LOCKED` immediately.
+  - `source.tool_pressure_count >= 2` or `source.instruction_pressure_count >= 1`
+    quarantines the source and escalates to `RESTRICTED`.
+  - `session_deny_count >= 5` escalates to `LOCKED`.
+  - `LOCKED` for `LOCKED_TTL` seconds (default 300s) without human clearance
+    auto-escalates to `TERMINAL`.
+
+- **`DegradationPolicy`** — configurable thresholds dataclass
+  (`SOURCE_TOOL_PRESSURE_THRESHOLD`, `SOURCE_INSTR_PRESSURE_THRESHOLD`,
+  `SESSION_DENY_THRESHOLD`, `LOCKED_TTL`).
+
+- **`GovernanceAuthority`** — authority object required for `clear_by_governance`.
+  Worker-path clear raises `DegradationClearanceError`.
+
+- **`SessionTerminatedError`**, **`DegradationClearanceError`** — new exception types
+  in `axor_core.errors.exceptions`.
+
+- **`DegradationTransitionEvent`**, **`SourceQuarantinedEvent`** — two new
+  `TraceEventKind` values (`DEGRADATION_TRANSITION`, `SOURCE_QUARANTINED`) with
+  typed event dataclasses. Emitted into `DecisionTrace` on every level change
+  or quarantine event.
+
+- **`IntentLoop`** integration — `degradation_engine` optional parameter. Pre-cascade
+  degradation check enforces `apply_to_policy` narrowing before Layer 1.
+  `record_signal` is called after every cascade outcome (pass or deny) to update
+  engine state for the next intent.
+
+- **`GovernedSession`** — constructs `DegradationEngine` on init; checks
+  `TERMINAL` level at the top of `run()` and raises `SessionTerminatedError`.
+
+- **`GovernedNode`** — passes `degradation_engine` to child nodes (shared instance,
+  enforcing the D-6 child floor invariant).
+
+- **Security invariants D-1 through D-7** added to
+  `tests/invariants/test_security_invariants.py` (14 new tests).
+
+- **Adversarial test file** `tests/adversarial/test_degradation.py` — 14 tests
+  covering monotonicity, source isolation, cross-origin export, LOCKED_TTL
+  auto-terminal, and child floor inheritance.
+
+### Tests
+
+- 468 tests pass (was 440 at 0.4.0). +28 new tests.
+
 ## 0.4.0 — 2026-04-29
 
 ### Added

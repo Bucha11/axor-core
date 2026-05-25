@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+import os
 import uuid
 from typing import Any
 from axor_core.contracts.cancel import make_token, CancelReason
@@ -7,10 +9,12 @@ from axor_core.contracts.context import RawExecutionState, LineageSummary
 from axor_core.contracts.extension import ExtensionBundle, ExtensionLoader
 from axor_core.contracts.anomaly import AnomalyDetector
 from axor_core.contracts.invokable import Invokable
+from axor_core.contracts.mode import ExecutionMode
 from axor_core.contracts.policy import ExecutionPolicy, SignalClassifier
 from axor_core.contracts.result import ExecutionResult
 from axor_core.contracts.trace import TraceConfig
 from axor_core.capability.executor import CapabilityExecutor
+from axor_core.capability.locked import LockedExecutor
 from axor_core.context.manager import ContextManager
 from axor_core.node.wrapper import GovernedNode
 from axor_core.policy.analyzer import TaskAnalyzer
@@ -29,6 +33,9 @@ from axor_core.trace import TraceCollector
 from axor_core.extensions.registry import ExtensionRegistry
 from axor_core.extensions.sanitizer import ExtensionSanitizer
 from axor_core.worker.commands import SlashCommandRouter
+from axor_core.taint.engine import TaintEngine
+
+_log = logging.getLogger("axor.session")
 
 
 class GovernedSession:
@@ -85,9 +92,41 @@ class GovernedSession:
         agent_def: "AgentDefinition | None" = None,
         memory_provider: "MemoryProvider | None" = None,
         telemetry: "Any | None" = None,
+        mode: ExecutionMode = ExecutionMode.LIBRARY,
     ) -> None:
         self._session_id     = f"session_{uuid.uuid4().hex[:12]}"
-        self._executor       = executor
+        self._mode           = mode
+
+        # STRICT mode is a superset of PRODUCTION.
+        # Apply all STRICT-only restrictions here before anything else is wired.
+        if mode == ExecutionMode.STRICT:
+            # Classifier disabled in STRICT mode — policy is rule-based only.
+            classifier = None
+            # Force audit_required on trace config — unknown provider format or
+            # trace write failure terminates session, not just denies.
+            if trace_config is None:
+                trace_config = TraceConfig(audit_required=True)
+            elif not trace_config.audit_required:
+                from dataclasses import replace as _dc_replace
+                trace_config = _dc_replace(trace_config, audit_required=True)
+
+        self._deny_on_ambiguity: bool = (mode == ExecutionMode.STRICT)
+        self._strict_escalation: bool = (mode == ExecutionMode.STRICT)
+
+        # In PRODUCTION/STRICT mode wrap executor so direct calls outside
+        # the governance path raise GovernanceBypassError.
+        if mode in (ExecutionMode.PRODUCTION, ExecutionMode.STRICT):
+            self._executor = LockedExecutor(executor, mode)
+        else:
+            self._executor = executor
+            # Warn when LIBRARY mode is used in a production-like environment.
+            if os.environ.get("AXOR_ENV", "").lower() == "production":
+                _log.warning(
+                    "GovernedSession created in LIBRARY mode but AXOR_ENV=production. "
+                    "LIBRARY mode does not provide strong isolation guarantees. "
+                    "Use ExecutionMode.PRODUCTION for production deployments."
+                )
+
         self._child_executor = child_executor
         self._cap_executor   = capability_executor
         self._anomaly_detector = anomaly_detector
@@ -145,6 +184,17 @@ class GovernedSession:
         self._active_token = None
         self._started = False
 
+        # adaptive policy: narrowest policy seen across turns (never broadens automatically)
+        self._active_policy: ExecutionPolicy | None = None
+
+        # taint engine — persists across turns so taint is sticky within a session
+        self._taint_engine = TaintEngine(node_id=self._session_id)
+
+        # degradation engine — persists across turns; level is monotonically increasing
+        from axor_core.degradation.engine import DegradationEngine
+        from axor_core.contracts.degradation import DegradationPolicy
+        self._degradation_engine = DegradationEngine(DegradationPolicy())
+
     async def start(self) -> None:
         """Load and sanitize extensions. Auto-called on first run()."""
         if self._started:
@@ -163,6 +213,14 @@ class GovernedSession:
         parent_export: str | None = None,
         lineage: LineageSummary | None = None,
     ) -> ExecutionResult:
+        # D-2 invariant: TERMINAL session raises before any intent evaluation.
+        from axor_core.contracts.degradation import DegradationLevel
+        from axor_core.errors.exceptions import SessionTerminatedError
+        if self._degradation_engine.state.level == DegradationLevel.TERMINAL:
+            raise SessionTerminatedError(
+                f"session {self._session_id} reached TERMINAL degradation level"
+            )
+
         await self.start()
 
         if task.strip().startswith("/"):
@@ -216,11 +274,33 @@ class GovernedSession:
         cancel_token = make_token()
         self._active_token = cancel_token
 
+        # Adaptive policy: re-classify each turn; capability surface can only
+        # narrow automatically — broadening requires an explicit operator override.
+        effective_policy = policy
+        if policy is None:
+            signal, _ = await self._analyzer.analyze(task)
+            new_policy = self._selector.select(signal)
+            if self._active_policy is None:
+                self._active_policy = new_policy
+            else:
+                narrowed = self._composer.apply_parent_restrictions(
+                    new_policy, self._active_policy
+                )
+                if narrowed != self._active_policy:
+                    _log.info(
+                        "session=%s adaptive policy narrowed: %s → %s",
+                        self._session_id,
+                        self._active_policy.name,
+                        narrowed.name,
+                    )
+                self._active_policy = narrowed
+            effective_policy = self._active_policy
+
         node = self._make_node(self._context_manager)
         result = await node.run(
             raw_state=raw_state,
             extension_bundle=self._registry.current_bundle(),
-            override_policy=policy,
+            override_policy=effective_policy,
             cancel_token=cancel_token,
         )
         self._active_token = None
@@ -333,6 +413,8 @@ class GovernedSession:
             trace_config=self._trace_config,
             child_executor=self._child_executor,
             anomaly_detector=self._anomaly_detector,
+            taint_engine=self._taint_engine,
+            degradation_engine=self._degradation_engine,
         )
 
     async def _handle_command(self, raw: str) -> ExecutionResult:

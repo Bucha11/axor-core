@@ -47,6 +47,7 @@ With memory provider:
 """
 
 # Public entry point
+from axor_core._version import get_version
 from axor_core.worker.session import GovernedSession
 from axor_core.budget import TokenCostRates
 
@@ -90,7 +91,7 @@ from axor_core.errors.exceptions import (
     ChildNotAllowedError,
 )
 
-__version__ = "0.1.0"
+__version__ = get_version("axor-core")
 
 __all__ = [
     # session

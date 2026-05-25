@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
+
+if TYPE_CHECKING:
+    from axor_core.contracts.canonical import CanonicalizedIntent
 
 
 class AnomalyClass(str, Enum):
@@ -62,14 +65,14 @@ class LLMVerifier(Protocol):
 
     async def verify(
         self,
-        window: list[NormalizedIntent],
+        window: "list[CanonicalizedIntent]",
         task_signal_hint: str,
         policy_name: str,
     ) -> AnomalyResult:
         """
-        Review the intent sequence and return an AnomalyResult.
+        Review the canonical intent sequence and return an AnomalyResult.
 
-        window:           last N NormalizedIntents (the observation window)
+        window:           last N CanonicalizedIntents — no raw strings
         task_signal_hint: e.g. "FOCUSED/MUTATIVE/coding"
         policy_name:      active policy name for context
         """

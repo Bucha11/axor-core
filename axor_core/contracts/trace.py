@@ -67,6 +67,15 @@ class TraceEventKind(str, Enum):
     # Emitted by BudgetPolicyEngine when spend/cap crosses a threshold.
     COST_THRESHOLD = "cost_threshold"
 
+    # ── Taint events ──────────────────────────────────────────────────────────
+    TAINT_PROPAGATED = "taint_propagated"
+    TAINT_CLEARANCE_ATTEMPTED = "taint_clearance_attempted"
+    TAINT_CLEARED = "taint_cleared"
+
+    # ── Degradation events ────────────────────────────────────────────────────
+    DEGRADATION_TRANSITION = "degradation_transition"
+    SOURCE_QUARANTINED = "source_quarantined"
+
 
 @dataclass(frozen=True)
 class TraceEvent:
@@ -233,6 +242,46 @@ class CostThresholdEvent(TraceEvent):
     )
 
 
+@dataclass(frozen=True)
+class TaintPropagatedEvent(TraceEvent):
+    """Emitted when taint is propagated from an external read."""
+    taint_source: str = ""
+    taint_scope: str = ""
+
+
+@dataclass(frozen=True)
+class TaintClearanceAttemptedEvent(TraceEvent):
+    """Emitted when worker attempts to clear taint (always denied)."""
+    attempted_by: str = "worker"
+
+
+@dataclass(frozen=True)
+class TaintClearedEvent(TraceEvent):
+    """Emitted when governance clears taint."""
+    cleared_by: str = ""
+    authority_type: str = ""
+    reason_code: str = ""
+    audit_id: str = ""
+
+
+@dataclass(frozen=True)
+class DegradationTransitionEvent(TraceEvent):
+    """Emitted when DegradationEngine changes the session level."""
+    previous_level: str = ""
+    new_level: str = ""
+    trigger_source_id: str = ""
+    trigger_intent: str = ""
+    reason: str = ""
+
+
+@dataclass(frozen=True)
+class SourceQuarantinedEvent(TraceEvent):
+    """Emitted when a source is quarantined by DegradationEngine."""
+    source_id: str = ""
+    quarantined_at: float = 0.0
+    reason: str = ""
+
+
 # ── Telemetry contracts ───────────────────────────────────────────────────────
 
 
@@ -271,6 +320,7 @@ class TraceConfig:
     training_opt_in: bool = False
     trace_dir: str = field(default_factory=_default_trace_dir)
     retention_days: int = 30
+    audit_required: bool = False  # if True, trace write failure terminates session
 
 
 @dataclass

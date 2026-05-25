@@ -96,7 +96,75 @@ class ExtensionSanitizationError(AxorError):
         super().__init__(f"Extension '{name}' failed sanitization: {reason}")
 
 
+# ── Normalizer ─────────────────────────────────────────────────────────────────
+
+class NormalizerError(AxorError):
+    """Provider tool call is recognised but malformed or incomplete."""
+    def __init__(self, provider: str, reason: str) -> None:
+        self.provider = provider
+        self.reason = reason
+        super().__init__(f"Normalizer error [{provider}]: {reason}")
+
+
+class UnknownProviderFormatError(NormalizerError):
+    """Provider emitted a tool call format not recognised by any normalizer."""
+    def __init__(self, provider: str, event_type: str) -> None:
+        self.event_type = event_type
+        super().__init__(
+            provider=provider,
+            reason=f"unknown event type '{event_type}' — execution denied",
+        )
+
+
+# ── Governance bypass ──────────────────────────────────────────────────────────
+
+class GovernanceBypassError(AxorError):
+    """Raised when executor stream() is called outside an active governance_context() in PRODUCTION/STRICT mode."""
+    def __init__(self, detail: str = "") -> None:
+        msg = "Direct executor call bypasses governance"
+        if detail:
+            msg = f"{msg}: {detail}"
+        super().__init__(msg)
+
+
+# ── Taint ──────────────────────────────────────────────────────────────────────
+
+class TaintClearanceError(AxorError):
+    """Worker attempted to clear taint — only governance may do this."""
+    def __init__(self, reason: str = "") -> None:
+        msg = "Taint clearance may only be initiated by governance"
+        if reason:
+            msg = f"{msg}: {reason}"
+        super().__init__(msg)
+
+
+# ── Spawn validation ───────────────────────────────────────────────────────────
+
+class SpawnValidationError(AxorError):
+    """Child spawn failed policy-ceiling or taint-inheritance validation."""
+    def __init__(self, reason: str) -> None:
+        self.reason = reason
+        super().__init__(f"Spawn validation failed: {reason}")
+
+
 # ── Budget ─────────────────────────────────────────────────────────────────────
+
+class DaemonUnavailableError(AxorError):
+    """AxorDaemon is not reachable. Fail-closed: execution stops."""
+    def __init__(self, socket_path: str, reason: str = "") -> None:
+        self.socket_path = socket_path
+        msg = f"AxorDaemon unavailable at {socket_path}"
+        if reason:
+            msg = f"{msg}: {reason}"
+        super().__init__(msg)
+
+
+class DaemonRejectedError(AxorError):
+    """Daemon refused the session (mode mismatch, policy violation, etc.)."""
+    def __init__(self, reason: str) -> None:
+        self.reason = reason
+        super().__init__(f"Daemon rejected session: {reason}")
+
 
 class BudgetExceededError(AxorError):
     """
@@ -119,3 +187,23 @@ class BudgetExceededError(AxorError):
             f"Budget exceeded: {spent} spent + {projected} projected "
             f"> {limit} hard limit"
         )
+
+
+# ── Degradation ────────────────────────────────────────────────────────────────
+
+class SessionTerminatedError(AxorError):
+    """Session reached TERMINAL degradation level; no further intents accepted."""
+    def __init__(self, reason: str = "") -> None:
+        msg = "Session is terminated (DegradationLevel.TERMINAL)"
+        if reason:
+            msg = f"{msg}: {reason}"
+        super().__init__(msg)
+
+
+class DegradationClearanceError(AxorError):
+    """Worker attempted to lower degradation level — only governance may do this."""
+    def __init__(self, reason: str = "") -> None:
+        msg = "Degradation clearance may only be initiated by governance"
+        if reason:
+            msg = f"{msg}: {reason}"
+        super().__init__(msg)

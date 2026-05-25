@@ -91,7 +91,11 @@ async def test_critical_anomaly_denies_tool_call(make_envelope, cap_executor):
     assert len(tool_results) == 1
     payload = tool_results[0].payload
     assert payload.get("approved") is False
-    assert "anomaly" in str(payload.get("tool_result", "")).lower()
+    # Worker receives coarse DenialResponse — no raw anomaly reason exposed
+    tool_result = payload.get("tool_result", {})
+    assert tool_result.get("error") == "denied"
+    assert tool_result.get("category") == "governance_error"
+    assert "decision_id" in tool_result
 
     # ANOMALY_FLAGGED trace event emitted
     anomaly_events = [e for e in trace if e.kind == TraceEventKind.ANOMALY_FLAGGED]
@@ -190,7 +194,8 @@ async def test_normal_anomaly_no_trace_event(make_envelope, cap_executor):
 
 @pytest.mark.asyncio
 async def test_anomaly_detector_exception_is_safe(make_envelope, cap_executor):
-    """If the anomaly detector raises, the tool call is approved (fail-open)."""
+    """If the anomaly detector raises, the tool call is denied (fail-closed).
+    The governance system must not grant tool access when its safety check fails."""
     trace_events: list = []
     detector = AsyncMock()
     detector.score = AsyncMock(side_effect=RuntimeError("detector exploded"))
@@ -204,9 +209,9 @@ async def test_anomaly_detector_exception_is_safe(make_envelope, cap_executor):
 
     events, trace = await _run_loop(loop, envelope, tool_name="read")
 
-    # Should not raise; tool call approved
+    # Should not raise; tool call is denied (fail-closed on detector error)
     tool_results = [e for e in events if e.kind == ExecutorEventKind.TEXT]
-    assert tool_results[0].payload.get("approved") is True
+    assert tool_results[0].payload.get("approved") is False
 
-    # No anomaly event recorded when detector raises
+    # No anomaly event recorded when detector raises (denial is recorded as INTENT_DENIED)
     assert len([e for e in trace if e.kind == TraceEventKind.ANOMALY_FLAGGED]) == 0

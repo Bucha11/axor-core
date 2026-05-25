@@ -32,6 +32,7 @@ class TaskSignal:
     requires_children: bool        # agent will likely want to spawn child nodes
     requires_mutation: bool        # agent will write or modify files
     domain: str = "general"        # AgentDomain.value — str to avoid circular import
+    language: str = "unknown"      # BCP-47-style tag detected from raw_input script
 
 
 # ── Classifier Contract ────────────────────────────────────────────────────────

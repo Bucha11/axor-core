@@ -20,7 +20,7 @@ from axor_core.contracts.trace import (
     TraceConfig,
     TraceEventKind,
 )
-from axor_core.trace.collector import TraceCollector
+from axor_core.trace.collector import TraceCollector, TracePersistenceError
 
 
 def _make_signal() -> TaskSignal:
@@ -66,6 +66,34 @@ def test_persist_disabled_skips_io(tmp_path):
     c.record(_signal_event())
     c.close()
     assert not (tmp_path / "off.jsonl").exists()
+
+
+def test_persist_write_failure_degrades_when_audit_not_required(tmp_path, monkeypatch):
+    cfg = TraceConfig(trace_dir=str(tmp_path), persist_to_disk=True, audit_required=False)
+    c = TraceCollector(config=cfg, session_id="degraded")
+
+    def fail_open(*args, **kwargs):
+        raise OSError("readonly")
+
+    monkeypatch.setattr(Path, "open", fail_open)
+
+    c.record(_signal_event())
+
+    assert c.trace_file_path() is None
+    assert c.get_trace("node_1") is not None
+
+
+def test_persist_write_failure_raises_when_audit_required(tmp_path, monkeypatch):
+    cfg = TraceConfig(trace_dir=str(tmp_path), persist_to_disk=True, audit_required=True)
+    c = TraceCollector(config=cfg, session_id="audit")
+
+    def fail_open(*args, **kwargs):
+        raise OSError("readonly")
+
+    monkeypatch.setattr(Path, "open", fail_open)
+
+    with pytest.raises(TracePersistenceError):
+        c.record(_signal_event())
 
 
 def test_cleanup_removes_old_files(tmp_path):

@@ -268,3 +268,27 @@ class TestTopicsData:
         # would defeat the READONLY filter.
         assert (topics.DESTRUCTIVE_TOKENS
                 & topics.DOMAIN_TOPICS["read_actions"]) == set()
+
+
+# ── Variant A: Unicode tokenization ──────────────────────────────────────────
+
+class TestUnicodeKeywordExtraction:
+
+    def test_cyrillic_tokens_extracted(self):
+        kws = extract_query_keywords("исправить баг в коде")
+        assert len(kws) >= 2, f"expected Cyrillic tokens, got {kws!r}"
+
+    def test_mixed_latin_cyrillic(self):
+        kws = extract_query_keywords("fix баг in код")
+        assert "fix" in kws
+        assert "баг" in kws or "ба" in kws  # \w+ on Cyrillic
+
+    def test_cjk_tokens_extracted(self):
+        kws = extract_query_keywords("修复错误 代码")
+        assert len(kws) >= 1, f"expected CJK tokens, got {kws!r}"
+
+    def test_ascii_english_still_works(self):
+        kws = extract_query_keywords("fix the authentication bug")
+        assert "fix" in kws
+        assert "authentication" in kws
+        assert "bug" in kws

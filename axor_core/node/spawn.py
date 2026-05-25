@@ -3,11 +3,61 @@ from __future__ import annotations
 from axor_core.contracts.context import LineageSummary
 from axor_core.contracts.envelope import ExecutionEnvelope
 from axor_core.contracts.intent import Intent
-from axor_core.contracts.policy import ExecutionPolicy
+from axor_core.contracts.policy import ExportMode, ExecutionPolicy
 from axor_core.contracts.trace import ChildSpawnedEvent, TraceEventKind
-from axor_core.errors.exceptions import ChildNotAllowedError, MaxDepthExceededError
+from axor_core.errors.exceptions import ChildNotAllowedError, MaxDepthExceededError, SpawnValidationError
 from axor_core.node.intent_loop import IntentLoop
-from axor_core.policy.composer import PolicyComposer
+
+# ExportMode restrictiveness order — higher index = more restrictive.
+_EXPORT_MODE_ORDER = [ExportMode.FULL, ExportMode.SUMMARY, ExportMode.FILTERED, ExportMode.RESTRICTED]
+
+
+def _export_mode_rank(mode: ExportMode) -> int:
+    try:
+        return _EXPORT_MODE_ORDER.index(mode)
+    except ValueError:
+        return 0
+
+
+def _validate_child_policy(
+    child_policy: ExecutionPolicy,
+    parent_policy: ExecutionPolicy,
+    child_depth: int,
+) -> None:
+    """
+    Validate that the child policy does not exceed the parent policy ceiling.
+
+    Raises SpawnValidationError (not AssertionError) so validation survives
+    python -O optimisation mode.
+    """
+    # tools ⊆ parent tools: child cannot enable capabilities the parent lacks
+    parent_tp = parent_policy.tool_policy
+    child_tp = child_policy.tool_policy
+    if child_tp.allow_write and not parent_tp.allow_write:
+        raise SpawnValidationError("child requests allow_write but parent forbids it")
+    if child_tp.allow_bash and not parent_tp.allow_bash:
+        raise SpawnValidationError("child requests allow_bash but parent forbids it")
+    if child_tp.allow_spawn and not parent_tp.allow_spawn:
+        raise SpawnValidationError("child requests allow_spawn but parent forbids it")
+    # extra_allowed: child cannot claim tools not in parent's extra_allowed
+    parent_extra = set(parent_tp.extra_allowed)
+    child_extra = set(child_tp.extra_allowed)
+    excess = child_extra - parent_extra
+    if excess:
+        raise SpawnValidationError(
+            f"child requests extra_allowed tools not available in parent: {sorted(excess)}"
+        )
+    # export_mode: child must be at least as restrictive as parent
+    if _export_mode_rank(child_policy.export_mode) < _export_mode_rank(parent_policy.export_mode):
+        raise SpawnValidationError(
+            f"child export_mode={child_policy.export_mode.value!r} is less restrictive "
+            f"than parent export_mode={parent_policy.export_mode.value!r}"
+        )
+    # child depth < parent remaining depth
+    if child_depth > parent_policy.max_child_depth:
+        raise SpawnValidationError(
+            f"child depth {child_depth} exceeds parent max_child_depth {parent_policy.max_child_depth}"
+        )
 
 
 class ChildSpawner:
@@ -31,7 +81,7 @@ class ChildSpawner:
     """
 
     def __init__(self) -> None:
-        self._composer = PolicyComposer()
+        pass
 
     def prepare_child(
         self,
@@ -39,12 +89,17 @@ class ChildSpawner:
         parent_envelope: ExecutionEnvelope,
         intent_loop: IntentLoop,
         trace_events: list,
-    ) -> tuple[str, ExecutionPolicy, LineageSummary]:
+    ) -> tuple[str, LineageSummary]:
         """
         Validate and prepare everything needed to construct a child GovernedNode.
 
-        Returns (child_task, child_policy, child_lineage).
+        Returns (child_task, child_lineage).
         Raises ChildNotAllowedError or MaxDepthExceededError if denied.
+
+        Child policy is NOT derived here — it is selected fresh by the child's
+        own GovernedNode.run() via TaskAnalyzer + PolicySelector, then ceilinged
+        against parent_policy via PolicyComposer.compose(parent_policy=...).
+        _validate_child_policy is called there against the actual derived policy.
         """
         from axor_core.node.envelope import _new_node_id
 
@@ -70,12 +125,6 @@ class ChildSpawner:
             ),
         )
 
-        # child policy — parent restrictions always applied
-        child_policy = self._composer.apply_parent_restrictions(
-            child_policy=parent_envelope.policy,
-            parent_policy=parent_envelope.policy,
-        )
-
         # record spawn in trace
         trace_events.append(
             ChildSpawnedEvent(
@@ -88,4 +137,4 @@ class ChildSpawner:
             )
         )
 
-        return child_task, child_policy, child_lineage
+        return child_task, child_lineage

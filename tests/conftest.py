@@ -5,9 +5,17 @@ Shared fixtures for axor_core tests.
 from __future__ import annotations
 
 import asyncio
+import os
+import sys
 from typing import Any, AsyncIterator
 
 import pytest
+
+# Make axor-claude importable when running tests from the axor-core directory.
+# axor-claude is a sibling repo of axor-core under the monorepo root.
+_AXOR_CLAUDE_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "axor-claude")
+if _AXOR_CLAUDE_PATH not in sys.path:
+    sys.path.insert(0, os.path.normpath(_AXOR_CLAUDE_PATH))
 from axor_core.capability.executor import CapabilityExecutor, ToolHandler
 from axor_core.contracts.cancel import make_token
 from axor_core.contracts.context import (

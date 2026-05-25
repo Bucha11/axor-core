@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import logging
 import os
 import threading
 import time
@@ -17,6 +18,13 @@ from axor_core.contracts.trace import (
     TokensSpentEvent,
 )
 from axor_core.contracts.policy import TaskSignal
+from axor_core.trace.guard import TraceAccessGuard
+
+log = logging.getLogger("axor.trace.collector")
+
+
+class TracePersistenceError(RuntimeError):
+    """Raised when durable trace persistence is required but unavailable."""
 
 
 class TraceCollector:
@@ -42,24 +50,34 @@ class TraceCollector:
         self,
         config: TraceConfig | None = None,
         session_id: str | None = None,
+        operator_token: str | None = None,
     ) -> None:
         self._config     = config or TraceConfig()
         self._session_id = session_id or f"session_{int(time.time()*1000)}"
         self._lock       = threading.Lock()
         self._seq        = 0
         self._traces: dict[str, DecisionTrace] = {}
+        self._access_guard = TraceAccessGuard(operator_token=operator_token)
 
         self._file: IO[str] | None = None
         self._file_path: Path | None = None
         self._closed = False
+        self._disk_persistence_disabled = False
 
         if self._persistence_enabled:
-            self._ensure_trace_dir()
-            self._cleanup_old_files()
+            try:
+                self._ensure_trace_dir()
+                self._cleanup_old_files()
+            except OSError as exc:
+                self._handle_persistence_failure("initialize trace directory", exc)
 
     @property
     def _persistence_enabled(self) -> bool:
-        return self._config.local_only and self._config.persist_to_disk
+        return (
+            self._config.local_only
+            and self._config.persist_to_disk
+            and not self._disk_persistence_disabled
+        )
 
     # ── Filesystem setup ───────────────────────────────────────────────────────
 
@@ -92,6 +110,23 @@ class TraceCollector:
         self._file_path = self._trace_dir() / f"{self._session_id}.jsonl"
         # line-buffered so a crash after record() preserves whole lines
         self._file = self._file_path.open("a", encoding="utf-8", buffering=1)
+
+    def _handle_persistence_failure(self, operation: str, exc: BaseException) -> None:
+        if self._config.audit_required:
+            raise TracePersistenceError(f"trace persistence failed during {operation}: {exc}") from exc
+        self._disk_persistence_disabled = True
+        failed_file = self._file
+        self._file = None
+        if failed_file is not None:
+            try:
+                failed_file.close()
+            except OSError:
+                pass
+        log.warning(
+            "Trace persistence disabled after %s failed; continuing with in-memory trace",
+            operation,
+            exc_info=True,
+        )
 
     # ── Lineage bookkeeping ────────────────────────────────────────────────────
 
@@ -142,22 +177,25 @@ class TraceCollector:
         """Append one event to the session JSONL. Caller holds self._lock."""
         if not self._persistence_enabled or self._closed:
             return
-        self._open_if_needed()
-        if self._file is None:
-            return
-        trace = self._traces.get(event.node_id)
-        line = {
-            "session_id": self._session_id,
-            "node_id":    event.node_id,
-            "parent_id":  trace.parent_id if trace else None,
-            "depth":      trace.depth if trace else 0,
-            "policy":     trace.policy_name if trace else "unknown",
-            "sequence":   event.sequence,
-            "kind":       event.kind.value,
-            "event":      _event_to_dict(event, self._config.persist_inputs),
-            "ts":         time.time(),
-        }
-        self._file.write(json.dumps(line, default=str) + "\n")
+        try:
+            self._open_if_needed()
+            if self._file is None:
+                return
+            trace = self._traces.get(event.node_id)
+            line = {
+                "session_id": self._session_id,
+                "node_id":    event.node_id,
+                "parent_id":  trace.parent_id if trace else None,
+                "depth":      trace.depth if trace else 0,
+                "policy":     trace.policy_name if trace else "unknown",
+                "sequence":   event.sequence,
+                "kind":       event.kind.value,
+                "event":      _event_to_dict(event, self._config.persist_inputs),
+                "ts":         time.time(),
+            }
+            self._file.write(json.dumps(line, default=str) + "\n")
+        except (OSError, ValueError) as exc:
+            self._handle_persistence_failure("write trace event", exc)
 
     def flush(self) -> None:
         """Force buffered writes to disk. Safe to call when persistence is off."""
@@ -166,10 +204,8 @@ class TraceCollector:
                 try:
                     self._file.flush()
                     os.fsync(self._file.fileno())
-                except (OSError, ValueError):
-                    # fileno() raises ValueError on closed file; fsync may fail
-                    # on non-regular files. Neither should crash a session close.
-                    pass
+                except (OSError, ValueError) as exc:
+                    self._handle_persistence_failure("flush trace file", exc)
 
     def close(self) -> None:
         """Close the JSONL writer. Idempotent."""
@@ -178,13 +214,14 @@ class TraceCollector:
                 try:
                     self._file.flush()
                     os.fsync(self._file.fileno())
-                except (OSError, ValueError):
-                    pass
-                try:
-                    self._file.close()
-                except OSError:
-                    pass
-                self._file = None
+                except (OSError, ValueError) as exc:
+                    self._handle_persistence_failure("close trace file", exc)
+                if self._file is not None:
+                    try:
+                        self._file.close()
+                    except OSError:
+                        pass
+                    self._file = None
             self._closed = True
 
     def trace_file_path(self) -> Path | None:
@@ -202,6 +239,17 @@ class TraceCollector:
     def all_traces(self) -> list[DecisionTrace]:
         with self._lock:
             return list(self._traces.values())
+
+    def read_all(self) -> list[DecisionTrace]:
+        """Raises PermissionError — use operator_read(token) for authenticated access."""
+        raise PermissionError(
+            "read_all() requires operator authentication — use operator_read(auth_token)"
+        )
+
+    def operator_read(self, auth_token: str) -> list[DecisionTrace]:
+        """Return full trace list if auth_token is valid."""
+        self._access_guard.require(auth_token)
+        return self.all_traces()
 
     def lineage_traces(self, node_id: str) -> list[DecisionTrace]:
         """All traces in the ancestry chain: root → node."""

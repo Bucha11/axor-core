@@ -212,3 +212,49 @@ class TestPresets:
     def test_unknown_preset_raises(self):
         with pytest.raises(KeyError, match="Unknown policy preset"):
             presets.get("does_not_exist")
+
+
+# ── Variant D: Language detection ─────────────────────────────────────────────
+
+class TestLanguageDetection:
+
+    @pytest.mark.asyncio
+    async def test_english_detected(self):
+        analyzer = TaskAnalyzer()
+        signal, _ = await analyzer.analyze("Fix the authentication bug in login.py")
+        assert signal.language == "en"
+
+    @pytest.mark.asyncio
+    async def test_russian_detected(self):
+        analyzer = TaskAnalyzer()
+        signal, _ = await analyzer.analyze("Исправить баг в коде авторизации")
+        assert signal.language == "ru"
+
+    @pytest.mark.asyncio
+    async def test_chinese_detected(self):
+        analyzer = TaskAnalyzer()
+        signal, _ = await analyzer.analyze("修复登录页面的错误")
+        assert signal.language == "zh"
+
+    @pytest.mark.asyncio
+    async def test_arabic_detected(self):
+        analyzer = TaskAnalyzer()
+        signal, _ = await analyzer.analyze("إصلاح خطأ في صفحة تسجيل الدخول")
+        assert signal.language == "ar"
+
+    @pytest.mark.asyncio
+    async def test_language_field_on_task_signal_default(self):
+        from axor_core.contracts.policy import TaskSignal as TS
+        signal = TS(
+            raw_input="x", complexity=TaskComplexity.FOCUSED,
+            nature=TaskNature.READONLY, estimated_scope=1,
+            requires_children=False, requires_mutation=False,
+        )
+        assert signal.language == "unknown"
+
+    @pytest.mark.asyncio
+    async def test_language_propagates_through_analyzer(self):
+        analyzer = TaskAnalyzer()
+        signal, event = await analyzer.analyze("Исправить баг")
+        assert signal.language == "ru"
+        assert event.signal.language == "ru"
