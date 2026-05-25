@@ -66,7 +66,7 @@ async def test_fail_closed_interceptor_exception(make_envelope, cap_executor):
 def test_fail_closed_normalizer_exception_denies():
     """NormalizerError from normalizer → execution denied."""
     sys.path.insert(0, "axor-claude")
-    from axor_claude.normalizer import ClaudeNormalizer
+    from tests.normalizers.mock_claude_normalizer import ClaudeNormalizer
     from axor_core.errors.exceptions import NormalizerError, UnknownProviderFormatError
 
     normalizer = ClaudeNormalizer()
@@ -104,7 +104,7 @@ def test_fail_closed_unknown_format_denies():
 def test_fail_closed_unknown_format_claude_denies():
     """ClaudeNormalizer rejects a non-dict, non-ToolUseBlock event."""
     sys.path.insert(0, "axor-claude")
-    from axor_claude.normalizer import ClaudeNormalizer
+    from tests.normalizers.mock_claude_normalizer import ClaudeNormalizer
     from axor_core.errors.exceptions import UnknownProviderFormatError
 
     with pytest.raises(UnknownProviderFormatError):

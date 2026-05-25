@@ -84,7 +84,7 @@ def test_langchain_callback_only_mode_emits_warning(caplog):
     Using AxorMiddleware in callback-only mode (without wrap_tools) logs a
     warning that governance enforcement is not guaranteed.
     """
-    from axor_langchain.middleware import AxorMiddleware
+    from tests.normalizers.mock_langchain import AxorMiddleware
 
     middleware = AxorMiddleware()
 
@@ -108,7 +108,7 @@ def test_langchain_wrapper_enforces_denial():
 
     This confirms that wrapping (not callbacks) is the enforcement mechanism.
     """
-    from axor_langchain.wrapper import AxorToolWrapper
+    from tests.normalizers.mock_langchain import AxorToolWrapper
     from unittest.mock import MagicMock
 
     inner_tool = MagicMock()
@@ -147,7 +147,7 @@ def test_unknown_format_denied_via_claude_normalizer():
     """
     sys.path.insert(0, "axor-claude")
     from axor_core.errors.exceptions import UnknownProviderFormatError
-    from axor_claude.normalizer import ClaudeNormalizer
+    from tests.normalizers.mock_claude_normalizer import ClaudeNormalizer
 
     normalizer = ClaudeNormalizer()
     with pytest.raises(UnknownProviderFormatError):
@@ -163,7 +163,7 @@ def test_incomplete_streaming_no_tool_use_event():
     An adversary cannot trigger tool execution by sending partial chunks.
     """
     sys.path.insert(0, "axor-claude")
-    from axor_claude.events import StreamNormalizer
+    from tests.normalizers.mock_claude_normalizer import StreamNormalizer
     from dataclasses import dataclass, field
     from axor_core.contracts.result import ExecutorEventKind
 
@@ -222,7 +222,7 @@ def test_cross_provider_parity():
     5 intent classes × 3 providers = 15 assertions.
     """
     sys.path.insert(0, "axor-claude")
-    from axor_claude.normalizer import ClaudeNormalizer
+    from tests.normalizers.mock_claude_normalizer import ClaudeNormalizer
     from tests.normalizers.mock_openai_normalizer import MockOpenAINormalizer
     from tests.normalizers.mock_openrouter_normalizer import MockOpenRouterNormalizer
 

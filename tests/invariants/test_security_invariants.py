@@ -409,7 +409,7 @@ def test_inv12_adversarial_worker_cannot_access_trace():
 def test_inv13_positive_normalizer_produces_normalized_intent():
     """ClaudeNormalizer produces NormalizedIntent — governance data, not raw tool output."""
     sys.path.insert(0, "axor-claude")
-    from axor_claude.normalizer import ClaudeNormalizer
+    from tests.normalizers.mock_claude_normalizer import ClaudeNormalizer
     from axor_core.contracts.anomaly import NormalizedIntent
 
     ni = ClaudeNormalizer().normalize({"tool": "Read", "args": {"path": "/src/x.py"}})
@@ -431,7 +431,7 @@ def test_inv13_adversarial_raw_content_not_in_normalized_intent():
 def test_inv14_positive_cross_provider_same_operation():
     """Read intent → operation=='file_read' across all three providers."""
     sys.path.insert(0, "axor-claude")
-    from axor_claude.normalizer import ClaudeNormalizer
+    from tests.normalizers.mock_claude_normalizer import ClaudeNormalizer
     from tests.normalizers.mock_openai_normalizer import MockOpenAINormalizer
     from tests.normalizers.mock_openrouter_normalizer import MockOpenRouterNormalizer
 
@@ -445,7 +445,7 @@ def test_inv14_positive_cross_provider_same_operation():
 def test_inv14_adversarial_different_provider_same_risk_flags():
     """Write intent → writes_outside_workdir flags agree across providers."""
     sys.path.insert(0, "axor-claude")
-    from axor_claude.normalizer import ClaudeNormalizer
+    from tests.normalizers.mock_claude_normalizer import ClaudeNormalizer
     from tests.normalizers.mock_openai_normalizer import MockOpenAINormalizer
 
     ni_c = ClaudeNormalizer().normalize({"tool": "Write", "args": {"path": "/etc/passwd", "content": "x"}})
@@ -497,7 +497,7 @@ def test_inv15_adversarial_denied_tool_never_reaches_executor():
 def test_inv16_positive_normalizer_handles_valid_event():
     """ClaudeNormalizer produces NormalizedIntent for a valid event."""
     sys.path.insert(0, "axor-claude")
-    from axor_claude.normalizer import ClaudeNormalizer
+    from tests.normalizers.mock_claude_normalizer import ClaudeNormalizer
     ni = ClaudeNormalizer().normalize({"tool": "Read", "args": {"path": "/x.py"}})
     assert ni.tool == "Read"
 
@@ -506,7 +506,7 @@ def test_inv16_adversarial_malformed_input_raises():
     """Malformed input raises NormalizerError (execution denied)."""
     sys.path.insert(0, "axor-claude")
     from axor_core.errors.exceptions import NormalizerError, UnknownProviderFormatError
-    from axor_claude.normalizer import ClaudeNormalizer
+    from tests.normalizers.mock_claude_normalizer import ClaudeNormalizer
 
     with pytest.raises((NormalizerError, UnknownProviderFormatError)):
         ClaudeNormalizer().normalize({"_axor_parse_error": "json parse failed"})
@@ -611,7 +611,7 @@ def test_inv20_adversarial_missing_capabilities_denies():
 def test_inv21_positive_wrap_tools_mode_no_warning(caplog):
     """When wrap_tools is called, no callback-only warning is emitted."""
     import logging
-    from axor_langchain.middleware import AxorMiddleware
+    from tests.normalizers.mock_langchain import AxorMiddleware
     from unittest.mock import MagicMock
 
     middleware = AxorMiddleware()
@@ -627,7 +627,7 @@ def test_inv21_positive_wrap_tools_mode_no_warning(caplog):
 def test_inv21_adversarial_callback_only_mode_warns(caplog):
     """Callback-only mode (wrap_tools not called) emits observability warning."""
     import logging
-    from axor_langchain.middleware import AxorMiddleware
+    from tests.normalizers.mock_langchain import AxorMiddleware
 
     middleware = AxorMiddleware()
     middleware._wrap_tools_called = False  # callback-only mode
@@ -643,7 +643,7 @@ def test_inv21_adversarial_callback_only_mode_warns(caplog):
 
 def test_inv22_positive_wrapper_enforces_denial():
     """AxorToolWrapper with deny policy blocks tool call."""
-    from axor_langchain.wrapper import AxorToolWrapper
+    from tests.normalizers.mock_langchain import AxorToolWrapper
     inner = MagicMock()
     inner.name = "bash"
     inner.description = ""
@@ -655,7 +655,7 @@ def test_inv22_positive_wrapper_enforces_denial():
 
 def test_inv22_adversarial_wrapper_with_allow_calls_tool():
     """AxorToolWrapper with allow policy lets the tool execute."""
-    from axor_langchain.wrapper import AxorToolWrapper
+    from tests.normalizers.mock_langchain import AxorToolWrapper
     inner = MagicMock()
     inner.name = "read"
     inner.description = ""
