@@ -104,6 +104,7 @@ jobs:
       - name: Trigger downstream rebuilds
         run: |
           VERSION="${{ github.ref_name }}"
+          VERSION="${VERSION#v}"   # strip leading "v" so pip can use it directly
           PAYLOAD="{\"event_type\":\"axor-core-published\",\"client_payload\":{\"version\":\"${VERSION}\"}}"
           for REPO in \
             Bucha11/axor-sentinel \
