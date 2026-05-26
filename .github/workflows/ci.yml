@@ -100,3 +100,30 @@ jobs:
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
+
+      - name: Trigger downstream rebuilds
+        run: |
+          VERSION="${{ github.ref_name }}"
+          PAYLOAD="{\"event_type\":\"axor-core-published\",\"client_payload\":{\"version\":\"${VERSION}\"}}"
+          for REPO in \
+            Bucha11/axor-sentinel \
+            Bucha11/axor-claude \
+            Bucha11/axor-cli \
+            Bucha11/axor-daemon \
+            Bucha11/axor-langchain \
+            Bucha11/axor-memory-sqlite \
+            Bucha11/axor-telemetry \
+            Bucha11/axor-benchmarks \
+            Bucha11/axor-classifier-simple \
+            Bucha11/axor-classifier-llm; do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+              -X POST \
+              -H "Authorization: Bearer ${{ secrets.CROSS_REPO_PAT }}" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/${REPO}/dispatches" \
+              -d "${PAYLOAD}")
+            echo "→ ${REPO}: HTTP ${STATUS}"
+            if [ "${STATUS}" != "204" ]; then
+              echo "Warning: dispatch to ${REPO} returned ${STATUS} (non-fatal)"
+            fi
+          done

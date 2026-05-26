@@ -74,6 +74,8 @@ class IntentNormalizer:
             after_external_read=self._external_read_seen,
             after_secret_access=self._secret_accessed,
             data_flow=data_flow,
+            target_resource_reputation=0.0,
+            target_container_reputation=0.0,
         )
 
     def _is_system_path(self, path: str) -> bool:

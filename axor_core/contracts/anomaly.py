@@ -39,6 +39,10 @@ class NormalizedIntent:
 
     data_flow: str          # none | local_to_local | local_to_external | external_to_shell
 
+    # axor-sentinel fields — populated by ReputationEnricher; default 0.0 (unknown)
+    target_resource_reputation: float = 0.0
+    target_container_reputation: float = 0.0
+
 
 @dataclass(frozen=True)
 class AnomalyResult:

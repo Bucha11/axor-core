@@ -65,6 +65,10 @@ Raw Agent Intent
        ↓
   ToolInterceptor      ← rule-based, runs first, unconditional
        ↓
+  ReputationEnricher   ← cross-session resource reputation (axor-sentinel)
+       ↓
+  Phase 1 Rule         ← reputation ≥ 0.8 + external read → deterministic deny
+       ↓
   AnomalyDetector      ← behavioral sequence scoring, pluggable
        ↓
   Isolated Verifier    ← canonical features only, no raw strings
@@ -260,6 +264,7 @@ What benchmarks do **not** prove: full prompt injection prevention, covert chann
 | Package | Role |
 |---------|------|
 | [`axor-core`](https://github.com/Bucha11/axor-core) | Governance kernel — this package |
+| [`axor-sentinel`](../axor-sentinel/README.md) | Cross-session behavioral analysis — slow-and-low staging detection |
 | [`axor-daemon`](https://github.com/Bucha11/axor-daemon) | Process-isolated capability executor — enforcement outside the agent process |
 | [`axor-cli`](https://github.com/Bucha11/axor-cli) | Governed terminal runtime |
 | [`axor-claude`](https://github.com/Bucha11/axor-claude) | Claude / Claude Code adapter |

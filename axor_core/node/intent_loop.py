@@ -41,6 +41,7 @@ from axor_core.node.normalizer import IntentNormalizer
 
 if TYPE_CHECKING:
     from axor_core.contracts.lease import CapabilityLease
+    from axor_core.contracts.reputation import ReputationEnricher
     from axor_core.degradation.engine import DegradationEngine
     from axor_core.taint.engine import TaintEngine
 
@@ -117,6 +118,7 @@ class IntentLoop:
         anomaly_window_size: int = 10,
         taint_engine: "TaintEngine | None" = None,
         degradation_engine: "DegradationEngine | None" = None,
+        reputation_enricher: "ReputationEnricher | None" = None,
     ) -> None:
         self._executor = capability_executor
         self._trace_events = trace_events
@@ -128,6 +130,7 @@ class IntentLoop:
         self._anomaly_window_size = anomaly_window_size
         self._taint_engine = taint_engine
         self._degradation_engine = degradation_engine
+        self._reputation_enricher = reputation_enricher
         self._normalizer = IntentNormalizer()
         self._intent_window: list[NormalizedIntent] = []
         self._intent_sequence = 0
@@ -326,15 +329,47 @@ class IntentLoop:
                 result=denial_resp.to_tool_result(),
             )
 
-        # normalize intent once — shared by anomaly detection, taint, and degradation
+        # normalize intent once — shared by anomaly detection, taint, degradation, and reputation
         needs_normalized = (
             self._anomaly_detector is not None
             or self._taint_engine is not None
             or self._degradation_engine is not None
+            or self._reputation_enricher is not None
         )
         normalized: NormalizedIntent | None = None
         if needs_normalized:
             normalized = self._normalizer.normalize(intent)
+
+        # reputation enrichment — populate reputation fields from sentinel snapshot.
+        # A-11: anomaly detector (Layer 2) must not receive enriched reputation floats in Phase 1.
+        # normalized_for_layer2 retains the pre-enrichment copy (0.0 defaults) for the intent window.
+        normalized_for_layer2: NormalizedIntent | None = normalized
+        if self._reputation_enricher is not None and normalized is not None:
+            normalized = self._reputation_enricher.enrich(normalized, intent)
+            # normalized_for_layer2 keeps the pre-enrichment version (invariant A-11)
+
+        # Phase 1 reputation rule — deterministic deny before ML cascade (axor-sentinel spec §Layer 2)
+        # Fires when resource has high accumulated suspicion AND session already read external input.
+        if normalized is not None and (
+            normalized.target_resource_reputation >= 0.8
+            and normalized.after_external_read
+        ):
+            reason = (
+                "reputation enforcement: resource reputation "
+                f"{normalized.target_resource_reputation:.3f} >= 0.8 "
+                "and session preceded by external read"
+            )
+            self._record_denial(intent, reason, envelope)
+            denial_resp = _make_denial_response(reason, "high_reputation_resource_tainted_access")
+            # DegradationEngine interaction: reputation deny contributes to tool_pressure_count
+            # per spec §DegradationEngine interaction.
+            self._record_degradation_signal(intent, denial_resp, normalized)
+            return ResolvedIntent(
+                intent=intent,
+                approved=False,
+                reason=reason,
+                result=denial_resp.to_tool_result(),
+            )
 
         # degradation pre-check — enforce narrowed policy from previous signals
         if self._degradation_engine is not None and normalized is not None:
@@ -354,8 +389,9 @@ class IntentLoop:
                 )
 
         # anomaly detection — runs after policy approval
-        if self._anomaly_detector is not None and normalized is not None:
-            self._intent_window.append(normalized)
+        # A-11: pass pre-enrichment normalized (reputation floats at 0.0) to Layer 2
+        if self._anomaly_detector is not None and normalized_for_layer2 is not None:
+            self._intent_window.append(normalized_for_layer2)
             if len(self._intent_window) > self._anomaly_window_size:
                 self._intent_window.pop(0)
             try:
@@ -877,10 +913,10 @@ def _denial_result(tool_name: str, reason: str) -> dict:
     return _make_denial_response(reason).to_tool_result()
 
 
-def _make_denial_response(reason: str) -> DenialResponse:
+def _make_denial_response(reason: str, category: str | None = None) -> DenialResponse:
     """Create a DenialResponse for a given reason (used by degradation signal recording)."""
-    category = _classify_denial(reason)
-    return DenialResponse(status="denied", coarse_category=category)
+    coarse_category = category if category is not None else _classify_denial(reason)
+    return DenialResponse(status="denied", coarse_category=coarse_category)
 
 
 def _classify_denial(reason: str) -> str:
