@@ -31,11 +31,9 @@ class TraceEventKind(str, Enum):
 
     # context
     CONTEXT_COMPRESSED = "context_compressed"
-    CONTEXT_SLICE_DERIVED = "context_slice_derived"
 
     # budget
     TOKENS_SPENT = "tokens_spent"
-    BUDGET_WARNING = "budget_warning"
 
     # commands
     COMMAND_ROUTED = "command_routed"
@@ -43,7 +41,6 @@ class TraceEventKind(str, Enum):
     # extensions
     EXTENSION_LOADED = "extension_loaded"
     PLUGIN_DENIED = "plugin_denied"
-    SKILL_ACTIVATED = "skill_activated"
 
     # policy escalation
     ESCALATION_GRANTED = "escalation_granted"

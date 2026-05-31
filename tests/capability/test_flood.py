@@ -51,13 +51,13 @@ def test_identical_intent_deduplication():
     assert "deduplicated" in result
 
 
-def test_escalation_group_created():
-    guard = _guard(max_per_session=100, max_per_minute=100)
-    guard.check("write", [], "need write", "gray_zone")
-    guard.check("write", [], "need write", "gray_zone")
-    groups = guard.escalation_groups()
-    assert len(groups) == 1
-    assert groups[0].count == 2
+def test_escalation_group_deduplication():
+    guard = _guard(max_per_session=100, max_per_minute=100, max_identical=1)
+    r1 = guard.check("write", [], "need write", "gray_zone")
+    r2 = guard.check("write", [], "need write", "gray_zone")
+    # First check returns None (proceed); second exceeds max_identical=1 and is deduplicated
+    assert r1 is None
+    assert r2 is not None and "deduplicated" in r2
 
 
 def test_repeated_suspicious_auto_deny():

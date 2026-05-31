@@ -85,7 +85,12 @@ class TraceCollector:
         return Path(os.path.expanduser(self._config.trace_dir))
 
     def _ensure_trace_dir(self) -> None:
+        # Owner-only: traces carry denial reasons, policy events, and paths.
         self._trace_dir().mkdir(parents=True, exist_ok=True)
+        try:
+            os.chmod(self._trace_dir(), 0o700)
+        except OSError:
+            pass  # best effort — non-POSIX or pre-existing dir we don't own
 
     def _cleanup_old_files(self) -> None:
         days = self._config.retention_days
@@ -108,8 +113,15 @@ class TraceCollector:
         if self._file is not None or not self._persistence_enabled or self._closed:
             return
         self._file_path = self._trace_dir() / f"{self._session_id}.jsonl"
-        # line-buffered so a crash after record() preserves whole lines
-        self._file = self._file_path.open("a", encoding="utf-8", buffering=1)
+        # Create owner-only (0o600) — open() would honour umask and can leave
+        # traces group/world-readable. line-buffered so a crash after record()
+        # preserves whole lines.
+        fd = os.open(
+            self._file_path,
+            os.O_WRONLY | os.O_CREAT | os.O_APPEND,
+            0o600,
+        )
+        self._file = os.fdopen(fd, "a", encoding="utf-8", buffering=1)
 
     def _handle_persistence_failure(self, operation: str, exc: BaseException) -> None:
         if self._config.audit_required:
@@ -357,6 +369,8 @@ _KIND_ALLOWED_FIELDS: dict[TraceEventKind, set[str]] = {
         "original_signal", "adjusted_signal", "reason",
         "tokens_spent_before_adjustment",
     },
+    TraceEventKind.INTENT_APPROVED: {"tool"},
+    TraceEventKind.INTENT_TRANSFORMED: {"tool"},
     TraceEventKind.INTENT_DENIED: {"intent_kind", "reason"},
     TraceEventKind.CHILD_SPAWNED: {
         "child_node_id", "child_depth", "context_fraction",
@@ -372,6 +386,32 @@ _KIND_ALLOWED_FIELDS: dict[TraceEventKind, set[str]] = {
         "plugin_name", "denied_item", "reason",
     },
     TraceEventKind.CANCELLED: {"reason", "detail", "completed_intents"},
+    # taint events
+    TraceEventKind.TAINT_PROPAGATED: {"taint_source", "taint_scope"},
+    TraceEventKind.TAINT_CLEARANCE_ATTEMPTED: {"attempted_by"},
+    TraceEventKind.TAINT_CLEARED: {
+        "cleared_by", "authority_type", "reason_code", "audit_id",
+    },
+    # degradation events
+    TraceEventKind.DEGRADATION_TRANSITION: {
+        "previous_level", "new_level", "trigger_source_id", "trigger_intent", "reason",
+    },
+    TraceEventKind.SOURCE_QUARANTINED: {"source_id", "reason"},
+    # anomaly events
+    TraceEventKind.ANOMALY_FLAGGED: {
+        "tool", "score", "anomaly_class", "reasons", "policy_action",
+    },
+    # escalation events
+    TraceEventKind.ESCALATION_DENIED: {"tool", "reason"},
+    TraceEventKind.ESCALATION_GRANTED: {"tool", "paths", "max_ops", "auto_approved"},
+    # cache/routing/cost events
+    TraceEventKind.CACHE_HIT: {"tokens", "ttl", "breakpoint_block"},
+    TraceEventKind.CACHE_MISS: {"tokens", "ttl", "breakpoint_block"},
+    TraceEventKind.CACHE_WRITE: {"tokens", "ttl", "breakpoint_block"},
+    TraceEventKind.ROUTING_DECISION: {"provider", "model", "tier", "sort_strategy"},
+    TraceEventKind.COST_THRESHOLD: {
+        "spent", "cap", "ratio", "threshold_name", "tier_shift",
+    },
 }
 
 # For events that carry a generic payload dict, whitelist per kind.

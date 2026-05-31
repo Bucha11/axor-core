@@ -102,9 +102,6 @@ _CONTRADICTION_PAIRS = [
     (_MUTATIVE_PATTERNS, _READONLY_PATTERNS),
 ]
 
-_CONFIDENCE_THRESHOLD = 0.75
-
-
 def _score(text: str, patterns: list[tuple[re.Pattern, float]]) -> float:
     return sum(weight for pattern, weight in patterns if pattern.search(text))
 

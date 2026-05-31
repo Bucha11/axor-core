@@ -5,11 +5,12 @@ from axor_core.contracts.envelope import ExecutionEnvelope
 from axor_core.contracts.intent import Intent
 from axor_core.contracts.policy import ExportMode, ExecutionPolicy
 from axor_core.contracts.trace import ChildSpawnedEvent, TraceEventKind
-from axor_core.errors.exceptions import ChildNotAllowedError, MaxDepthExceededError, SpawnValidationError
+from axor_core.errors.exceptions import ChildNotAllowedError, SpawnValidationError
 from axor_core.node.intent_loop import IntentLoop
 
 # ExportMode restrictiveness order — higher index = more restrictive.
-_EXPORT_MODE_ORDER = [ExportMode.FULL, ExportMode.SUMMARY, ExportMode.FILTERED, ExportMode.RESTRICTED]
+# FILTERED (output+metadata, 4096 tokens) is less restrictive than SUMMARY (output only, 1024 tokens).
+_EXPORT_MODE_ORDER = [ExportMode.FULL, ExportMode.FILTERED, ExportMode.SUMMARY, ExportMode.RESTRICTED]
 
 
 def _export_mode_rank(mode: ExportMode) -> int:

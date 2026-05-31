@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any
 
 
 class TaintSource(str, Enum):
@@ -21,15 +20,19 @@ class TaintScope(str, Enum):
     """
     How widely taint propagates once triggered.
 
-    INTENT  — affects only the current intent.
-    NODE    — affects the current node for its lifetime.
-    SUBTREE — affects the node and all children spawned from it.
-    SESSION — affects the entire session (default for high-security).
+    INTENT       — affects only the current intent.
+    NODE         — affects the current node for its lifetime.
+    SUBTREE      — affects the node and all children spawned from it.
+    SESSION      — affects the entire session (default for high-security).
+    CROSS_SESSION — persists across sessions via Sentinel ReputationSnapshot;
+                   widest possible scope. Used by axor-eval to measure
+                   cross-session data-flow integrity (§7.1).
     """
     INTENT = "intent"
     NODE = "node"
     SUBTREE = "subtree"
     SESSION = "session"
+    CROSS_SESSION = "cross_session"
 
 
 @dataclass(frozen=True)

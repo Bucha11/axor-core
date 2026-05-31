@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """
 Memory contracts — MemoryFragment, FragmentValue, MemoryProvider.
 
@@ -17,6 +15,8 @@ Core defines the protocol. Implementations live in separate packages:
 Core never imports MemoryProvider implementations.
 They are injected at GovernedSession construction time.
 """
+
+from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field

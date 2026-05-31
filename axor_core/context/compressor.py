@@ -128,48 +128,58 @@ class ContextCompressor:
 
         # ── KNOWLEDGE: gentle treatment ────────────────────────────────────────
         knowledge, applied = self._deduplicate(knowledge)
-        if applied: strategies.append("deduplicate_knowledge")
+        if applied:
+            strategies.append("deduplicate_knowledge")
         knowledge, applied = self._collapse_errors(knowledge)
-        if applied: strategies.append("collapse_errors_knowledge")
+        if applied:
+            strategies.append("collapse_errors_knowledge")
         # no truncation, no prose compression for knowledge fragments
 
         # ── EPHEMERAL: aggressive regardless of mode ───────────────────────────
         ephemeral = [f for f in ephemeral if f.content.strip()]  # remove empty
         # truncate at AGGRESSIVE thresholds regardless of actual mode
         ephemeral, applied = self._truncate_tool_outputs(ephemeral, CompressionMode.AGGRESSIVE)
-        if applied: strategies.append("truncate_ephemeral")
+        if applied:
+            strategies.append("truncate_ephemeral")
         ephemeral, applied = self._cap_prose_size(ephemeral, CompressionMode.AGGRESSIVE)
-        if applied: strategies.append("cap_prose_ephemeral")
+        if applied:
+            strategies.append("cap_prose_ephemeral")
 
         # ── WORKING: standard pipeline ─────────────────────────────────────────
         result = list(working)
 
         # 1. remove empty
         result, applied = self._remove_empty(result)
-        if applied: strategies.append("remove_empty")
+        if applied:
+            strategies.append("remove_empty")
 
         # 2. exact deduplication
         result, applied = self._deduplicate(result)
-        if applied: strategies.append("deduplicate")
+        if applied:
+            strategies.append("deduplicate")
 
         # 3. collapse repeated errors
         result, applied = self._collapse_errors(result)
-        if applied: strategies.append("collapse_errors")
+        if applied:
+            strategies.append("collapse_errors")
 
         # 4. normalize paths
         result = self._normalize_paths(result)
 
         # 5. truncate oversized tool outputs
         result, applied = self._truncate_tool_outputs(result, mode)
-        if applied: strategies.append("truncate_tool_outputs")
+        if applied:
+            strategies.append("truncate_tool_outputs")
 
         # 6. cap individual prose fragments
         result, applied = self._cap_prose_size(result, mode)
-        if applied: strategies.append("cap_prose_size")
+        if applied:
+            strategies.append("cap_prose_size")
 
         # 7. summarize old prose turns
         result, applied = self._compress_prose(result, mode, current_turn)
-        if applied: strategies.append("compress_prose")
+        if applied:
+            strategies.append("compress_prose")
 
         # ── Reassemble: pinned first, then knowledge, working, ephemeral ───────
         final = pinned + knowledge + result + ephemeral
@@ -220,6 +230,7 @@ class ContextCompressor:
                     relevance=f.relevance,
                     value=f.value,
                     turn=f.turn,
+                    taint_mark=f.taint_mark,
                 ))
                 applied = True
             else:
@@ -247,6 +258,7 @@ class ContextCompressor:
                     relevance=f.relevance,
                     value=f.value,
                     turn=f.turn,
+                    taint_mark=f.taint_mark,
                 ))
                 applied = True
             else:
@@ -318,7 +330,10 @@ class ContextCompressor:
                 key_points = self._extract_key_decisions(f.content)
                 if key_points:
                     old_prose.extend(key_points)
-                applied = True
+                    applied = True
+                else:
+                    # nothing extractable — keep the fragment rather than silently dropping it
+                    result.append(f)
             else:
                 result.append(f)
 
@@ -373,6 +388,7 @@ class ContextCompressor:
                     relevance=f.relevance,
                     value=f.value,
                     turn=f.turn,
+                    taint_mark=f.taint_mark,
                 ))
             else:
                 result.append(f)

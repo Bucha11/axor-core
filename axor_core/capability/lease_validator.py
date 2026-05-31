@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import os
-from pathlib import Path
 import time
 import uuid
 from typing import Sequence
@@ -9,29 +7,27 @@ from typing import Sequence
 from axor_core.contracts.lease import CapabilityLease, LeaseAuthorityType
 from axor_core.contracts.policy import ExecutionPolicy
 from axor_core.capability.resolver import CapabilityResolver
+# Canonical path primitives — single source of truth (axor_core.security.paths).
+# Re-exported here for backward compatibility with existing imports.
+from axor_core.security.paths import (
+    path_matches_allowlist,
+    paths_within,
+)
 
 _resolver = CapabilityResolver()
 
 
-def path_matches_allowlist(path: str, allowed_paths: Sequence[str]) -> bool:
-    """Return True only when path is equal to or contained by an allowed root."""
-    if not path:
-        return False
-    candidate = _resolve_path(path)
-    for allowed in allowed_paths:
-        root = _resolve_path(allowed)
-        if candidate == root:
-            return True
-        try:
-            candidate.relative_to(root)
-            return True
-        except ValueError:
-            continue
-    return False
+def extract_path_arg(args: dict) -> str:
+    """Extract the path-like argument from tool args.
 
-
-def _resolve_path(path: str) -> Path:
-    return Path(os.path.expanduser(path)).resolve(strict=False)
+    Covers the common argument names across adapters (path, file_path, file,
+    url, uri) so path enforcement cannot be sidestepped by using an alias.
+    """
+    for key in ("path", "file_path", "file", "url", "uri"):
+        value = args.get(key)
+        if value:
+            return str(value)
+    return ""
 
 
 class LeaseValidator:
@@ -75,6 +71,15 @@ class LeaseValidator:
         excess = lease.allowed_tools - parent_caps.allowed_tools
         if excess:
             return f"lease grants tools outside parent ceiling: {excess}"
+        # Path ceiling: when the parent policy restricts paths, the lease may not
+        # grant access to paths outside that ceiling.
+        parent_paths = getattr(parent_policy, "allowed_paths", ()) or ()
+        if parent_paths and lease.allowed_paths:
+            if not paths_within(lease.allowed_paths, parent_paths):
+                return (
+                    f"lease grants paths outside parent ceiling: "
+                    f"{lease.allowed_paths!r} not within {tuple(parent_paths)!r}"
+                )
         return None
 
     def create_lease(
@@ -109,7 +114,6 @@ class LeaseValidator:
             allowed_child_depth=0,
             creation_time=now,
             expiration_time=now + ttl_seconds,
-            max_intents=max_uses,
             max_uses=max_uses,
             used_count=0,
             non_transitive=True,

@@ -72,10 +72,6 @@ class ContextError(AxorError):
     """Context subsystem error."""
 
 
-class ContextExpansionDeniedError(AxorError):
-    """expand_context intent denied — context expansion not allowed by policy."""
-
-
 # ── Export ─────────────────────────────────────────────────────────────────────
 
 class ExportDeniedError(AxorError):
@@ -122,6 +118,21 @@ class GovernanceBypassError(AxorError):
     """Raised when executor stream() is called outside an active governance_context() in PRODUCTION/STRICT mode."""
     def __init__(self, detail: str = "") -> None:
         msg = "Direct executor call bypasses governance"
+        if detail:
+            msg = f"{msg}: {detail}"
+        super().__init__(msg)
+
+
+class IsolationRequiredError(AxorError):
+    """Raised when process isolation is required but the capability executor is in-process.
+
+    In PRODUCTION/STRICT with require_isolation (or AXOR_REQUIRE_ISOLATION=1), an
+    untrusted agent must execute tools out-of-process (DaemonCapabilityClient).
+    An in-process CapabilityExecutor offers no hard boundary against a
+    compromised agent process.
+    """
+    def __init__(self, detail: str = "") -> None:
+        msg = "process isolation required but capability executor is in-process"
         if detail:
             msg = f"{msg}: {detail}"
         super().__init__(msg)

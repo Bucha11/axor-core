@@ -75,7 +75,6 @@ class ContextInvalidator:
         self,
         current_turn: int,
         active_paths: set[str],          # files currently in working set
-        seen_errors: list[str],          # recent error messages
     ) -> InvalidationResult:
         """
         Run all invalidation checks and return what needs to change.
@@ -121,17 +120,3 @@ class ContextInvalidator:
             fragments_to_penalise=fragments_to_penalise,
         )
 
-    def detect_error_repetition(self, recent_outputs: list[str]) -> list[tuple[str, int]]:
-        """
-        Detect the same error appearing multiple times in recent outputs.
-        Returns list of (error_signature, count) for collapsing.
-        """
-        signatures: dict[str, int] = {}
-        for output in recent_outputs:
-            for line in output.splitlines():
-                line = line.strip()
-                if any(kw in line.lower() for kw in ("error:", "exception:", "traceback", "failed:")):
-                    sig = line[:80]  # first 80 chars as signature
-                    signatures[sig] = signatures.get(sig, 0) + 1
-
-        return [(sig, count) for sig, count in signatures.items() if count > 1]

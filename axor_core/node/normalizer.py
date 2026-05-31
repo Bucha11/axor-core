@@ -1,12 +1,14 @@
 from __future__ import annotations
 
-import ipaddress
 from pathlib import Path
 import re
 from urllib.parse import urlparse
 
 from axor_core.contracts.anomaly import NormalizedIntent
 from axor_core.contracts.intent import Intent
+# Single source of truth for host/path security primitives.
+from axor_core.security.net import classify_host
+from axor_core.security.paths import lexical_normalize as _lexical_normalize
 
 # Tools that perform file writes / mutations
 _WRITE_TOOLS = frozenset({"write", "edit", "create", "str_replace_editor", "str_replace_based_edit_tool"})
@@ -79,9 +81,16 @@ class IntentNormalizer:
         )
 
     def _is_system_path(self, path: str) -> bool:
-        if not _SYSTEM_PATH_PATTERN.match(path):
+        # Resolve .. lexically first so traversal like /tmp/../etc/passwd or
+        # workdir/../../etc/passwd cannot dodge the system-path patterns.
+        norm = _lexical_normalize(path)
+        # A path that escapes upward (normalizes to a leading "..") is outside
+        # the workspace and treated as a system/outside path.
+        if norm == ".." or norm.startswith("../"):
+            return True
+        if not _SYSTEM_PATH_PATTERN.match(norm):
             return False
-        if self._workdir and self._path_is_within(path, self._workdir):
+        if self._workdir and self._path_is_within(norm, self._workdir):
             return False
         return True
 
@@ -246,22 +255,11 @@ class IntentNormalizer:
     def _classify_url_target(self, text: str) -> str | None:
         for url in _URL_PATTERN.findall(text):
             parsed = urlparse(url)
-            host = (parsed.hostname or "").strip().lower()
-            if not host:
-                continue
-            if host == "localhost":
-                return "localhost"
-            try:
-                addr = ipaddress.ip_address(host)
-            except ValueError:
-                if host.endswith(".local"):
-                    return "private_network"
-                return "external_url"
-            if addr.is_loopback:
-                return "localhost"
-            if addr.is_private or addr.is_link_local:
-                return "private_network"
-            return "external_url"
+            kind = classify_host(parsed.hostname or "")
+            if kind is not None:
+                # classify_host covers loopback, RFC1918, link-local (cloud
+                # metadata) and reserved ranges across decimal/hex/octal IP forms.
+                return kind
         return None
 
     # ── State update ───────────────────────────────────────────────────────────
@@ -274,7 +272,9 @@ class IntentNormalizer:
             if path:
                 self._written_files.add(str(path))
 
-        if target_kind == "external_url" and operation in ("network_request", "file_read"):
+        if operation == "network_request" or (
+            target_kind == "external_url" and operation == "file_read"
+        ):
             self._external_read_seen = True
 
         if target_kind == "secret" or self._reads_secret(tool, args):

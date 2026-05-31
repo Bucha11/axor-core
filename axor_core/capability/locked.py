@@ -10,7 +10,7 @@ from axor_core.errors.exceptions import GovernanceBypassError
 
 if TYPE_CHECKING:
     from axor_core.contracts.envelope import ExecutionEnvelope
-    from axor_core.contracts.events import ExecutorEvent
+    from axor_core.contracts.result import ExecutorEvent
 
 
 # Set to True only while GovernedNode is executing the governed stream path.

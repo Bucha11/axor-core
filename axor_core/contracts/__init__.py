@@ -29,6 +29,7 @@ from axor_core.contracts.policy import (
     TaskNature,
     SignalClassifier,
     ExecutionPolicy,
+    EscalationPolicy,
     PolicyDecision,
     PolicyDecisionKind,
     ContextMode,
@@ -37,6 +38,8 @@ from axor_core.contracts.policy import (
     ChildMode,
     ToolPolicy,
 )
+from axor_core.contracts.canonical import CanonicalizedIntent
+from axor_core.contracts.mode import ExecutionMode
 from axor_core.contracts.envelope import (
     ExecutionEnvelope,
     Capabilities,
@@ -81,6 +84,16 @@ from axor_core.contracts.trace import (
     PluginDeniedEvent,
     SuspiciousIntentEvent,
     CancelledEvent,
+    EscalationDeniedEvent,
+    EscalationGrantedEvent,
+    CacheEvent,
+    RoutingEvent,
+    CostThresholdEvent,
+    TaintPropagatedEvent,
+    TaintClearanceAttemptedEvent,
+    TaintClearedEvent,
+    DegradationTransitionEvent,
+    SourceQuarantinedEvent,
     Embedder,
     TelemetrySink,
 )
@@ -96,8 +109,12 @@ __all__ = [
     "ContextView", "ContextFragment", "LineageSummary", "RawExecutionState",
     # policy
     "TaskSignal", "TaskComplexity", "TaskNature", "SignalClassifier",
-    "ExecutionPolicy", "PolicyDecision", "PolicyDecisionKind",
+    "ExecutionPolicy", "EscalationPolicy", "PolicyDecision", "PolicyDecisionKind",
     "ContextMode", "CompressionMode", "ExportMode", "ChildMode", "ToolPolicy",
+    # canonical
+    "CanonicalizedIntent",
+    # mode
+    "ExecutionMode",
     # envelope
     "ExecutionEnvelope", "Capabilities", "ExportContract",
     # intent
@@ -114,5 +131,9 @@ __all__ = [
     "AnonymizedTraceRecord", "SignalChosenEvent", "PolicyAdjustedEvent",
     "IntentDeniedEvent", "ChildSpawnedEvent", "TokensSpentEvent",
     "CommandRoutedEvent", "PluginDeniedEvent", "SuspiciousIntentEvent", "CancelledEvent",
+    "EscalationDeniedEvent", "EscalationGrantedEvent",
+    "CacheEvent", "RoutingEvent", "CostThresholdEvent",
+    "TaintPropagatedEvent", "TaintClearanceAttemptedEvent", "TaintClearedEvent",
+    "DegradationTransitionEvent", "SourceQuarantinedEvent",
     "Embedder", "TelemetrySink",
 ]

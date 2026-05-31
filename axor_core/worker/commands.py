@@ -5,7 +5,6 @@ from axor_core.contracts.command import (
     CommandClass,
     CommandResult,
 )
-from axor_core.contracts.trace import TraceEventKind
 from axor_core.trace import events as trace_events
 
 
@@ -24,6 +23,10 @@ _CONTEXT_COMMANDS = {
     "clear",    # reset context state
     "memory",   # show/manage memory fragments
 }
+
+# All reserved command names — extensions cannot register commands with these names.
+# Single source of truth shared with ExtensionSanitizer.
+RESERVED_COMMANDS: frozenset[str] = frozenset(_GOVERNANCE_COMMANDS | _CONTEXT_COMMANDS)
 
 
 class SlashCommandRouter:
@@ -170,6 +173,23 @@ class SlashCommandRouter:
                     return "No executions yet. Policy is selected dynamically from task signal."
                 last = traces[-1]
                 return f"Last policy: {last.policy_name}"
+
+            case "export":
+                traces = session.all_traces()
+                level = session.current_degradation_level()
+                policy_note = (
+                    f" (policy: {traces[-1].policy_name})" if traces else ""
+                )
+                degradation_note = ""
+                if level in ("locked", "terminal"):
+                    degradation_note = "\nDegradation: RESTRICTED forced on all exports"
+                elif level == "restricted":
+                    degradation_note = "\nDegradation: RESTRICTED forced on quarantined sources"
+                return (
+                    f"Export mode{policy_note}: governed by active policy"
+                    f"\nDegradation level: {level.upper()}"
+                    f"{degradation_note}"
+                )
 
             case "status":
                 total = session.total_tokens_spent()

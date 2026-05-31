@@ -38,7 +38,6 @@ class CapabilityLease:
     allowed_child_depth: int
     creation_time: float
     expiration_time: float
-    max_intents: int
     max_uses: int
     used_count: int = field(default=0)
     non_transitive: bool = True

@@ -9,7 +9,6 @@ from axor_core.errors.exceptions import (
     ChildNotAllowedError,
     MaxDepthExceededError,
     ContextError,
-    ContextExpansionDeniedError,
     ExportDeniedError,
     ExtensionSanitizationError,
 )
@@ -25,7 +24,6 @@ __all__ = [
     "ChildNotAllowedError",
     "MaxDepthExceededError",
     "ContextError",
-    "ContextExpansionDeniedError",
     "ExportDeniedError",
     "ExtensionSanitizationError",
 ]

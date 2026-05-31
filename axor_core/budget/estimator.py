@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from axor_core.contracts.context import ContextView
-from axor_core.contracts.policy import ExecutionPolicy, ContextMode, CompressionMode
+from axor_core.contracts.policy import ExecutionPolicy, CompressionMode
 
 
 # Rough token cost of a tool definition in the envelope
@@ -27,7 +27,6 @@ class BudgetEstimator:
         self,
         task: str,
         context: ContextView,
-        policy: ExecutionPolicy,
         tool_count: int,
     ) -> int:
         """
@@ -72,23 +71,7 @@ class BudgetEstimator:
         Core does not block execution if insufficient —
         it records this in trace so policy_engine can adjust.
         """
-        if slice_token_estimate < _MIN_SUFFICIENT_TOKENS:
-            return False
-
-        # if parent has relevant fragments for child task keywords
-        # check that at least some are included in the slice
-        child_keywords = set(child_task.lower().split())
-        relevant_fragments = [
-            f for f in parent_context.visible_fragments
-            if any(kw in f.content.lower() for kw in child_keywords)
-        ]
-
-        if relevant_fragments:
-            # slice should cover at least one relevant fragment
-            covered_tokens = sum(f.token_estimate for f in relevant_fragments)
-            return slice_token_estimate >= min(covered_tokens, _MIN_SUFFICIENT_TOKENS)
-
-        return True  # no specific relevant fragments — slice is fine
+        return slice_token_estimate >= _MIN_SUFFICIENT_TOKENS
 
     def compression_headroom(
         self,

@@ -75,7 +75,7 @@ def test_persist_write_failure_degrades_when_audit_not_required(tmp_path, monkey
     def fail_open(*args, **kwargs):
         raise OSError("readonly")
 
-    monkeypatch.setattr(Path, "open", fail_open)
+    monkeypatch.setattr("axor_core.trace.collector.os.open", fail_open)
 
     c.record(_signal_event())
 
@@ -90,7 +90,7 @@ def test_persist_write_failure_raises_when_audit_required(tmp_path, monkeypatch)
     def fail_open(*args, **kwargs):
         raise OSError("readonly")
 
-    monkeypatch.setattr(Path, "open", fail_open)
+    monkeypatch.setattr("axor_core.trace.collector.os.open", fail_open)
 
     with pytest.raises(TracePersistenceError):
         c.record(_signal_event())

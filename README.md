@@ -148,6 +148,26 @@ See [docs/reverse-osmosis.md](docs/reverse-osmosis.md) for the full enforcement 
 
 ---
 
+## Defense System
+
+Axor composes three complementary defense layers across different time horizons.
+
+**Per-intent — Core enforcement cascade.** Every tool call passes through the three-layer cascade (rule-based interception → behavioral anomaly scoring → isolated intent verification) plus the `DegradationEngine`. Operates within a single session, evaluated on every intent before execution.
+
+**Cross-session — [`axor-sentinel`](../axor-sentinel/README.md).** Maintains a resource reputation graph across all sessions. A slow-and-low staging attack — exfiltration spread across dozens of individually normal short sessions — never exceeds any single-session threshold, but saturates reputation scores over time. When a high-reputation resource is accessed, the `SnapshotIntentEnricher` populates `NormalizedIntent.target_resource_reputation`; the `IntentLoop` denies deterministically at Phase 1, before any LLM inference.
+
+**Behavioral drift — [`axor-probe`](../axor-probe/README.md).** Detects context-induced reasoning drift while a session is running. Captures a read-only snapshot, executes behavioral probes out-of-band against a shadow instance and an isolated baseline, and emits a `DriftSignal`. The live session is never touched. Significant drift signals (`ELEVATED_REVIEW` or calibrated `RESTRICTED_MODE`) feed into core and sentinel.
+
+```
+Per-intent     enforcement cascade (core)              ← every intent, synchronous
+Cross-session  resource reputation graph (sentinel)    ← hourly background audit cycle
+Behavioral     shadow instance comparison (probe)      ← out-of-band, no hot-path impact
+```
+
+These layers fail independently: a probe bypass does not disable the enforcement cascade; a gap in sentinel's reputation graph does not disable per-intent rule enforcement.
+
+---
+
 ## Execution Modes
 
 | Mode | Isolation | Classifier | On ambiguity |

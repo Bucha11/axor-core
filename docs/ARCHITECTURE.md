@@ -59,7 +59,7 @@ axor_core/
 │   ├── anomaly.py         NormalizedIntent, CanonicalizedIntent
 │   ├── policy.py          ExecutionPolicy, TaskSignal, SignalClassifier
 │   ├── result.py          ExecutorEvent, ExecutorEventKind, ExecutionResult
-│   ├── trace.py           DecisionTrace, TraceConfig, 19 typed TraceEvent kinds
+│   ├── trace.py           DecisionTrace, TraceConfig, 30 typed TraceEvent kinds
 │   ├── taint.py           TaintState, TaintSource, TaintScope, ClearanceRecord
 │   ├── degradation.py     DegradationLevel, DegradationPolicy, DegradationState,
 │   │                      DegradationTransition, SourceRecord, GovernanceAuthority
@@ -81,7 +81,8 @@ axor_core/
 ├── capability/            Tool permission derivation and execution
 │   ├── resolver.py        CapabilityResolver — fail-closed: unknown prefix = denied
 │   ├── executor.py        CapabilityExecutor, ToolHandler
-│   ├── executor_lock.py   LockedExecutor — GovernanceBypassError if bypassed
+│   ├── locked.py          LockedExecutor — GovernanceBypassError if bypassed
+│   ├── daemon_client.py   DaemonCapabilityClient — out-of-process tool execution
 │   └── lease_validator.py LeaseValidator — TTL, max_uses, normpath path check
 │
 ├── taint/                 Session taint tracking
@@ -116,7 +117,7 @@ axor_core/
 │
 ├── trace/                 Governance decision recording
 │   ├── collector.py       TraceCollector — lineage-aware, thread-safe, privacy controls
-│   └── events.py          Typed event constructors for all 17 event kinds
+│   └── events.py          Typed event constructors for all TraceEvent kinds
 │
 ├── extensions/            Extension loading and sanitization
 │   ├── sanitizer.py       ExtensionSanitizer — size cap, reserved command protection
@@ -176,6 +177,182 @@ axor_core/
 **Context policy is per-turn.** `ContextManager.build(raw_state, lineage, policy=policy)` receives the actual policy selected for each task. A `rewrite repo` task gets `BROAD` context with `LIGHT` compression. A `write test` task gets `MINIMAL` context with `BALANCED` compression.
 
 **Privacy by default.** `TraceConfig(local_only=True, persist_inputs=False)`. Nothing leaves the machine without explicit `training_opt_in=True`.
+
+---
+
+## Defense System
+
+### Per-Intent Cascade (Core)
+
+Every tool call that reaches `IntentLoop` passes through three sequential decision layers. A deny at any layer is final — subsequent layers do not run.
+
+```
+IntentLoop receives tool_use event
+  │
+  ├─ DegradationEngine.apply_to_policy(source)
+  │    └─ narrows active policy based on source reputation and session level
+  │       quarantined source → export_mode forced to RESTRICTED (D-5)
+  │
+  ├─ Layer 1 — ToolInterceptor
+  │    rule-based, synchronous, unconditional
+  │    checks: capability surface, allowed_paths (LeaseValidator), TTL, max_uses
+  │    deny → recorded in DegradationEngine.record_signal; stops here
+  │
+  ├─ Layer 2 — AnomalyDetector
+  │    evaluates the execution *sequence*, not just the individual call
+  │    pluggable: HeuristicClassifier (0ms, 0 tokens) or axor-classifier-simple / axor-classifier-llm
+  │    deny → recorded in DegradationEngine.record_signal; stops here
+  │
+  ├─ Layer 3 — Isolated Verifier
+  │    gray-zone intents only
+  │    IntentCanonicalizer strips all raw strings before the verifier sees anything
+  │    the verifier receives canonical features only — no task text, no file paths, no tool args
+  │    a prompt injection in a file path cannot reach a governance decision
+  │
+  └─ DegradationEngine.record_signal (post-cascade)
+       converts accumulated denial signals + taint metadata → DegradationLevel
+       NORMAL → CAUTIOUS → RESTRICTED → LOCKED → TERMINAL (monotonically increasing)
+       level transitions emit DegradationTransitionEvent
+       LOCKED_TTL: LOCKED sessions auto-transition to TERMINAL if not cleared within TTL
+```
+
+`DegradationEngine` is source-aware. A quarantined source (malicious document) is restricted; clean sources in the same session continue at reduced but functional capability. Only when session-level thresholds are crossed does the whole session degrade.
+
+---
+
+### Cross-Session Reputation (Sentinel)
+
+`axor-sentinel` solves a problem the per-session cascade cannot: slow-and-low staging attacks, where exfiltration is distributed across many individually normal sessions over days or weeks.
+
+**Background audit cycle — `SentinelCycle`** (runs hourly, not on the hot path):
+
+```
+sessions (axor-core) → SentinelCycle
+  ├─ apply time decay           score halves every 30 days
+  ├─ apply hot weights          READ=0.4 / READ_SUMMARIZE=0.6 /
+  │                             EXPORT_ADJACENT=0.8 / EXPORT_FAILED=1.0
+  ├─ apply caution weights      adjacent resources: BASE_CAUTION=0.3 × topology_factor
+  ├─ fanout detection           z-score vs agent historical baseline; fires at z > 2.5
+  └─ snapshot swap              atomic write: symlink rename / os.replace
+```
+
+Score accumulation uses logarithmic diminishing returns — each signal contributes proportionally to remaining headroom, bounding scores to `[0, 1]`:
+
+```
+new_score = current + new_weight × (1 − current)
+```
+
+**Hot-path enrichment — `SnapshotIntentEnricher`** (pure dict lookup, no Neo4j, no I/O):
+
+```
+ReputationSnapshot (loaded at startup)
+  │
+  ▼
+SnapshotIntentEnricher.enrich(intent)
+  └─ populates NormalizedIntent.target_resource_reputation
+       │
+       ▼
+  IntentLoop Phase 1 check:
+    score ≥ 0.8 AND after_external_read → deterministic deny
+    decision recorded before any LLM inference
+```
+
+The snapshot is swapped atomically in the background. The hot path reads a flat dict — no lock contention, no graph queries per intent.
+
+---
+
+### Behavioral Drift Detection (Probe)
+
+`axor-probe` detects context-induced reasoning drift during a running session by comparing an out-of-band snapshot probe instance against an isolated shadow baseline. The live session is never touched.
+
+**Pipeline:**
+
+```
+Live session (axor-core)
+  │
+  │  read-only snapshot at trigger (context-growth / external-content / manual)
+  ▼
+StateSnapshot               session_id, timestamp, bounded context_window,
+                            system_prompt_hash, CanonicalizedContextSummary
+                            — no memory write handles, no tool executor refs
+  │
+  ├───────────────────────────────────────┐
+  ▼                                       ▼
+ProbeExecutor                       ShadowInstance
+snapshot probe instance             receives CanonicalizedContextSummary only
+(bounded context window)            (no raw live-session strings)
+  │                                       │
+  └────────────────┬───────────────────────┘
+                   ▼
+              Comparator
+              BINARY (default): deterministic field comparison
+                decision / disclosed_data / policy_cited / reasoning
+              TRIANGULATED (on ambiguity): adds contextless shadow baseline
+                snapshot ≠ shadow ≠ baseline → drift signal
+                snapshot ≈ shadow, baseline differs → context explains behavior
+                   │
+                   ▼
+              DriftSignal + longitudinal accumulation (DriftAccumulator)
+              DriftAction: LOG_ONLY / ELEVATED_REVIEW / RESTRICTED_MODE*
+              * RESTRICTED_MODE only when calibration_status == "CALIBRATED"
+                   │
+                   ▼
+              PayloadRedactor → ProbeAuditStore
+              reasoning field scrubbed; unknown fields redacted by default
+```
+
+**Trigger coalescing — `ProbeController`:**
+
+Multiple triggers inside `cooldown_window_seconds` coalesce into one dispatch. Fixed-interval probing is intentionally avoided. `max_probes_per_session` hard cap enforced.
+
+**Integration direction is one-way:**
+
+```
+axor-probe → axor-core      (notify_core — ELEVATED_REVIEW or calibrated RESTRICTED_MODE)
+axor-probe → axor-sentinel  (emit_to_sentinel — contributes to reputation graph)
+axor-core  -X→ axor-probe   (core does not depend on probe)
+```
+
+`LOG_ONLY` signals remain local telemetry. Core and sentinel only receive significant signals.
+
+**Key design constraint:** the shadow instance receives a `CanonicalizedContextSummary` (structural metadata only), never raw live-session content. This eliminates cross-contamination but introduces unavoidable context asymmetry — legitimate contextual reasoning can look like drift. Triangulation exists to reduce this false-positive class.
+
+---
+
+### Defense Layer Composition
+
+```
+                      ┌─────────────────────────────┐
+                      │        Live Session          │
+                      └──────────────┬──────────────┘
+                                     │
+                   ┌─────────────────┼──────────────────┐
+                   ▼                 ▼                   ▼
+        ┌──────────────────┐  ┌──────────────┐  ┌───────────────┐
+        │  Core cascade    │  │   Sentinel   │  │     Probe     │
+        │  (per-intent)    │  │  (cross-     │  │  (behavioral  │
+        │                  │  │   session)   │  │   drift)      │
+        │  L1 rule         │  │              │  │               │
+        │  L2 anomaly      │◄─┤ reputation   │  │ shadow compare│
+        │  L3 verifier     │  │ enrichment   │  │ drift signal  │
+        │  DegradationEng  │  │              │  │               │
+        └────────┬─────────┘  └──────┬───────┘  └──────┬────────┘
+                 │                   │                  │
+                 └───────────────────┴──────────────────┘
+                                     │
+                            independent failure
+                            no single-point bypass
+```
+
+Each layer operates independently across a different time horizon:
+
+| Layer | Scope | Latency | Signal source |
+|-------|-------|---------|---------------|
+| Core cascade | per intent | synchronous | tool calls, spawn events, export |
+| Sentinel | cross-session | hourly background | resource access patterns over time |
+| Probe | per session | out-of-band | behavioral consistency under policy pressure |
+
+A bypass of probe does not disable the enforcement cascade. A gap in sentinel's reputation coverage does not disable per-intent rule enforcement. Layers compose additively — each adds coverage the others cannot provide.
 
 ---
 

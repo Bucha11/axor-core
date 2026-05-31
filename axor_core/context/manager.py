@@ -159,7 +159,6 @@ class ContextManager:
         invalidation = self._invalidator.run(
             current_turn=self._turn,
             active_paths=self._selector.active_paths(),
-            seen_errors=self._recent_outputs[-5:],
         )
         fragments = self._apply_penalties(fragments, invalidation.fragments_to_penalise)
 
@@ -280,13 +279,14 @@ class ContextManager:
                 turn=self._turn,
             ))
 
-        # memory fragments
+        # memory fragments — each gets a content-stable source key so dedup-by-source
+        # keeps all distinct fragments instead of collapsing them to a single "memory" entry.
         for mem in raw_state.memory_fragments:
             fragments.append(ContextFragment(
                 kind="memory",
                 content=mem,
                 token_estimate=len(mem) // 4,
-                source="memory",
+                source=f"memory:{abs(hash(mem)):08x}",
                 relevance=0.6,
                 turn=self._turn,
             ))
@@ -308,6 +308,8 @@ class ContextManager:
                     token_estimate=f.token_estimate,
                     source=f.source,
                     relevance=f.relevance * 0.4,   # heavy penalty
+                    value=f.value,
+                    turn=f.turn,
                 ))
             else:
                 result.append(f)

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from axor_core.contracts.envelope import ExportContract, ExecutionEnvelope
+from axor_core.contracts.envelope import ExecutionEnvelope
 from axor_core.contracts.policy import ExportMode
 from axor_core.contracts.result import ExecutionResult, TokenUsage
 from axor_core.errors.exceptions import ExportDeniedError
@@ -43,9 +43,15 @@ class ExportFilter:
                     k: v for k, v in raw_payload.items()
                     if k in contract.allowed_fields
                 }
-                output = export_payload.get("output", raw_output)
-                if contract.max_export_tokens:
-                    output = self._truncate(output, contract.max_export_tokens)
+                # The output string only leaves the node when "output" is an
+                # explicitly allowed field — otherwise it is suppressed. Falling
+                # back to raw_output here would leak unfiltered content (M-4).
+                if "output" in contract.allowed_fields:
+                    output = export_payload.get("output", raw_output)
+                    if contract.max_export_tokens:
+                        output = self._truncate(output, contract.max_export_tokens)
+                else:
+                    output = ""
 
             case ExportMode.FULL:
                 output = raw_output

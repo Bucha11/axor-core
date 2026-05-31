@@ -10,7 +10,6 @@ from axor_core.contracts.envelope import ExecutionEnvelope
 from axor_core.contracts.policy import (
     ExecutionPolicy,
     CompressionMode,
-    ChildMode,
     ExportMode,
 )
 
@@ -20,6 +19,7 @@ class OptimizationAction(str, Enum):
     COMPRESS_CONTEXT = "compress_context"
     DENY_CHILD       = "deny_child"
     RESTRICT_EXPORT  = "restrict_export"
+    HARD_STOP        = "hard_stop"
 
 
 @dataclass(frozen=True)
@@ -161,7 +161,7 @@ class BudgetPolicyEngine:
                 detail=f"spent {ratio:.0%} of soft limit",
             )
             return OptimizationDecision(
-                action=OptimizationAction.PROCEED,
+                action=OptimizationAction.HARD_STOP,
                 reason=f"hard stop triggered at {ratio:.0%} — cancel token fired",
             )
 

@@ -5,9 +5,8 @@ from axor_core.contracts.extension import (
     ExtensionFragment,
     ExtensionTool,
     ExtensionCommand,
-    ExtensionHook,
 )
-from axor_core.contracts.trace import TraceEventKind
+from axor_core.worker.commands import RESERVED_COMMANDS
 
 
 # Tool name prefixes that are always denied regardless of policy
@@ -35,11 +34,6 @@ class ExtensionSanitizer:
         hooks       — accepted as-is (handlers are dotted paths, not code)
     """
 
-    # Governance command names that extensions cannot override
-    _RESERVED_COMMANDS = {
-        "tools", "policy", "cost", "export", "status",
-        "compact", "clear", "memory",
-    }
 
     def sanitize(self, bundle: ExtensionBundle) -> ExtensionBundle:
         return ExtensionBundle(
@@ -83,7 +77,7 @@ class ExtensionSanitizer:
     ) -> list[ExtensionCommand]:
         result = []
         for cmd in commands:
-            if cmd.name.lower() in self._RESERVED_COMMANDS:
+            if cmd.name.lower() in RESERVED_COMMANDS:
                 continue   # cannot override governance commands
             result.append(cmd)
         return result

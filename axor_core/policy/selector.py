@@ -174,10 +174,7 @@ class PolicySelector:
                     child_context_fraction=0.6,
                 )
 
-            case _:
-                return self._default()
-
-    def _default(self) -> ExecutionPolicy:
+    def safe_fallback(self) -> ExecutionPolicy:
         """
         Safest fallback. Used when signal is ambiguous and
         no external classifier is available to resolve it.

@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from axor_core.contracts.context import ContextView, LineageSummary
-from axor_core.contracts.policy import ExecutionPolicy, ToolPolicy
+from axor_core.contracts.policy import ExecutionPolicy
 from axor_core.contracts.cancel import CancelToken, make_token
 
 

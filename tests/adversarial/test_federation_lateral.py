@@ -116,24 +116,28 @@ def test_child_export_mode_cannot_exceed_parent():
     """
     A child cannot export more freely than its parent allows.
 
-    If parent uses ExportMode.FILTERED, child cannot use ExportMode.FULL or SUMMARY
-    (less restrictive than parent).  SpawnValidationError is raised.
-    """
-    parent_policy = _policy(export_mode=ExportMode.FILTERED)
+    Restrictiveness order (most → least permissive):
+        FULL(0) < FILTERED(1) < SUMMARY(2) < RESTRICTED(3)
+    FILTERED allows output+metadata (4096 tokens).
+    SUMMARY allows output only (1024 tokens) — more restrictive than FILTERED.
 
-    # Child attempts a more permissive export mode (SUMMARY < FILTERED in restrictiveness)
-    child_policy_summary = _policy(export_mode=ExportMode.SUMMARY)
+    If parent uses ExportMode.SUMMARY, child cannot use FILTERED or FULL.
+    """
+    parent_policy = _policy(export_mode=ExportMode.SUMMARY)
+
+    # Child attempts less restrictive modes — must be rejected
+    child_policy_filtered = _policy(export_mode=ExportMode.FILTERED)
     child_policy_full = _policy(export_mode=ExportMode.FULL)
 
     with pytest.raises(SpawnValidationError, match="export_mode"):
-        _validate_child_policy(child_policy_summary, parent_policy, child_depth=1)
+        _validate_child_policy(child_policy_filtered, parent_policy, child_depth=1)
 
     with pytest.raises(SpawnValidationError, match="export_mode"):
         _validate_child_policy(child_policy_full, parent_policy, child_depth=1)
 
     # Child with same or more restrictive mode is fine
-    child_policy_filtered = _policy(export_mode=ExportMode.FILTERED)
-    _validate_child_policy(child_policy_filtered, parent_policy, child_depth=1)  # OK
+    child_policy_summary = _policy(export_mode=ExportMode.SUMMARY)
+    _validate_child_policy(child_policy_summary, parent_policy, child_depth=1)  # OK
 
     child_policy_restricted = _policy(export_mode=ExportMode.RESTRICTED)
     _validate_child_policy(child_policy_restricted, parent_policy, child_depth=1)  # OK

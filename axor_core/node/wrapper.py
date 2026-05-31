@@ -86,6 +86,8 @@ class GovernedNode:
         escalation_callback=None,
         taint_engine: TaintEngine | None = None,
         degradation_engine: "DegradationEngine | None" = None,
+        max_intents_per_session: int | None = 1000,
+        max_total_spawns: int | None = 200,
     ) -> None:
         self._executor = executor
         self._child_executor = child_executor  # None → reuse parent executor
@@ -102,6 +104,8 @@ class GovernedNode:
         self._escalation_callback = escalation_callback  # None → auto-deny escalation
         self._taint_engine = taint_engine if taint_engine is not None else TaintEngine()
         self._degradation_engine = degradation_engine
+        self._max_intents_per_session = max_intents_per_session
+        self._max_total_spawns = max_total_spawns
 
         self._envelope_builder = EnvelopeBuilder()
         self._export_filter = ExportFilter()
@@ -143,7 +147,6 @@ class GovernedNode:
         # immediately rather than silently producing an over-privileged child.
         if parent_policy is not None and self._depth > 0:
             from axor_core.node.spawn import _validate_child_policy
-            from axor_core.errors.exceptions import SpawnValidationError
             _validate_child_policy(policy, parent_policy, self._depth)
 
         # ── 2. Lineage ─────────────────────────────────────────────────────────
@@ -272,6 +275,8 @@ class GovernedNode:
             anomaly_detector=self._anomaly_detector,
             taint_engine=self._taint_engine,
             degradation_engine=self._degradation_engine,
+            max_intents_per_session=self._max_intents_per_session,
+            max_total_spawns=self._max_total_spawns,
         )
 
         raw_output, raw_payload = await self._collect_stream(
@@ -408,6 +413,13 @@ class GovernedNode:
             lineage=child_lineage,
         )
 
+        # Build child taint engine before constructing the node so taint
+        # inheritance is set atomically via the constructor, not via private field.
+        child_taint = TaintEngine(node_id=child_lineage.node_id)
+        parent_taint = self._taint_engine.state
+        if parent_taint.is_tainted:
+            child_taint.inherit_from_parent(parent_taint)
+
         child_node = GovernedNode(
             executor=self._child_executor or self._executor,
             capability_executor=self._cap_executor,
@@ -423,11 +435,10 @@ class GovernedNode:
             anomaly_detector=self._anomaly_detector,
             escalation_callback=self._escalation_callback,
             degradation_engine=self._degradation_engine,
+            max_intents_per_session=self._max_intents_per_session,
+            max_total_spawns=self._max_total_spawns,
+            taint_engine=child_taint,
         )
-        # Child inherits parent taint — isolation boundary does not clear taint.
-        parent_taint = self._taint_engine.state
-        if parent_taint.is_tainted:
-            child_node._taint_engine.inherit_from_parent(parent_taint)
 
         child_cancel = envelope.cancel_token.child_token()
         child_result = await child_node.run(

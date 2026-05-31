@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """
 Agent contracts — AgentDefinition, AgentDomain, TrustLevel.
 
@@ -18,6 +16,8 @@ Design rules:
   - TrustLevel affects capability derivation, not policy semantics
   - Personality is a plain string injected into context — never interpreted by governance
 """
+
+from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
@@ -142,7 +142,7 @@ class AgentDefinition:
         """
         Derive a child agent definition.
         Child inherits domain and personality but NOT trust level.
-        Child trust is always capped at STANDARD unless explicitly elevated.
+        FULL trust is capped to STANDARD; ELEVATED and below are preserved.
         """
         child_trust = (
             TrustLevel.STANDARD

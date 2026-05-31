@@ -300,7 +300,7 @@ def test_inv09_positive_lease_has_required_fields():
         grant_scope="tool_execution", allowed_tools=frozenset(["write"]),
         allowed_operations=frozenset(), allowed_paths=("/safe/",),
         allowed_providers=frozenset(), allowed_child_depth=0,
-        creation_time=now, expiration_time=now + 300, max_intents=5,
+        creation_time=now, expiration_time=now + 300,
         max_uses=5, used_count=0, non_transitive=True,
     )
     assert lease.non_transitive is True
@@ -318,7 +318,7 @@ def test_inv09_adversarial_exhausted_lease_invalid():
         grant_scope="tool_execution", allowed_tools=frozenset(["write"]),
         allowed_operations=frozenset(), allowed_paths=(), allowed_providers=frozenset(),
         allowed_child_depth=0, creation_time=now, expiration_time=now + 300,
-        max_intents=5, max_uses=5, used_count=5,
+        max_uses=5, used_count=5,
     )
     assert not lease.is_valid
 
@@ -336,7 +336,7 @@ def test_inv10_positive_lease_within_ceiling_valid():
         grant_scope="tool_execution", allowed_tools=frozenset(["read"]),
         allowed_operations=frozenset(), allowed_paths=(), allowed_providers=frozenset(),
         allowed_child_depth=0, creation_time=now, expiration_time=now + 300,
-        max_intents=5, max_uses=5, used_count=0,
+        max_uses=5, used_count=0,
     )
     parent = ExecutionPolicy(name="p")
     object.__setattr__(parent, "allowed_tools", frozenset(["read", "write"]))
@@ -355,7 +355,7 @@ def test_inv10_adversarial_lease_exceeding_ceiling_rejected():
         grant_scope="tool_execution", allowed_tools=frozenset(["read", "root_shell"]),
         allowed_operations=frozenset(), allowed_paths=(), allowed_providers=frozenset(),
         allowed_child_depth=0, creation_time=now, expiration_time=now + 300,
-        max_intents=5, max_uses=5, used_count=0,
+        max_uses=5, used_count=0,
     )
     parent = ExecutionPolicy(name="p")
     object.__setattr__(parent, "allowed_tools", frozenset(["read"]))

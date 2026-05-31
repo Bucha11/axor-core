@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import time
 import uuid
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from axor_core.contracts.taint import (
@@ -21,6 +22,26 @@ from axor_core.errors.exceptions import TaintClearanceError
 
 if TYPE_CHECKING:
     pass
+
+# Authority types permitted to clear governance state. "worker" (and anything
+# outside this set) is rejected — workers must never clear their own taint.
+_VALID_GOVERNANCE_AUTHORITY_TYPES = frozenset({
+    "human_operator",
+    "automated_policy",
+    "trusted_boundary",
+})
+
+
+def _is_valid_governance_authority(
+    authority: str,
+    authority_type: str,
+    reason_code: str,
+) -> bool:
+    return bool(
+        authority
+        and reason_code
+        and authority_type in _VALID_GOVERNANCE_AUTHORITY_TYPES
+    )
 
 
 class TaintEngine:
@@ -131,7 +152,23 @@ class TaintEngine:
 
         Records a ClearanceRecord in clearance_history.
         Returns the new (clean) TaintState.
+
+        Rejects clearance unless it carries a verifiable governance authority —
+        a non-empty principal and an authority_type from the allowed set. This
+        prevents a worker-reachable path from clearing taint by passing blank or
+        worker-labelled authority strings.
         """
+        if not _is_valid_governance_authority(authority, authority_type, reason_code):
+            self._pending_events.append(TaintClearanceAttemptedEvent(
+                kind=TraceEventKind.TAINT_CLEARANCE_ATTEMPTED,
+                node_id=self._node_id,
+                sequence=len(self._pending_events),
+                attempted_by=authority or "unknown",
+            ))
+            raise TaintClearanceError(
+                "taint clearance rejected: requires a valid governance authority "
+                f"(authority={authority!r}, authority_type={authority_type!r})"
+            )
         record = ClearanceRecord(
             clearance_id=f"clr_{uuid.uuid4().hex[:12]}",
             cleared_by=authority,
@@ -144,7 +181,7 @@ class TaintEngine:
         self._state = TaintState(
             sources=frozenset(),
             scope=TaintScope.SESSION,
-            sticky=True,
+            sticky=False,
             intent_age=0,
             wall_clock_age=0.0,
             parent_inherited=False,
@@ -162,6 +199,48 @@ class TaintEngine:
             audit_id=audit_id,
         ))
         return self._state
+
+    # ── Cross-session persistence (§7.1) ──────────────────────────────────────
+
+    def cross_session_persist(self, snapshot_dir: Path) -> None:
+        """
+        Persist current taint state across sessions via Sentinel ReputationSnapshot.
+
+        Writes a suspicion_score of 1.0 for this node so a subsequent session
+        can detect the mark via load_cross_session().
+        """
+        from axor_sentinel.sentinel.snapshot import ReputationSnapshot, atomic_swap  # type: ignore[import-untyped]
+        import time as _time
+
+        existing_snapshot = self._load_snapshot(snapshot_dir)
+        existing_reputation = dict(existing_snapshot.resource_reputation) if existing_snapshot else {}
+        existing_reputation[self._node_id] = 1.0
+
+        snapshot = ReputationSnapshot(
+            version=(existing_snapshot.version + 1 if existing_snapshot else 1),
+            generated_at=_time.time(),
+            resource_reputation=existing_reputation,
+            container_reputation=dict(existing_snapshot.container_reputation) if existing_snapshot else {},
+        ).with_checksum()
+        atomic_swap(snapshot_dir, snapshot)
+
+    def load_cross_session(self, snapshot_dir: Path) -> TaintState:
+        """
+        Load cross-session taint mark. If this node_id has a non-zero
+        reputation score in the snapshot, propagate CROSS_SESSION taint.
+        """
+        snapshot = self._load_snapshot(snapshot_dir)
+        if snapshot and snapshot.resource_reputation.get(self._node_id, 0.0) > 0:
+            return self.propagate(TaintSource.MEMORY, TaintScope.CROSS_SESSION)
+        return self._state
+
+    @staticmethod
+    def _load_snapshot(snapshot_dir: Path):  # type: ignore[return]
+        try:
+            from axor_sentinel.sentinel.snapshot import load_snapshot  # type: ignore[import-untyped]
+            return load_snapshot(snapshot_dir)
+        except ImportError:
+            return None
 
     def inherit_from_parent(self, parent_state: TaintState) -> TaintState:
         """
@@ -190,5 +269,11 @@ class TaintEngine:
 
     @staticmethod
     def _wider_scope(a: TaintScope, b: TaintScope) -> TaintScope:
-        _order = [TaintScope.INTENT, TaintScope.NODE, TaintScope.SUBTREE, TaintScope.SESSION]
+        _order = [
+            TaintScope.INTENT,
+            TaintScope.NODE,
+            TaintScope.SUBTREE,
+            TaintScope.SESSION,
+            TaintScope.CROSS_SESSION,
+        ]
         return _order[max(_order.index(a), _order.index(b))]

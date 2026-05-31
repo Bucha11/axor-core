@@ -32,7 +32,11 @@ from axor_core.errors.exceptions import (
     ToolNotAllowedError,
     ToolNotFoundError,
 )
-from axor_core.capability.lease_validator import LeaseValidator, path_matches_allowlist
+from axor_core.capability.lease_validator import (
+    LeaseValidator,
+    extract_path_arg,
+    path_matches_allowlist,
+)
 from axor_core.contracts.lease import LeaseAuthorityType
 from axor_core.contracts.degradation import DegradationLevel
 from axor_core.contracts.taint import TaintScope, TaintSource, TaintState
@@ -119,6 +123,8 @@ class IntentLoop:
         taint_engine: "TaintEngine | None" = None,
         degradation_engine: "DegradationEngine | None" = None,
         reputation_enricher: "ReputationEnricher | None" = None,
+        max_intents_per_session: int | None = None,
+        max_total_spawns: int | None = None,
     ) -> None:
         self._executor = capability_executor
         self._trace_events = trace_events
@@ -140,6 +146,10 @@ class IntentLoop:
         self._lease_validator = LeaseValidator()
         self._escalation_count = 0
         self._flood_guard = EscalationFloodGuard()
+        # DoS guards — opt-in (None = unlimited). GovernedSession sets prod defaults.
+        self._max_intents_per_session = max_intents_per_session
+        self._max_total_spawns = max_total_spawns
+        self._spawn_count = 0
 
     async def run(
         self,
@@ -184,7 +194,17 @@ class IntentLoop:
 
                     # escalate_policy — mid-execution capability grant request
                     if tool_name == "escalate_policy":
-                        result = await self._handle_escalation(event, envelope)
+                        try:
+                            result = await self._handle_escalation(event, envelope)
+                        except Exception as exc:
+                            log.error(
+                                "escalation handling failed (node=%s): %s",
+                                envelope.node_id, exc, exc_info=True,
+                            )
+                            result = {
+                                "error": "escalation_denied",
+                                "reason": f"malformed escalation request: {type(exc).__name__}",
+                            }
                         if self._tool_result_callback is not None:
                             await self._tool_result_callback(
                                 tool_use_id, tool_name, result, True
@@ -238,6 +258,8 @@ class IntentLoop:
                                 )
                             continue
 
+                        # Approved — count this spawn once at the dispatch site.
+                        self._spawn_count += 1
                         task = event.payload.get("args", {}).get("task", "")
                         context_hint = event.payload.get("args", {}).get(
                             "context_hint", ""
@@ -315,6 +337,22 @@ class IntentLoop:
             node_id=envelope.node_id,
             sequence=self._intent_sequence,
         )
+
+        # Session-level intent cap (DoS guard). Opt-in; None = unlimited.
+        if (
+            self._max_intents_per_session is not None
+            and self._intent_sequence > self._max_intents_per_session
+        ):
+            reason = (
+                f"session intent limit reached ({self._max_intents_per_session})"
+            )
+            self._record_denial(intent, reason, envelope)
+            return ResolvedIntent(
+                intent=intent,
+                approved=False,
+                reason=reason,
+                result=_denial_result(tool_name, reason),
+            )
 
         decision = self._evaluate_tool_intent(intent, envelope)
 
@@ -403,11 +441,13 @@ class IntentLoop:
                 reason = f"anomaly detector raised unexpectedly: {type(exc).__name__}: {exc}"
                 log.error("anomaly detector error — failing closed: %s", exc, exc_info=True)
                 self._record_denial(intent, reason, envelope)
+                denial_resp = _make_denial_response(reason, "anomaly_detector_error")
+                self._record_degradation_signal(intent, denial_resp, normalized)
                 return ResolvedIntent(
                     intent=intent,
                     approved=False,
                     reason=reason,
-                    result=_denial_result(tool_name, reason),
+                    result=denial_resp.to_tool_result(),
                 )
 
             if anomaly is not None and anomaly.cls == AnomalyClass.CRITICAL:
@@ -442,36 +482,58 @@ class IntentLoop:
             and normalized is not None
             and self._taint_engine.state.is_tainted
         ):
+            # Exfiltration to SSRF/internal destinations is high-risk on a
+            # tainted session: a tainted session pushing data to the cloud
+            # metadata endpoint or a private-network host is almost never
+            # legitimate. destination_kind is resolved by the normalizer, which
+            # decodes obfuscated IP forms (decimal/hex/octal) — so an encoded
+            # 169.254.169.254 still classifies as private_network here.
+            # SSRF/internal destinations are always blocked on a tainted session.
+            # For a *public* external destination the rule is source-aware: a
+            # session tainted only by web reads may keep browsing (research),
+            # but once any non-web source contaminates it (a local file / secret,
+            # MCP, memory, …) outbound sends to external domains are exfiltration
+            # risk and are blocked too.
+            sources = self._taint_engine.state.sources
+            web_only_taint = sources == frozenset({TaintSource.WEB})
+            internal_exfil = normalized.destination_kind in (
+                "cloud_metadata", "private_network"
+            )
+            external_exfil = normalized.destination_kind == "external_domain"
+            exfil_destination = internal_exfil or (
+                external_exfil and not web_only_taint
+            )
             risky = (
                 normalized.writes_outside_workdir
                 or normalized.executes_generated_code
+                or exfil_destination
             )
             if risky:
                 reason = (
                     "taint enforcement: session is tainted by external input "
                     f"(sources={[s.value for s in self._taint_engine.state.sources]}) "
                     f"and tool '{tool_name}' performs a high-risk operation "
-                    "(writes_outside_workdir or executes_generated_code)"
+                    "(writes_outside_workdir, executes_generated_code, or "
+                    "exfiltration to a cloud-metadata/private-network destination)"
                 )
                 self._record_denial(intent, reason, envelope)
+                denial_resp = _make_denial_response(reason, "taint_enforcement")
+                self._record_degradation_signal(intent, denial_resp, normalized)
                 return ResolvedIntent(
                     intent=intent,
                     approved=False,
                     reason=reason,
-                    result=_denial_result(tool_name, reason),
+                    result=denial_resp.to_tool_result(),
                 )
 
-        # approved or transformed — record approved event
+        # approved or transformed — emit the appropriate trace event
+        is_transform = decision.kind == PolicyDecisionKind.TRANSFORM
         self._trace_events.append(
             TraceEvent(
-                kind=TraceEventKind.INTENT_APPROVED,
+                kind=TraceEventKind.INTENT_TRANSFORMED if is_transform else TraceEventKind.INTENT_APPROVED,
                 node_id=envelope.node_id,
                 sequence=len(self._trace_events),
-                payload={
-                    "tool": tool_name,
-                    "transformed": decision.kind
-                    == PolicyDecisionKind.TRANSFORM,
-                },
+                payload={"tool": tool_name},
             )
         )
 
@@ -495,11 +557,19 @@ class IntentLoop:
                     "external_url", "cloud_metadata", "docker_socket"
                 ) or normalized_check.operation == "network_request":
                     self._taint_engine.propagate(TaintSource.WEB, TaintScope.SESSION)
-                elif normalized_check.target_kind == "outside_workdir":
-                    # File reads outside the trusted workspace may introduce
-                    # adversarial content — taint with FILE source.
+                elif (
+                    normalized_check.target_kind in ("secret", "system_path")
+                    or normalized_check.reads_secret_like_data
+                    or normalized_check.writes_outside_workdir
+                ):
+                    # Reading secrets / system paths or touching files outside the
+                    # trusted workspace may introduce adversarial or sensitive
+                    # content — taint with FILE source so later high-risk ops are
+                    # contained by taint enforcement.
                     self._taint_engine.propagate(TaintSource.FILE, TaintScope.SESSION)
                 self._taint_engine.tick_intent()
+                for _ev in self._taint_engine.drain_events():
+                    self._trace_events.append(_ev)
             self._record_degradation_signal(intent, None)
             return ResolvedIntent(
                 intent=intent,
@@ -555,6 +625,21 @@ class IntentLoop:
         """
         tool_name: str = intent.payload.get("tool", "")
         caps = envelope.capabilities
+        tool_args = intent.payload.get("args", {})
+
+        # Filesystem ceiling — applies to every path-bearing tool call regardless
+        # of how it is later approved (allowed_tools, lease, or escalation grant).
+        policy_paths = getattr(envelope.policy, "allowed_paths", ()) or ()
+        if policy_paths:
+            candidate_path = extract_path_arg(tool_args)
+            if candidate_path and not path_matches_allowlist(candidate_path, policy_paths):
+                return PolicyDecision(
+                    kind=PolicyDecisionKind.DENY,
+                    reason=(
+                        f"path {candidate_path!r} is outside policy "
+                        f"allowed_paths {tuple(policy_paths)!r}"
+                    ),
+                )
 
         # Check CapabilityLease first (authoritative — validates TTL + max_uses)
         lease = self._capability_leases.get(tool_name)
@@ -567,7 +652,7 @@ class IntentLoop:
                     kind=PolicyDecisionKind.DENY,
                     reason=f"capability lease for '{tool_name}' has expired or been exhausted",
                 )
-            tool_path = intent.payload.get("args", {}).get("path", "")
+            tool_path = extract_path_arg(tool_args)
             if not self._lease_validator.check_path_allowed(lease, tool_path):
                 return PolicyDecision(
                     kind=PolicyDecisionKind.DENY,
@@ -578,7 +663,7 @@ class IntentLoop:
         grant = self._granted_escalations.get(tool_name)
         if grant is not None:
             if grant.paths and not lease:
-                tool_path = intent.payload.get("args", {}).get("path", "")
+                tool_path = extract_path_arg(tool_args)
                 if not path_matches_allowlist(tool_path, grant.paths):
                     return PolicyDecision(
                         kind=PolicyDecisionKind.DENY,
@@ -620,7 +705,7 @@ class IntentLoop:
         reason = args.get("reason", "")
         paths = args.get("paths", [])
         max_ops = min(
-            int(args.get("max_ops", 10)),
+            _safe_int(args.get("max_ops", 10), default=10),
             envelope.policy.escalation_policy.max_ops_per_grant,
         )
         ep = envelope.policy.escalation_policy
@@ -644,6 +729,9 @@ class IntentLoop:
 
         if tool not in ep.grantable_tools:
             return _deny(f"tool '{tool}' is not in grantable_tools")
+
+        if max_ops <= 0:
+            return _deny("escalation max_ops must be a positive integer")
 
         if self._escalation_count >= ep.max_escalations:
             return _deny(f"max escalations reached ({ep.max_escalations})")
@@ -671,12 +759,8 @@ class IntentLoop:
             if not approved:
                 return _deny("human denied escalation request")
 
-        self._granted_escalations[tool] = _GrantedEscalation(
-            tool=tool,
-            paths=paths,
-            ops_remaining=max_ops,
-        )
-        # Also create a CapabilityLease for auditable enforcement.
+        # Create the CapabilityLease first — if it fails the grant is not stored,
+        # preventing a grant-without-TTL bypass.
         lease, lease_err = self._lease_validator.create_lease(
             granted_by="operator" if ep.require_human else "auto_policy",
             authority_type=(
@@ -691,8 +775,15 @@ class IntentLoop:
             max_uses=max_ops,
             reason_code=reason,
         )
-        if lease_err is None:
-            self._capability_leases[tool] = lease
+        if lease_err is not None:
+            return _deny(f"escalation rejected: lease creation failed ({lease_err})")
+
+        self._capability_leases[tool] = lease
+        self._granted_escalations[tool] = _GrantedEscalation(
+            tool=tool,
+            paths=paths,
+            ops_remaining=max_ops,
+        )
         self._escalation_count += 1
         self._flood_guard.record_approval()
 
@@ -739,25 +830,22 @@ class IntentLoop:
                 reason=f"max child depth reached: current={self._depth}, max={policy.max_child_depth}",
             )
 
+        # Total-spawn cap (DoS guard against wide fan-out). Opt-in; None = unlimited.
+        # Read-only here — resolve_spawn_intent may run more than once per spawn
+        # (gate + prepare_child), so the counter is incremented at the single
+        # dispatch site in _run_inner, not here.
+        if (
+            self._max_total_spawns is not None
+            and self._spawn_count >= self._max_total_spawns
+        ):
+            return PolicyDecision(
+                kind=PolicyDecisionKind.DENY,
+                reason=f"session spawn limit reached ({self._max_total_spawns})",
+            )
+
         return PolicyDecision(
             kind=PolicyDecisionKind.APPROVE,
             reason="child node approved",
-        )
-
-    def resolve_context_expansion(
-        self,
-        intent: Intent,
-        envelope: ExecutionEnvelope,
-    ) -> PolicyDecision:
-        """Evaluate an expand_context intent."""
-        if not envelope.capabilities.allow_context_expansion:
-            return PolicyDecision(
-                kind=PolicyDecisionKind.DENY,
-                reason=f"context expansion not allowed by policy '{envelope.policy.name}' "
-                f"(context_mode={envelope.policy.context_mode})",
-            )
-        return PolicyDecision(
-            kind=PolicyDecisionKind.APPROVE, reason="context expansion approved"
         )
 
     # ── Token accounting ───────────────────────────────────────────────────────
@@ -911,6 +999,14 @@ def _denial_result(tool_name: str, reason: str) -> dict:
     Full reason is in the trace (operator-only access).
     """
     return _make_denial_response(reason).to_tool_result()
+
+
+def _safe_int(value: Any, default: int) -> int:
+    """Parse an int from untrusted args without raising on bad input."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
 
 
 def _make_denial_response(reason: str, category: str | None = None) -> DenialResponse:

@@ -29,6 +29,7 @@ from typing import Any, Callable, Awaitable
 from axor_core.contracts.daemon import encode_message, read_message, PROTOCOL_VERSION
 from axor_core.contracts.envelope import Capabilities
 from axor_core.contracts.intent import Intent, IntentKind
+from axor_core.capability.session_grant import issue_grant
 from axor_core.errors.exceptions import (
     DaemonUnavailableError,
     DaemonRejectedError,
@@ -46,6 +47,10 @@ class DaemonCapabilityClient:
     anywhere CapabilityExecutor is accepted without further changes.
     """
 
+    # Marker read by GovernedSession: tool execution happens out-of-process,
+    # so a compromised agent process cannot reach tool implementations directly.
+    is_process_isolated: bool = True
+
     def __init__(
         self,
         socket_path: str = "~/.axor/daemon.sock",
@@ -62,6 +67,7 @@ class DaemonCapabilityClient:
         self._writer: asyncio.StreamWriter | None = None
         self._connected = False
         self._post_callbacks: list[PostExecuteCallback] = []
+        self._lock = asyncio.Lock()
 
     # ── Public interface (matches CapabilityExecutor) ──────────────────────────
 
@@ -93,6 +99,15 @@ class DaemonCapabilityClient:
         tool_name: str = intent.payload.get("tool", "")
         tool_args: dict[str, Any] = intent.payload.get("args", {})
 
+        async with self._lock:
+            return await self._execute_locked(tool_name, tool_args, capabilities)
+
+    async def _execute_locked(
+        self,
+        tool_name: str,
+        tool_args: dict[str, Any],
+        capabilities: Capabilities,
+    ) -> Any:
         await self._ensure_connected()
 
         call_id = uuid.uuid4().hex
@@ -103,6 +118,13 @@ class DaemonCapabilityClient:
             "args": tool_args,
             "allowed_tools": sorted(capabilities.allowed_tools),
         }
+        # Attach a signed session grant when a session key is configured. The
+        # daemon then derives the session ceiling from the grant, not from the
+        # plaintext allowed_tools above (which a rogue same-user process could
+        # forge). No key → field omitted → daemon falls back to legacy trust.
+        grant = issue_grant(capabilities.allowed_tools)
+        if grant is not None:
+            request["grant"] = grant
 
         try:
             self._writer.write(encode_message(request))

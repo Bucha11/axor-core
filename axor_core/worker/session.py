@@ -3,11 +3,16 @@ from __future__ import annotations
 import logging
 import os
 import uuid
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from axor_core.contracts.agent import AgentDefinition
+    from axor_core.contracts.memory import MemoryProvider
 from axor_core.contracts.cancel import make_token, CancelReason
 from axor_core.contracts.context import RawExecutionState, LineageSummary
-from axor_core.contracts.extension import ExtensionBundle, ExtensionLoader
+from axor_core.contracts.extension import ExtensionLoader
 from axor_core.contracts.anomaly import AnomalyDetector
+from axor_core.contracts.drift import BehavioralDriftObserver
 from axor_core.contracts.invokable import Invokable
 from axor_core.contracts.mode import ExecutionMode
 from axor_core.contracts.policy import ExecutionPolicy, SignalClassifier
@@ -83,6 +88,7 @@ class GovernedSession:
         capability_executor: CapabilityExecutor,
         classifier: SignalClassifier | None = None,
         anomaly_detector: AnomalyDetector | None = None,
+        behavioral_drift_observer: BehavioralDriftObserver | None = None,
         extension_loaders: list[ExtensionLoader] | None = None,
         trace_config: TraceConfig | None = None,
         soft_token_limit: int | None = None,
@@ -93,9 +99,11 @@ class GovernedSession:
         memory_provider: "MemoryProvider | None" = None,
         telemetry: "Any | None" = None,
         mode: ExecutionMode = ExecutionMode.LIBRARY,
+        require_isolation: bool = False,
     ) -> None:
         self._session_id     = f"session_{uuid.uuid4().hex[:12]}"
         self._mode           = mode
+        self._behavioral_drift_observer = behavioral_drift_observer
 
         # STRICT mode is a superset of PRODUCTION.
         # Apply all STRICT-only restrictions here before anything else is wired.
@@ -112,6 +120,16 @@ class GovernedSession:
 
         self._deny_on_ambiguity: bool = (mode == ExecutionMode.STRICT)
         self._strict_escalation: bool = (mode == ExecutionMode.STRICT)
+
+        # Process-isolation gate (Phase 1). In PRODUCTION/STRICT an untrusted
+        # agent should execute tools out-of-process (DaemonCapabilityClient);
+        # an in-process CapabilityExecutor is not a hard boundary against a
+        # compromised agent process. LockedExecutor only blocks the in-process
+        # governance bypass, not native code in the agent process.
+        if mode in (ExecutionMode.PRODUCTION, ExecutionMode.STRICT):
+            self._enforce_isolation_policy(
+                capability_executor, mode, agent_def, require_isolation
+            )
 
         # In PRODUCTION/STRICT mode wrap executor so direct calls outside
         # the governance path raise GovernanceBypassError.
@@ -183,6 +201,8 @@ class GovernedSession:
         # active cancel token for current execution
         self._active_token = None
         self._started = False
+        self._personality_injected = False
+        self._context_observer_registered = False
 
         # adaptive policy: narrowest policy seen across turns (never broadens automatically)
         self._active_policy: ExecutionPolicy | None = None
@@ -193,7 +213,45 @@ class GovernedSession:
         # degradation engine — persists across turns; level is monotonically increasing
         from axor_core.degradation.engine import DegradationEngine
         from axor_core.contracts.degradation import DegradationPolicy
-        self._degradation_engine = DegradationEngine(DegradationPolicy())
+        self._degradation_engine = DegradationEngine(DegradationPolicy(), node_id=self._session_id)
+
+    @staticmethod
+    def _enforce_isolation_policy(
+        capability_executor: CapabilityExecutor,
+        mode: ExecutionMode,
+        agent_def: "AgentDefinition | None",
+        require_isolation: bool,
+    ) -> None:
+        """Gate in-process tool execution for untrusted agents in PRODUCTION/STRICT.
+
+        Raises IsolationRequiredError when isolation is required (explicit flag or
+        AXOR_REQUIRE_ISOLATION=1) but the capability executor runs in-process.
+        Otherwise warns for untrusted agents so the soft boundary is never silent.
+        """
+        from axor_core.contracts.agent import TrustLevel
+        from axor_core.errors.exceptions import IsolationRequiredError
+
+        if getattr(capability_executor, "is_process_isolated", False):
+            return
+
+        env_require = os.environ.get("AXOR_REQUIRE_ISOLATION", "").lower() in (
+            "1", "true", "yes",
+        )
+        if require_isolation or env_require:
+            raise IsolationRequiredError(
+                f"mode={mode.value} requires a process-isolated capability executor "
+                "(e.g. DaemonCapabilityClient); got an in-process executor"
+            )
+
+        trust = agent_def.trust_level if agent_def is not None else TrustLevel.STANDARD
+        if trust in (TrustLevel.RESTRICTED, TrustLevel.STANDARD):
+            _log.warning(
+                "GovernedSession in %s mode with an untrusted agent (trust=%s) is using "
+                "an in-process capability executor — tool execution is NOT isolated from "
+                "a compromised agent process. Use DaemonCapabilityClient, pass "
+                "require_isolation=True, or set AXOR_REQUIRE_ISOLATION=1 to enforce.",
+                mode.value, trust.value,
+            )
 
     async def start(self) -> None:
         """Load and sanitize extensions. Auto-called on first run()."""
@@ -214,8 +272,10 @@ class GovernedSession:
         lineage: LineageSummary | None = None,
     ) -> ExecutionResult:
         # D-2 invariant: TERMINAL session raises before any intent evaluation.
+        # Also check LOCKED_TTL so idle sessions that hit LOCKED eventually reach TERMINAL.
         from axor_core.contracts.degradation import DegradationLevel
         from axor_core.errors.exceptions import SessionTerminatedError
+        self._degradation_engine.check_ttl()
         if self._degradation_engine.state.level == DegradationLevel.TERMINAL:
             raise SessionTerminatedError(
                 f"session {self._session_id} reached TERMINAL degradation level"
@@ -247,7 +307,7 @@ class GovernedSession:
         )
 
         # inject personality as pinned context fragment (once per session)
-        if not getattr(self, '_personality_injected', False):
+        if not self._personality_injected:
             if self._agent_def is not None and self._agent_def.personality:
                 from axor_core.contracts.context import ContextFragment
                 self._context_manager.pin_fragment(ContextFragment(
@@ -261,7 +321,7 @@ class GovernedSession:
             self._personality_injected = True
 
         # wire ContextManager as post-execute observer once per session (idempotent)
-        if not getattr(self, '_context_observer_registered', False):
+        if not self._context_observer_registered:
             async def _context_observer(tool_name: str, args: dict, result) -> None:
                 if tool_name == "read" and isinstance(result, str):
                     path = args.get("path", "")
@@ -328,6 +388,31 @@ class GovernedSession:
 
         return result
 
+    async def notify_behavioral_drift(self, agent_id: str, action: str) -> None:
+        """
+        Notify the session that axor-probe detected behavioral drift.
+
+        Called by the caller who wires ProbePipeline to GovernedSession.
+        Propagates taint via TaintEngineDriftObserver if one is configured.
+        Failures are logged and swallowed — governance path is not interrupted.
+
+        action: "elevated_review" | "restricted_mode"
+        """
+        if self._behavioral_drift_observer is None:
+            return
+        try:
+            await self._behavioral_drift_observer.on_drift(
+                session_id=self._session_id,
+                agent_id=agent_id,
+                action=action,
+            )
+        except Exception:
+            _log.error(
+                "behavioral_drift_observer.on_drift failed session=%s agent=%s action=%s",
+                self._session_id, agent_id, action,
+                exc_info=True,
+            )
+
     def cancel(self, detail: str = "") -> None:
         """
         Cancel the current active execution.
@@ -386,6 +471,9 @@ class GovernedSession:
 
     def all_traces(self):
         return self._collector.all_traces()
+
+    def current_degradation_level(self) -> str:
+        return self._degradation_engine.state.level.value
 
     def budget_snapshot(self) -> dict:
         return {

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 
 @dataclass
@@ -121,9 +121,6 @@ class EscalationFloodGuard:
         """Call when an escalation is approved by the operator."""
         self._approval_count += 1
         self._last_approval_time = time.monotonic()
-
-    def escalation_groups(self) -> list[EscalationGroup]:
-        return list(self._groups.values())
 
     @staticmethod
     def _intent_key(tool: str, paths: list[str], reason: str) -> str:

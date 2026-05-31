@@ -12,8 +12,13 @@ class ExecutionMode(str, Enum):
                  direct executor bypass blocked.
     STRICT     — superset of PRODUCTION with additional containment restrictions
                  for high-risk or regulated deployments.
+    OBSERVE    — evaluation / measurement mode. Full pipeline runs and all trace
+                 events are emitted, but deny/lock actions are not applied — the
+                 agent proceeds unblocked so measurement is not contaminated by
+                 enforcement. Used exclusively by axor-eval.
     """
 
     LIBRARY = "library"
     PRODUCTION = "production"
     STRICT = "strict"
+    OBSERVE = "observe"

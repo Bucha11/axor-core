@@ -4,7 +4,6 @@ import uuid
 from axor_core.contracts.context import ContextView, LineageSummary
 from axor_core.contracts.envelope import (
     ExecutionEnvelope,
-    Capabilities,
     ExportContract,
 )
 from axor_core.contracts.policy import ExecutionPolicy, ExportMode

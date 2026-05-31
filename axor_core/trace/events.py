@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from axor_core.contracts.policy import ExecutionPolicy, TaskSignal, PolicyDecisionKind
+from axor_core.contracts.policy import ExecutionPolicy, TaskSignal
 from axor_core.contracts.trace import (
     TraceEvent,
     TraceEventKind,

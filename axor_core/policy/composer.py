@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import dataclasses
+
 from axor_core.contracts.extension import ExtensionFragment
 from axor_core.contracts.policy import (
+    EscalationPolicy,
     ExecutionPolicy,
     ToolPolicy,
     ChildMode,
@@ -52,9 +55,11 @@ class PolicyComposer:
         An extension can never escalate beyond what base policy allows.
 
         Supported overrides:
+            allow_read: bool
             allow_bash: bool
             allow_write: bool
             allow_search: bool
+            allow_spawn: bool
             export_mode: str    (only to more restrictive mode)
         """
         if not extensions:
@@ -67,12 +72,16 @@ class PolicyComposer:
 
             # tools — extensions can request additional tools
             # but never beyond what base allows for this complexity level
+            if overrides.get("allow_read") and base.tool_policy.allow_read:
+                tool_policy = _with_tool(tool_policy, allow_read=True)
             if overrides.get("allow_bash") and base.tool_policy.allow_bash:
                 tool_policy = _with_tool(tool_policy, allow_bash=True)
             if overrides.get("allow_write") and base.tool_policy.allow_write:
                 tool_policy = _with_tool(tool_policy, allow_write=True)
             if overrides.get("allow_search") and base.tool_policy.allow_search:
                 tool_policy = _with_tool(tool_policy, allow_search=True)
+            if overrides.get("allow_spawn") and base.tool_policy.allow_spawn:
+                tool_policy = _with_tool(tool_policy, allow_spawn=True)
 
             # extra_allowed — extension-specific tool names
             if extra := overrides.get("extra_allowed_tools", []):
@@ -156,6 +165,17 @@ class PolicyComposer:
             child_policy.allow_model_switch and parent_policy.allow_model_switch
         )
 
+        # allowed_paths: child cannot widen the parent's filesystem ceiling.
+        allowed_paths = _restrict_allowed_paths(
+            child_policy.allowed_paths, parent_policy.allowed_paths
+        )
+
+        # escalation_policy: child cannot escalate if parent forbids it;
+        # grantable_tools is capped to parent's ceiling; numeric limits take the min.
+        escalation_policy = _restrict_escalation(
+            child_policy.escalation_policy, parent_policy.escalation_policy
+        )
+
         return _with_policy(
             child_policy,
             tool_policy=restricted_tools,
@@ -167,6 +187,8 @@ class PolicyComposer:
             child_context_fraction=child_context_fraction,
             allowed_passthrough_commands=passthrough,
             allow_model_switch=allow_model_switch,
+            allowed_paths=allowed_paths,
+            escalation_policy=escalation_policy,
         )
 
 
@@ -186,22 +208,34 @@ def _with_tool(base: ToolPolicy, **kwargs) -> ToolPolicy:
 
 
 def _with_policy(base: ExecutionPolicy, **kwargs) -> ExecutionPolicy:
-    """Return a new ExecutionPolicy with selected fields overridden."""
-    return ExecutionPolicy(
-        name=kwargs.get("name", base.name),
-        derived_from=kwargs.get("derived_from", base.derived_from),
-        context_mode=kwargs.get("context_mode", base.context_mode),
-        compression_mode=kwargs.get("compression_mode", base.compression_mode),
-        child_mode=kwargs.get("child_mode", base.child_mode),
-        max_child_depth=kwargs.get("max_child_depth", base.max_child_depth),
-        tool_policy=kwargs.get("tool_policy", base.tool_policy),
-        export_mode=kwargs.get("export_mode", base.export_mode),
-        child_context_fraction=kwargs.get("child_context_fraction", base.child_context_fraction),
-        allowed_passthrough_commands=kwargs.get(
-            "allowed_passthrough_commands", base.allowed_passthrough_commands
-        ),
-        allow_model_switch=kwargs.get("allow_model_switch", base.allow_model_switch),
-    )
+    """Return a new ExecutionPolicy with selected fields overridden.
+
+    Uses dataclasses.replace so fields not listed here (e.g. escalation_policy,
+    allowed_paths) are preserved rather than silently reset to defaults.
+    """
+    return dataclasses.replace(base, **kwargs)
+
+
+def _restrict_allowed_paths(
+    child_paths: tuple[str, ...],
+    parent_paths: tuple[str, ...],
+) -> tuple[str, ...]:
+    """Narrow a child's allowed_paths so it can never widen the parent ceiling.
+
+    - parent unrestricted (empty) → child keeps its own restriction
+    - child unrestricted but parent restricted → child inherits parent's ceiling
+    - both restricted → keep only child roots contained by the parent ceiling
+    """
+    from axor_core.capability.lease_validator import path_matches_allowlist
+
+    if not parent_paths:
+        return child_paths
+    if not child_paths:
+        return parent_paths
+    contained = tuple(p for p in child_paths if path_matches_allowlist(p, parent_paths))
+    # If the child asked for roots entirely outside the parent ceiling, fall back
+    # to the parent ceiling rather than granting an empty (deny-all) set.
+    return contained or parent_paths
 
 
 _EXPORT_RESTRICTIVENESS = {
@@ -250,3 +284,19 @@ _CHILD_MODE_RESTRICTIVENESS = {
 
 def _most_restrictive_child_mode(a: ChildMode, b: ChildMode) -> ChildMode:
     return a if _CHILD_MODE_RESTRICTIVENESS[a] >= _CHILD_MODE_RESTRICTIVENESS[b] else b
+
+
+def _restrict_escalation(
+    child: EscalationPolicy,
+    parent: EscalationPolicy,
+) -> EscalationPolicy:
+    if not parent.allow_escalation:
+        return EscalationPolicy(allow_escalation=False)
+    parent_tools = frozenset(parent.grantable_tools)
+    return EscalationPolicy(
+        allow_escalation=child.allow_escalation and parent.allow_escalation,
+        grantable_tools=tuple(t for t in child.grantable_tools if t in parent_tools),
+        max_escalations=min(child.max_escalations, parent.max_escalations),
+        max_ops_per_grant=min(child.max_ops_per_grant, parent.max_ops_per_grant),
+        require_human=child.require_human or parent.require_human,
+    )

@@ -27,9 +27,15 @@ class LineageManager:
     as the token budget. Core never passes full parent context to child.
     """
 
-    def __init__(self, symbol_table: SymbolTable) -> None:
+    def __init__(
+        self,
+        symbol_table: SymbolTable,
+        selector: ContextSelector | None = None,
+    ) -> None:
         self._symbols = symbol_table
-        self._selector = ContextSelector(symbol_table)
+        # Accept the parent manager's selector so _active_paths are shared and
+        # invalidation covers paths accessed during child context derivation.
+        self._selector = selector if selector is not None else ContextSelector(symbol_table)
 
     def derive_child_context(
         self,
@@ -78,12 +84,16 @@ class LineageManager:
 
         total_tokens = sum(f.token_estimate for f in selected_fragments)
 
+        parent_tokens = max(1, parent_context.token_count)
         return ContextView(
             node_id=child_lineage.node_id,
             working_summary=f"[child of {parent_context.node_id}] {child_task}",
             visible_fragments=selected_fragments,
-            active_constraints=parent_context.active_constraints,
+            # Child starts with empty constraints — parent's stateful constraints
+            # (budget warnings, turn counts) do not transfer to the child context.
+            active_constraints=(),
             lineage=child_lineage,
             token_count=total_tokens,
-            compression_ratio=total_tokens / max(1, parent_context.token_count),
+            # Fraction of parent tokens retained — capped to [0, 1].
+            compression_ratio=min(1.0, total_tokens / parent_tokens),
         )

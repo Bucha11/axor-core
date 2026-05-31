@@ -5,7 +5,7 @@ from typing import AsyncIterator, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from axor_core.contracts.envelope import ExecutionEnvelope
-    from axor_core.contracts.events import ExecutorEvent
+    from axor_core.contracts.result import ExecutorEvent
 
 
 class Invokable(ABC):

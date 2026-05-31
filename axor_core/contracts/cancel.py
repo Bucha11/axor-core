@@ -82,6 +82,7 @@ class CancelToken:
     async def wait(self) -> CancelReason:
         """Await cancellation signal. Returns reason when fired."""
         await self._ensure_event().wait()
+        assert self._reason is not None
         return self._reason
 
     def child_token(self) -> "CancelToken":

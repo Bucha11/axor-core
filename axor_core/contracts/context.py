@@ -48,6 +48,7 @@ class ContextFragment:
     relevance: float = 1.0           # 0.0–1.0, used by selector
     value: str = "working"           # FragmentValue.value as str
     turn: int = 0                    # which turn created this fragment (0 = unknown)
+    taint_mark: str | None = None    # canary token if taint-marked; propagated through compression (§7.3)
 
 
 @dataclass(frozen=True)

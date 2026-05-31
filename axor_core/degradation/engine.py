@@ -18,6 +18,7 @@ from axor_core.contracts.trace import (
     SourceQuarantinedEvent,
     TraceEventKind,
 )
+from axor_core.contracts.mode import ExecutionMode
 from axor_core.errors.exceptions import DegradationClearanceError
 
 if TYPE_CHECKING:
@@ -34,6 +35,14 @@ _WRITE_BASH_EXPORT_TOOLS = frozenset({
 
 # Tools always permitted at LOCKED level.
 _LOCKED_ALLOWED_TOOLS = frozenset({"read", "escalate", "escalate_policy"})
+
+# Authority types permitted to lower degradation level. Anything outside this
+# set (notably "worker") is rejected.
+_VALID_GOVERNANCE_AUTHORITY_TYPES = frozenset({
+    "human_operator",
+    "automated_policy",
+    "trusted_boundary",
+})
 
 # destination_kinds that indicate cross-origin export risk.
 _CROSS_ORIGIN_DESTINATIONS = frozenset({"external_domain", "private_network"})
@@ -55,13 +64,38 @@ class DegradationEngine:
     Source-aware, taint-integrated degradation state machine.
 
     Thread-safety: not thread-safe. Each session has its own instance.
+
+    In observe mode (observe=True or from_mode(ExecutionMode.OBSERVE)):
+    - All signals are processed and trace events are emitted.
+    - self._state.level is never mutated — the agent is never policy-restricted.
+    - A shadow level (_shadow_level) tracks the level that *would* have been
+      reached so that the monotonicity check still applies and each transition
+      is emitted exactly once.
     """
 
-    def __init__(self, policy: DegradationPolicy | None = None) -> None:
+    def __init__(
+        self,
+        policy: DegradationPolicy | None = None,
+        node_id: str = "",
+        observe: bool = False,
+    ) -> None:
         self._policy = policy or DegradationPolicy()
         self._state = DegradationState()
         self._pending_events: list[TraceEvent] = []
         self._locked_at: float | None = None  # wall time when LOCKED was entered
+        self._node_id = node_id
+        self._observe = observe
+        self._shadow_level: DegradationLevel = DegradationLevel.NORMAL
+
+    @classmethod
+    def from_mode(
+        cls,
+        mode: ExecutionMode,
+        policy: DegradationPolicy | None = None,
+        node_id: str = "",
+    ) -> "DegradationEngine":
+        """Construct a DegradationEngine with observe=True when mode is OBSERVE."""
+        return cls(policy=policy, node_id=node_id, observe=(mode == ExecutionMode.OBSERVE))
 
     # ── Public properties ──────────────────────────────────────────────────────
 
@@ -173,6 +207,15 @@ class DegradationEngine:
             "worker attempted to clear degradation — only governance may do this"
         )
 
+    def check_ttl(self) -> DegradationTransition | None:
+        """
+        Explicitly check LOCKED_TTL and auto-transition to TERMINAL if elapsed.
+
+        Called by GovernedSession.run() so that idle sessions that reached LOCKED
+        but received no further intents still transition to TERMINAL on the next run.
+        """
+        return self._check_locked_ttl()
+
     def apply_to_policy(
         self,
         base_policy: ExecutionPolicy,
@@ -181,6 +224,9 @@ class DegradationEngine:
         """
         Return a narrowed ExecutionPolicy for the current degradation state.
         """
+        # Check TTL on every policy application so LOCKED transitions to TERMINAL
+        # even when record_signal is not called (e.g. non-denied intents).
+        self._check_locked_ttl()
         level = self._state.level
 
         if level == DegradationLevel.NORMAL:
@@ -265,7 +311,21 @@ class DegradationEngine:
 
         Worker path must call attempt_clear_by_worker() — this method requires
         a GovernanceAuthority and is only accessible on the governance path.
+
+        The authority is validated: a blank principal or an authority_type
+        outside the allowed governance set is rejected, so a worker cannot lower
+        degradation by passing an empty or worker-labelled authority.
         """
+        if (
+            not authority.authority_id
+            or not reason
+            or authority.authority_type not in _VALID_GOVERNANCE_AUTHORITY_TYPES
+        ):
+            raise DegradationClearanceError(
+                "degradation clearance rejected: requires a valid governance "
+                f"authority (authority_id={authority.authority_id!r}, "
+                f"authority_type={authority.authority_type!r})"
+            )
         now = time.time()
         prev = self._state.level
         self._state.level = target_level
@@ -351,15 +411,20 @@ class DegradationEngine:
         reason: str,
     ) -> DegradationTransition | None:
         current = self._state.level
-        if target <= current:
-            return None  # monotonic — never decrease
+        if self._observe:
+            # Shadow monotonicity: each transition emitted exactly once.
+            if target <= self._shadow_level:
+                return None
+            self._shadow_level = target
+        else:
+            if target <= current:
+                return None  # monotonic — never decrease
+            self._state.level = target
+            self._state.tools_frozen = target >= DegradationLevel.LOCKED
+            if target == DegradationLevel.LOCKED and self._locked_at is None:
+                self._locked_at = time.time()
+            self._state.level_history.append((time.time(), target, reason))
         now = time.time()
-        self._state.level = target
-        self._state.tools_frozen = target >= DegradationLevel.LOCKED
-        if target == DegradationLevel.LOCKED and self._locked_at is None:
-            self._locked_at = now
-        entry = (now, target, reason)
-        self._state.level_history.append(entry)
         self._emit_transition_event(current, target, source_id, trigger_intent, reason, now)
         return DegradationTransition(
             previous_level=current,
@@ -381,7 +446,7 @@ class DegradationEngine:
     ) -> None:
         self._pending_events.append(DegradationTransitionEvent(
             kind=TraceEventKind.DEGRADATION_TRANSITION,
-            node_id="",
+            node_id=self._node_id,
             sequence=len(self._pending_events),
             previous_level=prev.name,
             new_level=new.name,
@@ -393,7 +458,7 @@ class DegradationEngine:
     def _emit_quarantine_event(self, source_id: str, reason: str) -> None:
         self._pending_events.append(SourceQuarantinedEvent(
             kind=TraceEventKind.SOURCE_QUARANTINED,
-            node_id="",
+            node_id=self._node_id,
             sequence=len(self._pending_events),
             source_id=source_id,
             quarantined_at=time.time(),

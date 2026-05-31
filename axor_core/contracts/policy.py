@@ -173,6 +173,10 @@ class ExecutionPolicy:
     # tools
     tool_policy: ToolPolicy = field(default_factory=ToolPolicy)
 
+    # filesystem ceiling — empty tuple means "no path restriction"; when set,
+    # every path-bearing tool call must resolve to within one of these roots.
+    allowed_paths: tuple[str, ...] = field(default_factory=tuple)
+
     # export
     export_mode: ExportMode = ExportMode.SUMMARY
 

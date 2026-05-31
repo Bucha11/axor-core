@@ -61,6 +61,8 @@ class SymbolTable:
     _TODO_PATTERN   = re.compile(r"#\s*(TODO|FIXME|HACK|XXX)[:\s]+(.+)", re.IGNORECASE)
     _RENAME_PATTERN = re.compile(r"rename[d]?\s+[`'\"]?(\w+)[`'\"]?\s+to\s+[`'\"]?(\w+)[`'\"]?", re.IGNORECASE)
 
+    _MAX_PENDING_INTENTS = 200
+
     def __init__(self) -> None:
         self._symbols: dict[str, Symbol] = {}         # name → Symbol
         self._pending_intents: list[PendingIntent] = []
@@ -128,12 +130,13 @@ class SymbolTable:
                 aliases=[new_name],
             )
         # register new name carrying rename history
-        existing_aliases = []
-        if old_name in self._symbols:
-            existing_aliases = [old_name]
-        self._upsert(new_name, kind=self._symbols.get(old_name, Symbol(
-            name=old_name, kind="function", file="", line=None
-        )).kind, file="", aliases=existing_aliases)
+        old_sym = self._symbols.get(old_name)
+        self._upsert(
+            new_name,
+            kind=old_sym.kind if old_sym is not None else "function",
+            file=old_sym.file if old_sym is not None else "",
+            aliases=[old_name] if old_sym is not None else [],
+        )
 
     def mark_pending_resolved(self, description_fragment: str) -> None:
         for intent in self._pending_intents:
@@ -209,7 +212,10 @@ class SymbolTable:
             if match:
                 description = match.group(2).strip()
                 # avoid duplicates
-                if not any(p.description == description for p in self._pending_intents):
+                if (
+                    len(self._pending_intents) < self._MAX_PENDING_INTENTS
+                    and not any(p.description == description for p in self._pending_intents)
+                ):
                     self._pending_intents.append(PendingIntent(
                         description=description,
                         file=path,

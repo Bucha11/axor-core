@@ -52,7 +52,6 @@ def _lease(
         allowed_child_depth=0,
         creation_time=now,
         expiration_time=now + ttl_offset,
-        max_intents=max_uses,
         max_uses=max_uses,
         used_count=used_count,
         non_transitive=True,

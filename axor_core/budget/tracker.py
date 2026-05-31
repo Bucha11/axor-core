@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import logging
 import threading
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Callable, TypedDict
+
+log = logging.getLogger(__name__)
 
 
 class CacheSummary(TypedDict):
@@ -202,6 +205,11 @@ class BudgetTracker:
         """Record token usage for a node. Notifies subscribers after updating."""
         with self._lock:
             if node_id not in self._nodes:
+                log.warning(
+                    "BudgetTracker.record() called for unregistered node %r — "
+                    "call register_node() first; defaulting to depth=0, parent=None",
+                    node_id,
+                )
                 self._nodes[node_id] = NodeBudget(
                     node_id=node_id,
                     parent_id=None,
