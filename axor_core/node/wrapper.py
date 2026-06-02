@@ -88,6 +88,7 @@ class GovernedNode:
         degradation_engine: "DegradationEngine | None" = None,
         max_intents_per_session: int | None = 1000,
         max_total_spawns: int | None = 200,
+        observe: bool = False,
     ) -> None:
         self._executor = executor
         self._child_executor = child_executor  # None → reuse parent executor
@@ -106,6 +107,7 @@ class GovernedNode:
         self._degradation_engine = degradation_engine
         self._max_intents_per_session = max_intents_per_session
         self._max_total_spawns = max_total_spawns
+        self._observe = observe
 
         self._envelope_builder = EnvelopeBuilder()
         self._export_filter = ExportFilter()
@@ -277,6 +279,7 @@ class GovernedNode:
             degradation_engine=self._degradation_engine,
             max_intents_per_session=self._max_intents_per_session,
             max_total_spawns=self._max_total_spawns,
+            observe=self._observe,
         )
 
         raw_output, raw_payload = await self._collect_stream(
@@ -398,7 +401,8 @@ class GovernedNode:
                 spawn_intent=intent,
                 parent_envelope=envelope,
                 intent_loop=IntentLoop(
-                    self._cap_executor, trace_events, self._depth
+                    self._cap_executor, trace_events, self._depth,
+                    observe=self._observe,
                 ),
                 trace_events=trace_events,
             )

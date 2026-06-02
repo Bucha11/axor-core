@@ -233,10 +233,15 @@ class GovernedSession:
         # taint engine — persists across turns so taint is sticky within a session
         self._taint_engine = TaintEngine(node_id=self._session_id)
 
-        # degradation engine — persists across turns; level is monotonically increasing
+        # degradation engine — persists across turns; level is monotonically increasing.
+        # In OBSERVE mode it records signals/transitions but never escalates or locks.
         from axor_core.degradation.engine import DegradationEngine
         from axor_core.contracts.degradation import DegradationPolicy
-        self._degradation_engine = DegradationEngine(DegradationPolicy(), node_id=self._session_id)
+        self._degradation_engine = DegradationEngine(
+            DegradationPolicy(),
+            node_id=self._session_id,
+            observe=(mode == ExecutionMode.OBSERVE),
+        )
 
     @staticmethod
     def _enforce_isolation_policy(
@@ -619,6 +624,7 @@ class GovernedSession:
             anomaly_detector=self._anomaly_detector,
             taint_engine=self._taint_engine,
             degradation_engine=self._degradation_engine,
+            observe=(self._mode == ExecutionMode.OBSERVE),
         )
 
     async def _handle_command(self, raw: str) -> ExecutionResult:

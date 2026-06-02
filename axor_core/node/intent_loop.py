@@ -125,6 +125,7 @@ class IntentLoop:
         reputation_enricher: "ReputationEnricher | None" = None,
         max_intents_per_session: int | None = None,
         max_total_spawns: int | None = None,
+        observe: bool = False,
     ) -> None:
         self._executor = capability_executor
         self._trace_events = trace_events
@@ -150,6 +151,11 @@ class IntentLoop:
         self._max_intents_per_session = max_intents_per_session
         self._max_total_spawns = max_total_spawns
         self._spawn_count = 0
+        # OBSERVE mode (evaluation): governance still resolves every intent and
+        # records what it WOULD deny, but never blocks — the tool executes and
+        # the real result is returned, so measurement is uncontaminated by
+        # enforcement. Denials are recorded as INTENT_DENIED with observed=True.
+        self._observe = observe
 
     async def run(
         self,
@@ -346,26 +352,18 @@ class IntentLoop:
             reason = (
                 f"session intent limit reached ({self._max_intents_per_session})"
             )
-            self._record_denial(intent, reason, envelope)
-            return ResolvedIntent(
-                intent=intent,
-                approved=False,
-                reason=reason,
-                result=_denial_result(tool_name, reason),
-            )
+            resolved = self._blocked(intent, reason, envelope, _denial_result(tool_name, reason))
+            if resolved is not None:
+                return resolved
 
         decision = self._evaluate_tool_intent(intent, envelope)
 
         if decision.kind == PolicyDecisionKind.DENY:
-            self._record_denial(intent, decision.reason, envelope)
             denial_resp = _make_denial_response(decision.reason)
             self._record_degradation_signal(intent, denial_resp)
-            return ResolvedIntent(
-                intent=intent,
-                approved=False,
-                reason=decision.reason,
-                result=denial_resp.to_tool_result(),
-            )
+            resolved = self._blocked(intent, decision.reason, envelope, denial_resp.to_tool_result())
+            if resolved is not None:
+                return resolved
 
         # normalize intent once — shared by anomaly detection, taint, degradation, and reputation
         needs_normalized = (
@@ -397,17 +395,13 @@ class IntentLoop:
                 f"{normalized.target_resource_reputation:.3f} >= 0.8 "
                 "and session preceded by external read"
             )
-            self._record_denial(intent, reason, envelope)
             denial_resp = _make_denial_response(reason, "high_reputation_resource_tainted_access")
             # DegradationEngine interaction: reputation deny contributes to tool_pressure_count
             # per spec §DegradationEngine interaction.
             self._record_degradation_signal(intent, denial_resp, normalized)
-            return ResolvedIntent(
-                intent=intent,
-                approved=False,
-                reason=reason,
-                result=denial_resp.to_tool_result(),
-            )
+            resolved = self._blocked(intent, reason, envelope, denial_resp.to_tool_result())
+            if resolved is not None:
+                return resolved
 
         # degradation pre-check — enforce narrowed policy from previous signals
         if self._degradation_engine is not None and normalized is not None:
@@ -416,15 +410,11 @@ class IntentLoop:
                 tool_name, normalized, taint_state, envelope
             )
             if degradation_denial is not None:
-                self._record_denial(intent, degradation_denial, envelope)
                 denial_resp = _make_denial_response(degradation_denial)
                 self._record_degradation_signal(intent, denial_resp, normalized)
-                return ResolvedIntent(
-                    intent=intent,
-                    approved=False,
-                    reason=degradation_denial,
-                    result=denial_resp.to_tool_result(),
-                )
+                resolved = self._blocked(intent, degradation_denial, envelope, denial_resp.to_tool_result())
+                if resolved is not None:
+                    return resolved
 
         # anomaly detection — runs after policy approval
         # A-11: pass pre-enrichment normalized (reputation floats at 0.0) to Layer 2
@@ -440,15 +430,13 @@ class IntentLoop:
             except Exception as exc:
                 reason = f"anomaly detector raised unexpectedly: {type(exc).__name__}: {exc}"
                 log.error("anomaly detector error — failing closed: %s", exc, exc_info=True)
-                self._record_denial(intent, reason, envelope)
                 denial_resp = _make_denial_response(reason, "anomaly_detector_error")
                 self._record_degradation_signal(intent, denial_resp, normalized)
-                return ResolvedIntent(
-                    intent=intent,
-                    approved=False,
-                    reason=reason,
-                    result=denial_resp.to_tool_result(),
-                )
+                resolved = self._blocked(intent, reason, envelope, denial_resp.to_tool_result())
+                if resolved is not None:
+                    return resolved
+                # observe fall-through: scoring failed, treat as no anomaly signal.
+                anomaly = None
 
             if anomaly is not None and anomaly.cls == AnomalyClass.CRITICAL:
                 reason = f"anomaly detector: CRITICAL score={anomaly.score:.2f} reasons={anomaly.reasons}"
@@ -456,16 +444,12 @@ class IntentLoop:
                     tool_name=tool_name,
                     normalized=normalized,
                     anomaly=anomaly,
-                    policy_action="denied",
+                    policy_action="observed" if self._observe else "denied",
                     envelope=envelope,
                 )
-                self._record_denial(intent, reason, envelope)
-                return ResolvedIntent(
-                    intent=intent,
-                    approved=False,
-                    reason=reason,
-                    result=_denial_result(tool_name, reason),
-                )
+                resolved = self._blocked(intent, reason, envelope, _denial_result(tool_name, reason))
+                if resolved is not None:
+                    return resolved
 
             if anomaly is not None and anomaly.cls == AnomalyClass.SUSPICIOUS:
                 self._record_anomaly_event(
@@ -516,15 +500,11 @@ class IntentLoop:
                     "(writes_outside_workdir, executes_generated_code, or "
                     "exfiltration to a cloud-metadata/private-network destination)"
                 )
-                self._record_denial(intent, reason, envelope)
                 denial_resp = _make_denial_response(reason, "taint_enforcement")
                 self._record_degradation_signal(intent, denial_resp, normalized)
-                return ResolvedIntent(
-                    intent=intent,
-                    approved=False,
-                    reason=reason,
-                    result=denial_resp.to_tool_result(),
-                )
+                resolved = self._blocked(intent, reason, envelope, denial_resp.to_tool_result())
+                if resolved is not None:
+                    return resolved
 
         # approved or transformed — emit the appropriate trace event
         is_transform = decision.kind == PolicyDecisionKind.TRANSFORM
@@ -546,9 +526,16 @@ class IntentLoop:
             sequence=self._intent_sequence,
         )
 
+        caps = envelope.capabilities
+        if self._observe and tool_name not in caps.allowed_tools:
+            # OBSERVE: the capability gate must not block measurement. The policy
+            # denial is already recorded above as observed-only; grant the
+            # requested tool for this single call so the real result is produced.
+            from dataclasses import replace as _dc_replace
+            caps = _dc_replace(caps, allowed_tools=caps.allowed_tools | {tool_name})
         try:
             result = await self._executor.execute(
-                effective_intent, envelope.capabilities
+                effective_intent, caps
             )
             # Propagate taint after any successful privileged read.
             if self._taint_engine is not None:
@@ -886,6 +873,7 @@ class IntentLoop:
         intent: Intent,
         reason: str,
         envelope: ExecutionEnvelope,
+        observed: bool = False,
     ) -> None:
         self._trace_events.append(
             IntentDeniedEvent(
@@ -894,7 +882,32 @@ class IntentLoop:
                 sequence=len(self._trace_events),
                 intent_kind=intent.kind.value,
                 reason=reason,
+                payload={"observed": observed},
             )
+        )
+
+    def _blocked(
+        self,
+        intent: Intent,
+        reason: str,
+        envelope: ExecutionEnvelope,
+        denial_result: object,
+    ) -> "ResolvedIntent | None":
+        """
+        Record that governance flagged this intent, then decide enforcement.
+
+        Enforce mode → return the denial ResolvedIntent (caller returns it).
+        Observe mode → record the denial as observed-only and return None, so the
+        caller falls through to execute the tool and return the real result.
+        """
+        self._record_denial(intent, reason, envelope, observed=self._observe)
+        if self._observe:
+            return None
+        return ResolvedIntent(
+            intent=intent,
+            approved=False,
+            reason=reason,
+            result=denial_result,
         )
 
     def _record_anomaly_event(
