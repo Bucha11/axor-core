@@ -56,6 +56,7 @@ class ContextManager:
         self._all_fragments: list[ContextFragment] = []
         self._pinned_fragments: list[ContextFragment] = []  # never compressed/evicted
         self._recent_outputs: list[str] = []
+        self._last_view: ContextView | None = None  # most recent build() output, for read-only taps
 
     def pin_fragment(self, fragment: ContextFragment) -> None:
         """
@@ -189,7 +190,7 @@ class ContextManager:
         final = list(self._pinned_fragments) + selected
         total_tokens = sum(f.token_estimate for f in final)
 
-        return ContextView(
+        view = ContextView(
             node_id=lineage.node_id,
             working_summary=self._build_summary(raw_state, final, policy),
             visible_fragments=final,
@@ -197,6 +198,29 @@ class ContextManager:
             lineage=lineage,
             token_count=total_tokens,
             compression_ratio=compression_result.compression_ratio,
+        )
+        self._last_view = view
+        return view
+
+    def context_window_view(self, limit: int = 50) -> tuple[dict, ...]:
+        """
+        Read-only, bounded snapshot of the most recently built context window.
+
+        Returns the last build()'s visible fragments as plain dicts (most recent
+        last), capped at `limit`. Empty tuple if no turn has been built yet.
+        Pure read — does not mutate context or advance any turn counter.
+        """
+        if self._last_view is None:
+            return ()
+        fragments = self._last_view.visible_fragments[-limit:]
+        return tuple(
+            {
+                "kind": f.kind,
+                "source": f.source,
+                "content": f.content,
+                "turn": getattr(f, "turn", None),
+            }
+            for f in fragments
         )
 
     def update(self, result_output: str, node_id: str) -> None:

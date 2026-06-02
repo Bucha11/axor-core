@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
+import time
 import uuid
 from typing import TYPE_CHECKING, Any
 
@@ -13,6 +15,13 @@ from axor_core.contracts.context import RawExecutionState, LineageSummary
 from axor_core.contracts.extension import ExtensionLoader
 from axor_core.contracts.anomaly import AnomalyDetector
 from axor_core.contracts.drift import BehavioralDriftObserver
+from axor_core.contracts.observation import (
+    ContextTap,
+    SessionAuditRecord,
+    SessionContextView,
+    SessionSink,
+    ToolInvocationRecord,
+)
 from axor_core.contracts.invokable import Invokable
 from axor_core.contracts.mode import ExecutionMode
 from axor_core.contracts.policy import ExecutionPolicy, SignalClassifier
@@ -89,6 +98,8 @@ class GovernedSession:
         classifier: SignalClassifier | None = None,
         anomaly_detector: AnomalyDetector | None = None,
         behavioral_drift_observer: BehavioralDriftObserver | None = None,
+        context_taps: list[ContextTap] | None = None,
+        session_sinks: list[SessionSink] | None = None,
         extension_loaders: list[ExtensionLoader] | None = None,
         trace_config: TraceConfig | None = None,
         soft_token_limit: int | None = None,
@@ -104,6 +115,18 @@ class GovernedSession:
         self._session_id     = f"session_{uuid.uuid4().hex[:12]}"
         self._mode           = mode
         self._behavioral_drift_observer = behavioral_drift_observer
+
+        # Read-only session observation taps/sinks (P-34: consumers attach here;
+        # core never imports them). All emission is fail-safe and out-of-band.
+        self._context_taps   = list(context_taps) if context_taps else []
+        self._session_sinks  = list(session_sinks) if session_sinks else []
+        self._started_at     = time.time()
+        self._turn_index     = 0
+        self._external_read_count = 0
+        # Raw tool-invocation log for the end-of-session audit record. Bounded so a
+        # long session cannot grow it without limit; consumers get the tail.
+        self._tool_log: list[ToolInvocationRecord] = []
+        self._tool_log_cap   = 500
 
         # STRICT mode is a superset of PRODUCTION.
         # Apply all STRICT-only restrictions here before anything else is wired.
@@ -327,7 +350,15 @@ class GovernedSession:
                     path = args.get("path", "")
                     if path:
                         self._context_manager.record_file_read(path, result)
+                        self._external_read_count += 1
                 self._context_manager.cache_tool_result(tool_name, args, result)
+                # Raw tool-invocation log for the end-of-session audit record.
+                if len(self._tool_log) < self._tool_log_cap:
+                    self._tool_log.append(ToolInvocationRecord(
+                        tool=tool_name,
+                        args=dict(args) if isinstance(args, dict) else {},
+                        executed=True,
+                    ))
             self._cap_executor.register_post_callback(_context_observer)
             self._context_observer_registered = True
 
@@ -386,7 +417,55 @@ class GovernedSession:
             except Exception:
                 pass
 
+        # Read-only context tap (out-of-band, fail-safe). Emitted once per turn
+        # when at least one tap is registered. Consumers gate / schedule probes.
+        self._turn_index += 1
+        await self._emit_context_event()
+
         return result
+
+    def _agent_id(self) -> str:
+        return self._agent_def.name if self._agent_def is not None else self._session_id
+
+    def _build_context_view(self) -> SessionContextView:
+        taint = self._taint_engine.state
+        # system prompt is exposed as a hash only (P-11) — derive from the pinned
+        # personality fragment if present; never the plaintext.
+        prompt_src = ""
+        if self._agent_def is not None and self._agent_def.personality:
+            prompt_src = self._agent_def.personality
+        prompt_hash = hashlib.sha256(prompt_src.encode("utf-8")).hexdigest() if prompt_src else ""
+        return SessionContextView(
+            session_id=self._session_id,
+            agent_id=self._agent_id(),
+            timestamp=time.time(),
+            turn_index=self._turn_index,
+            token_count=self._tracker.total_tokens(),
+            context_window=self._context_manager.context_window_view(),
+            system_prompt_hash=prompt_hash,
+            taint_active=taint.is_tainted,
+            taint_sources=tuple(s.value for s in taint.sources),
+            taint_scope=taint.scope.value,
+            taint_intent_age=taint.intent_age,
+            external_read_count=self._external_read_count,
+        )
+
+    async def _emit_context_event(self) -> None:
+        if not self._context_taps:
+            return
+        try:
+            view = self._build_context_view()
+        except Exception:
+            _log.error("context view build failed session=%s", self._session_id, exc_info=True)
+            return
+        for tap in self._context_taps:
+            try:
+                await tap.on_context_event(view)
+            except Exception:
+                _log.error(
+                    "context_tap.on_context_event failed session=%s", self._session_id,
+                    exc_info=True,
+                )
 
     async def notify_behavioral_drift(self, agent_id: str, action: str) -> None:
         """
@@ -413,6 +492,40 @@ class GovernedSession:
                 exc_info=True,
             )
 
+    def _build_audit_record(self) -> SessionAuditRecord:
+        taint = self._taint_engine.state
+        kinds: set[str] = set()
+        for trace in self._collector.all_traces():
+            for event in trace.events:
+                kinds.add(event.kind.value)
+        return SessionAuditRecord(
+            session_id=self._session_id,
+            agent_id=self._agent_id(),
+            started_at=self._started_at,
+            ended_at=time.time(),
+            taint_active=taint.is_tainted,
+            taint_sources=tuple(s.value for s in taint.sources),
+            event_kinds=tuple(sorted(kinds)),
+            tool_invocations=tuple(self._tool_log),
+        )
+
+    async def _emit_session_closed(self) -> None:
+        if not self._session_sinks:
+            return
+        try:
+            record = self._build_audit_record()
+        except Exception:
+            _log.error("audit record build failed session=%s", self._session_id, exc_info=True)
+            return
+        for sink in self._session_sinks:
+            try:
+                await sink.on_session_closed(record)
+            except Exception:
+                _log.error(
+                    "session_sink.on_session_closed failed session=%s", self._session_id,
+                    exc_info=True,
+                )
+
     def cancel(self, detail: str = "") -> None:
         """
         Cancel the current active execution.
@@ -427,6 +540,9 @@ class GovernedSession:
         memory provider. Idempotent. Safe to call even if start() was never
         invoked.
         """
+        # End-of-session audit sink (out-of-band, fail-safe). Built before the
+        # collector closes so trace events are still available.
+        await self._emit_session_closed()
         self._collector.close()
         if self._telemetry is not None:
             close = getattr(self._telemetry, "aclose", None)
