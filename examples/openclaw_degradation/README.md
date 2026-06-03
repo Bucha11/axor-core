@@ -104,3 +104,5 @@ evolves.
 - `scenario.py` — the OpenClaw trace as deterministic governed intents.
 - `harness.py` — drives the real engine; Config A and Config B; renders tables.
 - `test_openclaw_degradation.py` — runnable report + assertions encoding the findings.
+- `DESIGN_NOTE.md` — proposed (not implemented) core extension point that would
+  turn Config B's overlay into an adapter-supplied `DomainDegradationPredicate`.
