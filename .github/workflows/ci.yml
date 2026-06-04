@@ -54,6 +54,9 @@ jobs:
       - name: Run tests
         run: pytest tests/ -v --tb=short
 
+      - name: Run example artifacts (degradation corpus)
+        run: pytest examples/ -q
+
   publish:
     name: Publish to PyPI
     needs: test

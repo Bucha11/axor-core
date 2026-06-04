@@ -12,7 +12,8 @@ intents (denial used as a proxy for danger), plus pressure heuristics. The
 OpenClaw trace exposed two blind spots that follow directly from that design:
 
 - **Pure failures** (`denial is None`) accumulate nothing — `record_signal`
-  returns at its first line (`axor_core/degradation/engine.py:132`).
+  returns early at its `denial is None` guard in
+  `axor_core/degradation/engine.py`, before touching any state.
 - **Un-denied privileged operations** (`restart_gateway` → `shutdown`) are
   semantically catastrophic but, since they are neither denied nor in any
   pressure set, register as *nothing*. The engine plateaus at RESTRICTED.
@@ -55,8 +56,8 @@ class DomainDegradationPredicate(Protocol):
 
 ## Where it injects (the one consequential change)
 
-The whole point of the OpenClaw finding is the early return at
-`engine.py:132` (`if denial is None: return None`). Domain predicates must be
+The whole point of the OpenClaw finding is the early return at the
+`denial is None` guard in `record_signal`. Domain predicates must be
 evaluated **before / independent of** that gate — otherwise they only ever see
 the denied stream, and the blindness to failures and to the un-denied shutdown
 survives unchanged.
@@ -102,6 +103,16 @@ raises the questions this artifact is meant to hand back:
     auditable)?
 - **How do predicates stay honest as the system evolves** — what stops the
   domain layer from drifting into a second, ad-hoc policy engine?
+
+The corpus (`README.md` → *Corpus*) makes the last question concrete. The
+`benign_admin_restart` control is a *legitimate* restart, yet `privileged_shutdown`
+fires on it → a **false positive**, because the predicate keys off the tool name
+alone and cannot tell a malicious restart from a maintenance one. A first-class
+`DomainDegradationPredicate` does not remove this risk — it relocates it. Whoever
+owns the predicate owns its false-positive surface, and the protocol should make
+that ownership explicit (e.g. the `reason` string on `DomainSignal` is an audit
+hook for exactly this). The mechanism is cheap; keeping its predicates honest and
+accountable is the part that needs an owner.
 
 Config B demonstrates the mechanism is cheap. The expensive, collaborative part
 is deciding who owns that layer and how its predicates are governed.

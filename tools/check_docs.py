@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Fail if documentation references a module path that does not exist.
 
-Scans docs/ and README.md for `axor_core/....py` and `axor_core/...` directory
-references and verifies each one exists on disk. Catches the kind of drift found
-in review (docs naming `capability/executor_lock.py` when the file is
-`capability/locked.py`).
+Scans docs/, README.md, CHANGELOG.md and examples/ markdown for
+`axor_core/....py` and `axor_core/...` directory references and verifies each
+one exists on disk. Catches the kind of drift found in review (docs naming
+`capability/executor_lock.py` when the file is `capability/locked.py`, or an
+example pinning a module path that has since moved).
 
 Run from the axor-core package root:  python tools/check_docs.py
 """
@@ -16,7 +17,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-DOC_GLOBS = ["docs/**/*.md", "README.md", "CHANGELOG.md"]
+DOC_GLOBS = ["docs/**/*.md", "README.md", "CHANGELOG.md", "examples/**/*.md"]
 
 # Match axor_core/foo/bar.py or axor_core/foo/  (module file or package dir).
 _REF = re.compile(r"\baxor_core/[A-Za-z0-9_./]+")
