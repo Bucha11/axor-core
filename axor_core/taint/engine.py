@@ -11,6 +11,8 @@ from axor_core.contracts.taint import (
     TaintSource,
     TaintState,
 )
+from axor_core.taint.causal_root import CausalRoot
+from axor_core.taint.ledger import ValueTaintLedger
 from axor_core.contracts.trace import (
     TaintClearanceAttemptedEvent,
     TaintClearedEvent,
@@ -62,10 +64,26 @@ class TaintEngine:
         self._intent_count: int = 0
         self._node_id = node_id
         self._pending_events: list[TraceEvent] = []
+        # Per-value provenance (TM2). Enforcement is per-value: a sink decides on
+        # the driving argument's own causal_root, not a session-wide flag. The
+        # session-level state above remains for degradation/reputation/telemetry.
+        self._ledger = ValueTaintLedger()
 
     @property
     def state(self) -> TaintState:
         return self._state
+
+    # ── Per-value provenance (TM2) ────────────────────────────────────────────
+
+    def register_value(self, content: object, root: CausalRoot) -> None:
+        """Record that a value with the given causal_root produced this content."""
+        self._ledger.register(content, root)
+
+    def derive_value(self, value: object) -> CausalRoot:
+        """Per-value causal_root of `value` by content derivation. Clean (constant)
+        if it carries no registered tainted/sensitive content — the per-value win.
+        """
+        return self._ledger.derive(value)
 
     def drain_events(self) -> list[TraceEvent]:
         """Return and clear pending trace events for the trace collector."""
@@ -194,6 +212,9 @@ class TaintEngine:
             clearance_authority=authority,
         )
         self._first_taint_time = None
+        # Governance is authoritative: clearing the session label also releases
+        # per-value provenance. (No persistence-override of a governance decision.)
+        self._ledger = ValueTaintLedger()
         self._pending_events.append(TaintClearedEvent(
             kind=TraceEventKind.TAINT_CLEARED,
             node_id=self._node_id,

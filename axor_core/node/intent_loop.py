@@ -46,7 +46,6 @@ from axor_core.contracts.taint import TaintScope, TaintSource, TaintState
 from axor_core.degradation.engine import _LOCKED_ALLOWED_TOOLS
 from axor_core.node.normalizer import IntentNormalizer
 from axor_core.taint.causal_root import CausalRoot
-from axor_core.taint.ledger import ValueTaintLedger
 
 if TYPE_CHECKING:
     from axor_core.contracts.lease import CapabilityLease
@@ -144,9 +143,6 @@ class IntentLoop:
         self._reputation_enricher = reputation_enricher
         self._normalizer = IntentNormalizer()
         self._intent_window: list[NormalizedIntent] = []
-        # Per-value taint ledger (TM2) — content-derivation provenance. Always on;
-        # registration is cheap and the value-level gate is sound (deny-only).
-        self._value_ledger = ValueTaintLedger()
         self._intent_sequence = 0
         self._token_totals = _TokenAccumulator()
         self._granted_escalations: dict[str, _GrantedEscalation] = {}
@@ -441,45 +437,57 @@ class IntentLoop:
                     result=denial_resp.to_tool_result(),
                 )
 
-        # taint enforcement — deny high-risk operations on a tainted session
-        if (
-            self._taint_engine is not None
-            and normalized is not None
-            and self._taint_engine.state.is_tainted
+        # SSRF / internal-destination gate — content-blind, always-on, and
+        # independent of taint (this is a *destination* concern, not a data-flow
+        # one): no agent should reach cloud metadata or the docker socket unless
+        # policy explicitly allows it. Decoupling this from taint is what lets the
+        # taint gate below be cleanly per-value without regressing SSRF safety.
+        _INTERNAL = ("cloud_metadata", "private_network", "docker_socket")
+        if normalized is not None and (
+            normalized.target_kind in _INTERNAL
+            or normalized.destination_kind in ("cloud_metadata", "private_network")
         ):
-            # Exfiltration to SSRF/internal destinations is high-risk on a
-            # tainted session: a tainted session pushing data to the cloud
-            # metadata endpoint or a private-network host is almost never
-            # legitimate. destination_kind is resolved by the normalizer, which
-            # decodes obfuscated IP forms (decimal/hex/octal) — so an encoded
-            # 169.254.169.254 still classifies as private_network here.
-            # SSRF/internal destinations are always blocked on a tainted session.
-            # For a *public* external destination the rule is source-aware: a
-            # session tainted only by web reads may keep browsing (research),
-            # but once any non-web source contaminates it (a local file / secret,
-            # MCP, memory, …) outbound sends to external domains are exfiltration
-            # risk and are blocked too.
-            sources = self._taint_engine.state.sources
-            web_only_taint = sources == frozenset({TaintSource.WEB})
-            internal_exfil = normalized.destination_kind in (
-                "cloud_metadata", "private_network"
+            reason = (
+                f"ssrf gate: '{tool_name}' targets an internal destination "
+                f"({normalized.target_kind}/{normalized.destination_kind}) — "
+                "blocked independent of taint"
             )
-            external_exfil = normalized.destination_kind == "external_domain"
-            exfil_destination = internal_exfil or (
-                external_exfil and not web_only_taint
+            self._record_denial(intent, reason, envelope)
+            denial_resp = _make_denial_response(reason, "ssrf_gate")
+            self._record_degradation_signal(intent, denial_resp, normalized)
+            return ResolvedIntent(
+                intent=intent, approved=False, reason=reason,
+                result=denial_resp.to_tool_result(),
             )
-            risky = (
+
+        # taint enforcement — PER-VALUE (TM2). The refactor from per-session to
+        # per-value: the gate decides on the *driving argument's own* causal_root
+        # (content-derivation ledger), NOT a session-wide flag. A clean-valued
+        # sink passes even when other values in the session are tainted — that is
+        # the per-value win the density experiment (TM3.3) measured.
+        # Named gap (X1): content-derivation misses paraphrased / re-encoded
+        # influence; sound over-taint of opaque-LLM output collapses to
+        # session-sticky and needs an interpreter (ceded to CaMeL).
+        if self._taint_engine is not None and normalized is not None:
+            driving_root = self._taint_engine.derive_value(tool_args)
+            exfil_destination = normalized.destination_kind in (
+                "cloud_metadata", "private_network", "external_domain"
+            )
+            integrity_risk = driving_root.is_tainted and (
                 normalized.writes_outside_workdir
                 or normalized.executes_generated_code
                 or exfil_destination
             )
-            if risky:
+            confidentiality_risk = driving_root.sensitive and exfil_destination
+            if integrity_risk or confidentiality_risk:
+                axis = (
+                    "confidentiality (sensitive value to an egress sink)"
+                    if confidentiality_risk
+                    else "integrity (untrusted-derived value into a high-risk operation)"
+                )
                 reason = (
-                    "taint enforcement: session is tainted by external input "
-                    f"(sources={[s.value for s in self._taint_engine.state.sources]}) "
-                    f"and tool '{tool_name}' performs a high-risk operation "
-                    "(writes_outside_workdir, executes_generated_code, or "
-                    "exfiltration to a cloud-metadata/private-network destination)"
+                    f"taint enforcement (per-value): the driving argument of "
+                    f"'{tool_name}' carries a tainted/sensitive value — {axis}"
                 )
                 self._record_denial(intent, reason, envelope)
                 denial_resp = _make_denial_response(reason, "taint_enforcement")
@@ -490,41 +498,6 @@ class IntentLoop:
                     reason=reason,
                     result=denial_resp.to_tool_result(),
                 )
-
-        # value-level enforcement (per-value causal_root, TM2). Sound, deny-only:
-        # an ADDITIONAL gate on top of the session floor above — it pinpoints the
-        # specific tainted/sensitive VALUE flowing into a sink (web content placed
-        # into bash; a secret placed into an outbound payload) via the content-
-        # derivation ledger. Unlike the session gate, value-level exfil fires on
-        # ANY external destination (the actual sensitive bytes are leaving).
-        if normalized is not None:
-            driving_root = self._value_ledger.derive(tool_args)
-            if driving_root.is_tainted or driving_root.sensitive:
-                exfil_destination = normalized.destination_kind in (
-                    "cloud_metadata", "private_network", "external_domain"
-                )
-                integrity_risk = driving_root.is_tainted and (
-                    normalized.writes_outside_workdir
-                    or normalized.executes_generated_code
-                    or exfil_destination
-                )
-                confidentiality_risk = driving_root.sensitive and exfil_destination
-                if integrity_risk or confidentiality_risk:
-                    axis = "confidentiality (sensitive value to an egress sink)" if confidentiality_risk \
-                        else "integrity (untrusted-derived value into a high-risk operation)"
-                    reason = (
-                        f"value-level taint enforcement: the driving argument of "
-                        f"'{tool_name}' derives from a tainted/sensitive value — {axis}"
-                    )
-                    self._record_denial(intent, reason, envelope)
-                    denial_resp = _make_denial_response(reason, "value_taint_enforcement")
-                    self._record_degradation_signal(intent, denial_resp, normalized)
-                    return ResolvedIntent(
-                        intent=intent,
-                        approved=False,
-                        reason=reason,
-                        result=denial_resp.to_tool_result(),
-                    )
 
         # approved or transformed — emit the appropriate trace event
         is_transform = decision.kind == PolicyDecisionKind.TRANSFORM
@@ -917,6 +890,8 @@ class IntentLoop:
         causal_root its read introduces (TM2). Mirrors the session-taint triggers:
         external/web reads → untrusted; secret/system reads → untrusted + sensitive.
         """
+        if self._taint_engine is None:
+            return
         ni = normalized or self._normalizer.normalize(effective_intent)
         if ni.target_kind in ("external_url", "cloud_metadata", "docker_socket") or \
                 ni.operation == "network_request":
@@ -930,7 +905,7 @@ class IntentLoop:
             root = CausalRoot.external_read(TaintSource.FILE, sensitive=sensitive)
         else:
             return  # clean read — nothing to register
-        self._value_ledger.register(result, root)
+        self._taint_engine.register_value(result, root)
 
     def _check_consequence(
         self,
