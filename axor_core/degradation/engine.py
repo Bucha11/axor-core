@@ -119,12 +119,26 @@ class DegradationEngine:
         """
         Called after every intent evaluation (pass or deny).
         Returns DegradationTransition if level changed, else None.
+
+        v4.12 TM8: transitions are driven **only by decidable facts** (parameter-
+        free Booleans over the current intent and its causal structure), never by
+        counters or thresholds. The fact table:
+
+          cross-origin export of an untrusted-root value through a sink  → LOCKED
+          deny where the driving value's causal_root is tainted          → RESTRICTED
+          deny on intent that executes_generated_code / after_external   → RESTRICTED
+          a further untrusted-root *dangerous* fact while in LOCKED       → TERMINAL
+
+        Counters (session_deny_count, *_pressure_count) are kept as **telemetry**
+        only — they no longer drive a transition (accumulation → detection, X2).
+        LOCKED_TTL remains as an orchestrator "don't hang forever" hook, not a
+        guarantee fact.
         """
         # TERMINAL → accept no more signals.
         if self._state.level == DegradationLevel.TERMINAL:
             return None
 
-        # Check LOCKED_TTL before processing the new signal.
+        # Orchestrator hook (not a guarantee fact): LOCKED "don't hang forever".
         ttl_transition = self._check_locked_ttl()
         if ttl_transition is not None:
             return ttl_transition
@@ -132,29 +146,38 @@ class DegradationEngine:
         if denial is None:
             return None
 
-        # Determine source_id from taint provenance.
         source_id = self.derive_source_id(intent, taint_state)
         source = self._get_or_create_source(source_id, taint_state)
-
-        self._state.session_deny_count += 1
         source.last_signal = time.time()
 
-        # Classify signal type.
+        # Telemetry counters — recorded, but NOT transition drivers (TM8 / X2).
         tool_name = intent.tool.lower()
-        cross_origin = _is_cross_origin_export(intent)
-        is_tool_pressure = _is_write_bash_export(tool_name)
-        is_instr_pressure = intent.executes_generated_code or intent.after_external_read
-
-        # Update pressure counters before any early returns.
-        if is_tool_pressure:
+        self._state.session_deny_count += 1
+        if _is_write_bash_export(tool_name):
             source.tool_pressure_count += 1
-        if is_instr_pressure:
+        if intent.executes_generated_code or intent.after_external_read:
             source.instruction_pressure_count += 1
 
-        transition: DegradationTransition | None = None
+        untrusted_root = self._is_untrusted_root(intent, taint_state)
+        dangerous = (
+            intent.executes_generated_code
+            or intent.after_external_read
+            or _is_write_bash_export(tool_name)
+        )
 
-        # Rule: cross-origin export deny → LOCKED immediately.
-        if cross_origin:
+        # Fact 4: a further untrusted-root dangerous fact while LOCKED → TERMINAL.
+        if self._current_level() >= DegradationLevel.LOCKED and untrusted_root and dangerous:
+            t = self._transition_to(
+                DegradationLevel.TERMINAL,
+                source_id=source_id,
+                trigger_intent=intent.tool,
+                reason="untrusted_root_dangerous_while_locked",
+            )
+            if t is not None:
+                return t
+
+        # Fact 1: cross-origin export of an untrusted-root value → LOCKED.
+        if _is_cross_origin_export(intent) and untrusted_root:
             t = self._transition_to(
                 DegradationLevel.LOCKED,
                 source_id=source_id,
@@ -163,43 +186,42 @@ class DegradationEngine:
             )
             if t is not None:
                 return t
-            # Already at LOCKED or TERMINAL — fall through to check other rules.
 
-        # Rule: source tool pressure threshold → quarantine + RESTRICTED.
-        if (
-            not source.quarantined
-            and source.tool_pressure_count >= self._policy.SOURCE_TOOL_PRESSURE_THRESHOLD
-        ):
-            transition = self._quarantine_and_restrict(source, source_id, intent.tool)
+        # Facts 2/3: deny where causal_root is tainted, or the intent executes
+        # generated code / followed an external read → quarantine + RESTRICTED.
+        if untrusted_root or intent.executes_generated_code or intent.after_external_read:
+            if not source.quarantined:
+                return self._quarantine_and_restrict(source, source_id, intent.tool)
+            return None
 
-        # Rule: source instruction pressure threshold → quarantine + RESTRICTED.
-        elif (
-            not source.quarantined
-            and source.instruction_pressure_count >= self._policy.SOURCE_INSTR_PRESSURE_THRESHOLD
-        ):
-            transition = self._quarantine_and_restrict(source, source_id, intent.tool)
-
-        # First suspicious signal without immediate quarantine → CAUTIOUS.
-        elif not source.quarantined and self._state.level == DegradationLevel.NORMAL:
-            transition = self._transition_to(
+        # A benign denial (no untrusted root, not dangerous) is a soft signal:
+        # first one → CAUTIOUS (non-narrowing). Decidable fact ("a denial
+        # occurred"), parameter-free.
+        if self._current_level() == DegradationLevel.NORMAL:
+            return self._transition_to(
                 DegradationLevel.CAUTIOUS,
                 source_id=source_id,
                 trigger_intent=intent.tool,
-                reason="first_suspicious_signal",
+                reason="denial_observed",
             )
+        return None
 
-        # Rule: session deny threshold → LOCKED.
-        if self._state.session_deny_count >= self._policy.SESSION_DENY_THRESHOLD:
-            t = self._transition_to(
-                DegradationLevel.LOCKED,
-                source_id=source_id,
-                trigger_intent=intent.tool,
-                reason="session_deny_threshold",
-            )
-            if t is not None:
-                transition = t
+    def _is_untrusted_root(
+        self,
+        intent: "NormalizedIntent",
+        taint_state: "TaintState",
+    ) -> bool:
+        """Decidable: does the driving value have an untrusted causal_root?"""
+        if taint_state.is_tainted:
+            return True
+        if (intent.provenance or "") in ("external_web", "unknown"):
+            return True
+        return bool(intent.after_external_read)
 
-        return transition
+    def _current_level(self) -> DegradationLevel:
+        """Effective level (shadow in observe mode, real otherwise)."""
+        return self._shadow_level if self._observe else self._state.level
+
 
     def record_detection_crossing(
         self,

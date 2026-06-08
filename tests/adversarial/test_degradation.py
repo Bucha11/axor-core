@@ -237,23 +237,31 @@ def test_degrad_ttl_d1_auto_terminal_after_ttl_expires():
     assert transition.new_level == DegradationLevel.TERMINAL
 
 
-def test_degrad_ttl_d2_no_auto_terminal_before_ttl():
-    """LOCKED state before TTL expiry does not auto-terminal."""
+def test_degrad_ttl_d2_locked_stable_under_benign_but_terminal_on_dangerous_fact():
+    """v4.12 TM8: while LOCKED, a *benign* signal keeps the level LOCKED, but a
+    further untrusted-root *dangerous* fact escalates to TERMINAL (fact 4) —
+    independent of any timer. (TTL remains only as an orchestrator hook.)
+    """
     from axor_core.contracts.degradation import DegradationLevel
-    # Long TTL — should not expire during test
-    engine = _engine(ttl=3600.0)
+    engine = _engine(ttl=3600.0)  # TTL won't fire during the test
     ts = _taint()
-    ni = _ni(tool="curl", operation="network_request", destination_kind="private_network")
-    denial = _deny()
-
-    engine.record_signal(ni, denial, ts)
+    # Escalate to LOCKED via a cross-origin export of an untrusted-root value.
+    engine.record_signal(
+        _ni(tool="curl", operation="network_request", destination_kind="private_network"),
+        _deny(), ts,
+    )
     assert engine.state.level == DegradationLevel.LOCKED
 
-    # Immediately send more signals — should stay LOCKED, not go TERMINAL
-    for _ in range(5):
-        engine.record_signal(_ni(), _deny(), ts)
-
+    # A benign, clean, non-dangerous denial does NOT escalate — stays LOCKED.
+    clean_ts = _taint(tainted=False)
+    benign = _ni(tool="read", operation="file_read", provenance="repo")
+    engine.record_signal(benign, _deny(), clean_ts)
     assert engine.state.level == DegradationLevel.LOCKED
+
+    # A further untrusted-root dangerous fact → TERMINAL (fact 4).
+    transition = engine.record_signal(_ni(tool="bash"), _deny(), ts)
+    assert engine.state.level == DegradationLevel.TERMINAL
+    assert transition is not None and transition.new_level == DegradationLevel.TERMINAL
 
 
 # ── E) Child floor inheritance ────────────────────────────────────────────────
