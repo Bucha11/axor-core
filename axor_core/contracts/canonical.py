@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum
+from enum import Enum, IntEnum
 
 
 class ToolCategory(str, Enum):
@@ -34,6 +34,23 @@ class OperationClass(str, Enum):
     NETWORK = "network"
     SPAWN = "spawn"
     UNKNOWN = "unknown"
+
+
+class ConsequenceClass(IntEnum):
+    """The fourth sink-policy axis (TM3.1) — irreversibility of the *action*.
+
+    Distinct from OperationClass (which names the kind of operation): this ranks
+    how costly/irreversible the effect is, independent of the arguments' content
+    or provenance. It is a deterministic table lookup keyed on the sink's
+    structural type (content-blind, T0/K3.5-clean — see policy/consequence.py).
+
+    Ordered so that `cls <= ceiling` expresses "within the unattended ceiling":
+        BENIGN ⊏ REVERSIBLE ⊏ CONSEQUENTIAL ⊏ CATASTROPHIC
+    """
+    BENIGN = 0
+    REVERSIBLE = 1
+    CONSEQUENTIAL = 2
+    CATASTROPHIC = 3
 
 
 class ExportClass(str, Enum):
@@ -81,3 +98,7 @@ class CanonicalizedIntent:
     taint_state_summary: str     # "clean" | "tainted" | "tainted:web,mcp" etc.
     lease_state_summary: str     # "none" | "active:N_uses_remaining" etc.
     node_depth: int
+    # Fourth sink-policy axis (TM3.1) — deterministic, keyed on the sink type.
+    # Defaulted so existing construction sites remain valid; the canonicalizer
+    # populates it from the sink's structural type.
+    consequence_class: ConsequenceClass = ConsequenceClass.CONSEQUENTIAL

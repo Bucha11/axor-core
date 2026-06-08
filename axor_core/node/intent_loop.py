@@ -15,7 +15,9 @@ from axor_core.contracts.anomaly import (
 )
 from axor_core.contracts.envelope import ExecutionEnvelope
 from axor_core.contracts.intent import Intent, IntentKind, ResolvedIntent
+from axor_core.contracts.canonical import ConsequenceClass
 from axor_core.contracts.policy import PolicyDecision, PolicyDecisionKind
+from axor_core.policy.consequence import consequence_class
 from axor_core.contracts.result import ExecutorEvent, ExecutorEventKind
 from axor_core.contracts.trace import (
     CancelledEvent,
@@ -365,6 +367,22 @@ class IntentLoop:
                 intent=intent,
                 approved=False,
                 reason=decision.reason,
+                result=denial_resp.to_tool_result(),
+            )
+
+        # consequence axis (TM3.1) — content-blind structural gate on the action
+        # class, part of the pure `allow`. Catches consequential-action-under-
+        # trusted-provenance (the OpenClaw class, X5) that the provenance axes
+        # cannot see. Reads only the sink type + policy ceiling.
+        consequence_denial = self._check_consequence(tool_name, envelope)
+        if consequence_denial is not None:
+            self._record_denial(intent, consequence_denial, envelope)
+            denial_resp = _make_denial_response(consequence_denial, "consequence_gate")
+            self._record_degradation_signal(intent, denial_resp)
+            return ResolvedIntent(
+                intent=intent,
+                approved=False,
+                reason=consequence_denial,
                 result=denial_resp.to_tool_result(),
             )
 
@@ -837,6 +855,32 @@ class IntentLoop:
                 intent_kind=intent.kind.value,
                 reason=reason,
             )
+        )
+
+    def _check_consequence(
+        self,
+        tool_name: str,
+        envelope: ExecutionEnvelope,
+    ) -> str | None:
+        """Consequence axis gate (TM3.1). Return a denial reason if the sink's
+        action class exceeds the policy's unattended ceiling and no governance
+        gate is present, else None. Content-blind: reads only the sink type.
+
+        The governance gate is satisfied by an active escalation grant or
+        capability lease for the tool (a human/operator-authorised path).
+        """
+        cls = consequence_class(tool_name)
+        ceiling = getattr(
+            envelope.policy, "max_unattended_consequence", ConsequenceClass.CONSEQUENTIAL
+        )
+        if cls <= ceiling:
+            return None
+        # over ceiling — admissible only through a governance gate.
+        if tool_name in self._granted_escalations or tool_name in self._capability_leases:
+            return None
+        return (
+            f"consequence gate: sink '{tool_name}' is {cls.name}, exceeding the "
+            f"unattended ceiling {ceiling.name}; a governance/human gate is required"
         )
 
     # ── Detection layer (TM7) — out-of-band from `allow` ────────────────────────
