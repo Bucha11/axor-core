@@ -525,8 +525,15 @@ class IntentLoop:
                     # Reading secrets / system paths or touching files outside the
                     # trusted workspace may introduce adversarial or sensitive
                     # content — taint with FILE source so later high-risk ops are
-                    # contained by taint enforcement.
-                    self._taint_engine.propagate(TaintSource.FILE, TaintScope.SESSION)
+                    # contained by taint enforcement. A secret-like read also sets
+                    # the confidentiality label (TM2): the session is now sensitive.
+                    is_sensitive = (
+                        normalized_check.target_kind == "secret"
+                        or normalized_check.reads_secret_like_data
+                    )
+                    self._taint_engine.propagate(
+                        TaintSource.FILE, TaintScope.SESSION, sensitive=is_sensitive
+                    )
                 self._taint_engine.tick_intent()
                 for _ev in self._taint_engine.drain_events():
                     self._trace_events.append(_ev)

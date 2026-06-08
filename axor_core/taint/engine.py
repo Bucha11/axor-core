@@ -88,18 +88,22 @@ class TaintEngine:
                 parent_inherited=self._state.parent_inherited,
                 clearance_history=self._state.clearance_history,
                 clearance_authority=self._state.clearance_authority,
+                sensitive=self._state.sensitive,
             )
 
     def propagate(
         self,
         source: TaintSource,
         scope: TaintScope = TaintScope.SESSION,
+        sensitive: bool = False,
     ) -> TaintState:
         """
         Record that an external input from `source` was received.
 
         Widens scope if the new scope is broader than the current one.
-        Updates first-taint timestamp on first propagation.
+        `sensitive` (TM2 confidentiality label) is monotonically OR-ed in — once
+        a sensitive source has contributed, the session stays sensitive until
+        governance clears it. Updates first-taint timestamp on first propagation.
         """
         now = time.monotonic()
         if not self._state.is_tainted:
@@ -117,6 +121,7 @@ class TaintEngine:
             parent_inherited=self._state.parent_inherited,
             clearance_history=self._state.clearance_history,
             clearance_authority=self._state.clearance_authority,
+            sensitive=self._state.sensitive or sensitive,
         )
         self._pending_events.append(TaintPropagatedEvent(
             kind=TraceEventKind.TAINT_PROPAGATED,
@@ -261,6 +266,7 @@ class TaintEngine:
             parent_inherited=True,
             clearance_history=parent_state.clearance_history,
             clearance_authority=parent_state.clearance_authority,
+            sensitive=self._state.sensitive or parent_state.sensitive,
         )
         if not self._first_taint_time:
             self._first_taint_time = time.monotonic()

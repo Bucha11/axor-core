@@ -4,6 +4,28 @@ from dataclasses import dataclass, field
 from enum import Enum
 
 
+class Carrier(str, Enum):
+    """Imperative-channel lattice (TM1): can the *form* of a value carry an
+    instruction?  ENDORSED ⊏ CLOSED_SCHEMA ⊏ FREE_TEXT, ⊤ = FREE_TEXT (fail-closed).
+
+    Classification must be deterministic/structural, never a model (T0) — see
+    security/carrier.py. A model classifier would let the projection be steered
+    by the governed content's semantics (breaks K4/T0).
+    """
+    ENDORSED = "endorsed"          # structurally guaranteed instruction-free
+    CLOSED_SCHEMA = "closed_schema"  # parses fully into a closed, verified schema
+    FREE_TEXT = "free_text"        # ⊤ — may carry an instruction; fail-closed
+
+
+# Carrier order for lattice comparisons (index = height; FREE_TEXT is ⊤).
+_CARRIER_ORDER = (Carrier.ENDORSED, Carrier.CLOSED_SCHEMA, Carrier.FREE_TEXT)
+
+
+def carrier_join(a: Carrier, b: Carrier) -> Carrier:
+    """Least upper bound (the more imperative / less safe of the two)."""
+    return _CARRIER_ORDER[max(_CARRIER_ORDER.index(a), _CARRIER_ORDER.index(b))]
+
+
 class TaintSource(str, Enum):
     """Origin of an external input that triggered a taint propagation."""
     WEB = "web"
@@ -72,6 +94,11 @@ class TaintState:
     parent_inherited: bool = False
     clearance_history: tuple[ClearanceRecord, ...] = field(default_factory=tuple)
     clearance_authority: str = ""
+    # Confidentiality label (TM2 dual labels). Integrity is implicit in `sources`
+    # (any source ⇒ untrusted); `sensitive` is the independent confidentiality
+    # axis — True if a sensitive source (e.g. a secret read) contributed, i.e. it
+    # is harmful for this to leave. Drives the confidentiality/egress gate.
+    sensitive: bool = False
 
     @property
     def is_tainted(self) -> bool:
