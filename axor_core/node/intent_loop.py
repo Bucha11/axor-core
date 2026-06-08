@@ -45,6 +45,8 @@ from axor_core.contracts.degradation import DegradationLevel
 from axor_core.contracts.taint import TaintScope, TaintSource, TaintState
 from axor_core.degradation.engine import _LOCKED_ALLOWED_TOOLS
 from axor_core.node.normalizer import IntentNormalizer
+from axor_core.taint.causal_root import CausalRoot
+from axor_core.taint.ledger import ValueTaintLedger
 
 if TYPE_CHECKING:
     from axor_core.contracts.lease import CapabilityLease
@@ -142,6 +144,9 @@ class IntentLoop:
         self._reputation_enricher = reputation_enricher
         self._normalizer = IntentNormalizer()
         self._intent_window: list[NormalizedIntent] = []
+        # Per-value taint ledger (TM2) — content-derivation provenance. Always on;
+        # registration is cheap and the value-level gate is sound (deny-only).
+        self._value_ledger = ValueTaintLedger()
         self._intent_sequence = 0
         self._token_totals = _TokenAccumulator()
         self._granted_escalations: dict[str, _GrantedEscalation] = {}
@@ -486,6 +491,41 @@ class IntentLoop:
                     result=denial_resp.to_tool_result(),
                 )
 
+        # value-level enforcement (per-value causal_root, TM2). Sound, deny-only:
+        # an ADDITIONAL gate on top of the session floor above — it pinpoints the
+        # specific tainted/sensitive VALUE flowing into a sink (web content placed
+        # into bash; a secret placed into an outbound payload) via the content-
+        # derivation ledger. Unlike the session gate, value-level exfil fires on
+        # ANY external destination (the actual sensitive bytes are leaving).
+        if normalized is not None:
+            driving_root = self._value_ledger.derive(tool_args)
+            if driving_root.is_tainted or driving_root.sensitive:
+                exfil_destination = normalized.destination_kind in (
+                    "cloud_metadata", "private_network", "external_domain"
+                )
+                integrity_risk = driving_root.is_tainted and (
+                    normalized.writes_outside_workdir
+                    or normalized.executes_generated_code
+                    or exfil_destination
+                )
+                confidentiality_risk = driving_root.sensitive and exfil_destination
+                if integrity_risk or confidentiality_risk:
+                    axis = "confidentiality (sensitive value to an egress sink)" if confidentiality_risk \
+                        else "integrity (untrusted-derived value into a high-risk operation)"
+                    reason = (
+                        f"value-level taint enforcement: the driving argument of "
+                        f"'{tool_name}' derives from a tainted/sensitive value — {axis}"
+                    )
+                    self._record_denial(intent, reason, envelope)
+                    denial_resp = _make_denial_response(reason, "value_taint_enforcement")
+                    self._record_degradation_signal(intent, denial_resp, normalized)
+                    return ResolvedIntent(
+                        intent=intent,
+                        approved=False,
+                        reason=reason,
+                        result=denial_resp.to_tool_result(),
+                    )
+
         # approved or transformed — emit the appropriate trace event
         is_transform = decision.kind == PolicyDecisionKind.TRANSFORM
         self._trace_events.append(
@@ -510,6 +550,9 @@ class IntentLoop:
             result = await self._executor.execute(
                 effective_intent, envelope.capabilities
             )
+            # Register the tool output into the per-value ledger (TM2) so a later
+            # sink whose argument carries this content is gated at the value level.
+            self._register_value_taint(effective_intent, result, normalized)
             # Propagate taint after any successful privileged read.
             if self._taint_engine is not None:
                 normalized_check = normalized or self._normalizer.normalize(effective_intent)
@@ -863,6 +906,31 @@ class IntentLoop:
                 reason=reason,
             )
         )
+
+    def _register_value_taint(
+        self,
+        effective_intent: Intent,
+        result: Any,
+        normalized: NormalizedIntent | None,
+    ) -> None:
+        """Register a tool's output content in the per-value ledger with the
+        causal_root its read introduces (TM2). Mirrors the session-taint triggers:
+        external/web reads → untrusted; secret/system reads → untrusted + sensitive.
+        """
+        ni = normalized or self._normalizer.normalize(effective_intent)
+        if ni.target_kind in ("external_url", "cloud_metadata", "docker_socket") or \
+                ni.operation == "network_request":
+            root = CausalRoot.external_read(TaintSource.WEB)
+        elif (
+            ni.target_kind in ("secret", "system_path")
+            or ni.reads_secret_like_data
+            or ni.writes_outside_workdir
+        ):
+            sensitive = ni.target_kind == "secret" or ni.reads_secret_like_data
+            root = CausalRoot.external_read(TaintSource.FILE, sensitive=sensitive)
+        else:
+            return  # clean read — nothing to register
+        self._value_ledger.register(result, root)
 
     def _check_consequence(
         self,
