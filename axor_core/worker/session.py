@@ -296,6 +296,13 @@ class GovernedSession:
             query = MemoryQuery(namespaces=namespaces, max_results=20)
             fragments = await self._memory_provider.load(query)
             memory_fragments = [f.content for f in fragments]
+            # Re-mint on read-back (TM3.2 / TM4.1): a value persisted to memory and
+            # re-read re-mints as tainted — "soft release to memory" does not launder
+            # it. We do not assume in-session memory is clean (stricter than CaMeL /
+            # Firewalls, which assume the environment is not poisoned).
+            if memory_fragments:
+                from axor_core.contracts.taint import TaintScope, TaintSource
+                self._taint_engine.propagate(TaintSource.MEMORY, TaintScope.SESSION)
 
         raw_state = RawExecutionState(
             task=task,
