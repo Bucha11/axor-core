@@ -19,6 +19,7 @@ from axor_core.contracts.policy import PolicyDecision, PolicyDecisionKind
 from axor_core.contracts.result import ExecutorEvent, ExecutorEventKind
 from axor_core.contracts.trace import (
     CancelledEvent,
+    DetectionSignalEvent,
     EscalationDeniedEvent,
     EscalationGrantedEvent,
     IntentDeniedEvent,
@@ -386,30 +387,21 @@ class IntentLoop:
             normalized = self._reputation_enricher.enrich(normalized, intent)
             # normalized_for_layer2 keeps the pre-enrichment version (invariant A-11)
 
-        # Phase 1 reputation rule — deterministic deny before ML cascade (axor-sentinel spec §Layer 2)
-        # Fires when resource has high accumulated suspicion AND session already read external input.
-        if normalized is not None and (
-            normalized.target_resource_reputation >= 0.8
-            and normalized.after_external_read
-        ):
-            reason = (
-                "reputation enforcement: resource reputation "
-                f"{normalized.target_resource_reputation:.3f} >= 0.8 "
-                "and session preceded by external read"
-            )
-            self._record_denial(intent, reason, envelope)
-            denial_resp = _make_denial_response(reason, "high_reputation_resource_tainted_access")
-            # DegradationEngine interaction: reputation deny contributes to tool_pressure_count
-            # per spec §DegradationEngine interaction.
-            self._record_degradation_signal(intent, denial_resp, normalized)
-            return ResolvedIntent(
-                intent=intent,
-                approved=False,
-                reason=reason,
-                result=denial_resp.to_tool_result(),
+        # ── Detection layer (TM7) — strictly out-of-band from `allow` ─────────
+        # reputation + anomaly are detection signals. They MUST NOT return a
+        # decision here: reading a probabilistic score/float into the gate would
+        # break T1 (equal projection → equal decision). Detection records
+        # telemetry and may feed degradation a tightening-only crossing-fact
+        # (TM7.1); any resulting denial then comes from the degradation-narrowed
+        # policy gate below, which is a pure function of (projection, policy).
+        if normalized is not None:
+            await self._run_detection(
+                intent, normalized, normalized_for_layer2, tool_name, envelope
             )
 
-        # degradation pre-check — enforce narrowed policy from previous signals
+        # ── allow gate (pure) — capability already checked above; here the
+        # degradation-narrowed policy gate, incl. any tightening just applied by
+        # detection. Reads policy/state and structural projections only.
         if self._degradation_engine is not None and normalized is not None:
             taint_state = self._taint_engine.state if self._taint_engine is not None else None
             degradation_denial = self._check_degradation_denial(
@@ -424,56 +416,6 @@ class IntentLoop:
                     approved=False,
                     reason=degradation_denial,
                     result=denial_resp.to_tool_result(),
-                )
-
-        # anomaly detection — runs after policy approval
-        # A-11: pass pre-enrichment normalized (reputation floats at 0.0) to Layer 2
-        if self._anomaly_detector is not None and normalized_for_layer2 is not None:
-            self._intent_window.append(normalized_for_layer2)
-            if len(self._intent_window) > self._anomaly_window_size:
-                self._intent_window.pop(0)
-            try:
-                anomaly = await self._anomaly_detector.score(
-                    window=list(self._intent_window),
-                    policy_name=envelope.policy.name,
-                )
-            except Exception as exc:
-                reason = f"anomaly detector raised unexpectedly: {type(exc).__name__}: {exc}"
-                log.error("anomaly detector error — failing closed: %s", exc, exc_info=True)
-                self._record_denial(intent, reason, envelope)
-                denial_resp = _make_denial_response(reason, "anomaly_detector_error")
-                self._record_degradation_signal(intent, denial_resp, normalized)
-                return ResolvedIntent(
-                    intent=intent,
-                    approved=False,
-                    reason=reason,
-                    result=denial_resp.to_tool_result(),
-                )
-
-            if anomaly is not None and anomaly.cls == AnomalyClass.CRITICAL:
-                reason = f"anomaly detector: CRITICAL score={anomaly.score:.2f} reasons={anomaly.reasons}"
-                self._record_anomaly_event(
-                    tool_name=tool_name,
-                    normalized=normalized,
-                    anomaly=anomaly,
-                    policy_action="denied",
-                    envelope=envelope,
-                )
-                self._record_denial(intent, reason, envelope)
-                return ResolvedIntent(
-                    intent=intent,
-                    approved=False,
-                    reason=reason,
-                    result=_denial_result(tool_name, reason),
-                )
-
-            if anomaly is not None and anomaly.cls == AnomalyClass.SUSPICIOUS:
-                self._record_anomaly_event(
-                    tool_name=tool_name,
-                    normalized=normalized,
-                    anomaly=anomaly,
-                    policy_action="flagged",
-                    envelope=envelope,
                 )
 
         # taint enforcement — deny high-risk operations on a tainted session
@@ -893,6 +835,110 @@ class IntentLoop:
                 node_id=envelope.node_id,
                 sequence=len(self._trace_events),
                 intent_kind=intent.kind.value,
+                reason=reason,
+            )
+        )
+
+    # ── Detection layer (TM7) — out-of-band from `allow` ────────────────────────
+
+    async def _run_detection(
+        self,
+        intent: Intent,
+        normalized: NormalizedIntent,
+        normalized_for_layer2: NormalizedIntent | None,
+        tool_name: str,
+        envelope: ExecutionEnvelope,
+    ) -> None:
+        """Run detection-layer checks (reputation, anomaly).
+
+        Records detection telemetry and may tighten degradation (TM7.1, tightening
+        -only). Returns nothing: detection never decides `allow`. A1-11 preserved —
+        the anomaly detector receives the pre-enrichment projection.
+        """
+        # Reputation crossing (sentinel) — a decidable threshold-crossing fact,
+        # not a score read into the gate.
+        if normalized.target_resource_reputation >= 0.8 and normalized.after_external_read:
+            fed = self._feed_detection_crossing(
+                normalized,
+                reason=f"reputation>={normalized.target_resource_reputation:.3f}_after_external_read",
+            )
+            self._record_detection_signal(
+                detector="reputation",
+                verdict="crossing",
+                score=normalized.target_resource_reputation,
+                tool=tool_name,
+                fed_degradation=fed,
+                envelope=envelope,
+                reason="high resource reputation after external read",
+            )
+
+        # Anomaly (ML / LLM verifier) — behavioral, probabilistic, detection-only.
+        if self._anomaly_detector is None or normalized_for_layer2 is None:
+            return
+        self._intent_window.append(normalized_for_layer2)
+        if len(self._intent_window) > self._anomaly_window_size:
+            self._intent_window.pop(0)
+        try:
+            anomaly = await self._anomaly_detector.score(
+                window=list(self._intent_window),
+                policy_name=envelope.policy.name,
+            )
+        except Exception as exc:
+            # The detector is advisory (detection register). On error we do NOT
+            # hard-deny — that would put a steerable component back on the trusted
+            # path. We tighten degradation conservatively and record loudly.
+            log.error("anomaly detector error — detection degraded: %s", exc, exc_info=True)
+            fed = self._feed_detection_crossing(normalized, reason="anomaly_detector_error")
+            self._record_detection_signal(
+                detector="anomaly", verdict="error", score=0.0, tool=tool_name,
+                fed_degradation=fed, envelope=envelope,
+                reason=f"{type(exc).__name__}: {exc}",
+            )
+            return
+
+        if anomaly is not None and anomaly.cls == AnomalyClass.CRITICAL:
+            self._feed_detection_crossing(normalized, reason=f"anomaly_critical:{anomaly.score:.2f}")
+            self._record_anomaly_event(
+                tool_name=tool_name, normalized=normalized, anomaly=anomaly,
+                policy_action="detected", envelope=envelope,
+            )
+        elif anomaly is not None and anomaly.cls == AnomalyClass.SUSPICIOUS:
+            self._record_anomaly_event(
+                tool_name=tool_name, normalized=normalized, anomaly=anomaly,
+                policy_action="flagged", envelope=envelope,
+            )
+
+    def _feed_detection_crossing(self, normalized: NormalizedIntent, *, reason: str) -> bool:
+        """Feed a tightening-only crossing-fact into degradation. Returns True if fed."""
+        if self._degradation_engine is None:
+            return False
+        taint_state = self._taint_engine.state if self._taint_engine is not None else TaintState()
+        self._degradation_engine.record_detection_crossing(normalized, taint_state, reason=reason)
+        for event in self._degradation_engine.drain_events():
+            self._trace_events.append(event)
+        return True
+
+    def _record_detection_signal(
+        self,
+        *,
+        detector: str,
+        verdict: str,
+        score: float,
+        tool: str,
+        fed_degradation: bool,
+        envelope: ExecutionEnvelope,
+        reason: str,
+    ) -> None:
+        self._trace_events.append(
+            DetectionSignalEvent(
+                kind=TraceEventKind.DETECTION_SIGNAL,
+                node_id=envelope.node_id,
+                sequence=len(self._trace_events),
+                detector=detector,
+                verdict=verdict,
+                score=score,
+                tool=tool,
+                fed_degradation=fed_degradation,
                 reason=reason,
             )
         )

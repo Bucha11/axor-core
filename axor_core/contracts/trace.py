@@ -73,6 +73,12 @@ class TraceEventKind(str, Enum):
     DEGRADATION_TRANSITION = "degradation_transition"
     SOURCE_QUARANTINED = "source_quarantined"
 
+    # ── Detection-register events (TM7) ───────────────────────────────────────
+    # Emitted by the detection layer (reputation / anomaly). Detection NEVER
+    # gates `allow` directly (would break T1); it records telemetry and may feed
+    # degradation as a tightening-only crossing-fact (TM7.1).
+    DETECTION_SIGNAL = "detection_signal"
+
 
 @dataclass(frozen=True)
 class TraceEvent:
@@ -276,6 +282,23 @@ class SourceQuarantinedEvent(TraceEvent):
     """Emitted when a source is quarantined by DegradationEngine."""
     source_id: str = ""
     quarantined_at: float = 0.0
+    reason: str = ""
+
+
+@dataclass(frozen=True)
+class DetectionSignalEvent(TraceEvent):
+    """Emitted by the detection layer (reputation / anomaly).
+
+    Detection is out-of-band from `allow` (TM7): it never returns a decision.
+    A "crossing" verdict is a decidable threshold-crossing fact that may feed
+    degradation tightening-only (TM7.1); a "flagged"/"error" verdict is telemetry
+    only. `fed_degradation` records whether this signal tightened degradation.
+    """
+    detector: str = ""        # "reputation" | "anomaly"
+    verdict: str = ""         # "crossing" | "flagged" | "error"
+    score: float = 0.0
+    tool: str = ""
+    fed_degradation: bool = False
     reason: str = ""
 
 

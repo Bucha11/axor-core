@@ -72,8 +72,15 @@ async def _run_loop(
 # ── Tests ──────────────────────────────────────────────────────────────────────
 
 @pytest.mark.asyncio
-async def test_critical_anomaly_denies_tool_call(make_envelope, cap_executor):
-    """CRITICAL anomaly score → tool call is denied, approved=False."""
+async def test_critical_anomaly_is_detection_only_without_degradation(make_envelope, cap_executor):
+    """v4.12 pure-allow contract: the anomaly detector is DETECTION, not a gate.
+
+    With no degradation engine wired, a CRITICAL anomaly on a `read` (not an
+    effect sink — K0 "govern effects, not reads") does NOT deny. It records a
+    detection event (policy_action="detected") and the read is approved. The
+    detector cannot gate `allow` directly (that would break T1); it can only deny
+    via degradation (see test below).
+    """
     trace_events: list = []
     detector = _mock_detector(AnomalyClass.CRITICAL, score=0.92)
 
@@ -86,29 +93,54 @@ async def test_critical_anomaly_denies_tool_call(make_envelope, cap_executor):
 
     events, trace = await _run_loop(loop, envelope, tool_name="read")
 
-    # Tool result event should be a denial
+    # Read is approved — detection is out-of-band from allow, no degradation to tighten.
     tool_results = [e for e in events if e.kind == ExecutorEventKind.TEXT]
     assert len(tool_results) == 1
-    payload = tool_results[0].payload
-    assert payload.get("approved") is False
-    # Worker receives coarse DenialResponse — no raw anomaly reason exposed
-    tool_result = payload.get("tool_result", {})
-    assert tool_result.get("error") == "denied"
-    assert tool_result.get("category") == "governance_error"
-    assert "decision_id" in tool_result
+    assert tool_results[0].payload.get("approved") is True
 
-    # ANOMALY_FLAGGED trace event emitted
+    # Detection event recorded with the new "detected" verdict.
     anomaly_events = [e for e in trace if e.kind == TraceEventKind.ANOMALY_FLAGGED]
     assert len(anomaly_events) == 1
     ae = anomaly_events[0]
     assert isinstance(ae, SuspiciousIntentEvent)
     assert ae.anomaly_class == AnomalyClass.CRITICAL
-    assert ae.policy_action == "denied"
+    assert ae.policy_action == "detected"
     assert ae.score == pytest.approx(0.92)
 
-    # INTENT_DENIED trace event also emitted
-    denied_events = [e for e in trace if e.kind == TraceEventKind.INTENT_DENIED]
-    assert len(denied_events) == 1
+    # No denial — detection alone never denies.
+    assert len([e for e in trace if e.kind == TraceEventKind.INTENT_DENIED]) == 0
+
+
+@pytest.mark.asyncio
+async def test_critical_anomaly_tightens_degradation_and_denies_effect(make_envelope, cap_executor):
+    """The enforcing path: CRITICAL → tightening-only degradation crossing (TM7.1)
+    → narrowed policy → the effect sink (`write`) is denied by the pure gate.
+    """
+    from axor_core.degradation.engine import DegradationEngine
+    from axor_core.contracts.trace import TraceEventKind as _TEK
+
+    trace_events: list = []
+    detector = _mock_detector(AnomalyClass.CRITICAL, score=0.95)
+
+    loop = IntentLoop(
+        capability_executor=cap_executor,
+        trace_events=trace_events,
+        anomaly_detector=detector,
+        degradation_engine=DegradationEngine(),
+    )
+    envelope = make_envelope()
+
+    events, trace = await _run_loop(loop, envelope, tool_name="write", tool_args={"path": "x.txt", "content": "y"})
+
+    # write is an effect sink → denied via degradation narrowing.
+    tool_results = [e for e in events if e.kind == ExecutorEventKind.TEXT]
+    assert tool_results[0].payload.get("approved") is False
+    # degradation tightened (a transition was emitted) and intent was denied.
+    assert any(e.kind == _TEK.DEGRADATION_TRANSITION for e in trace)
+    assert any(e.kind == TraceEventKind.INTENT_DENIED for e in trace)
+    # the anomaly was recorded as detection, not as the gate decision.
+    ae = [e for e in trace if e.kind == TraceEventKind.ANOMALY_FLAGGED]
+    assert ae and ae[0].policy_action == "detected"
 
 
 @pytest.mark.asyncio
@@ -193,9 +225,16 @@ async def test_normal_anomaly_no_trace_event(make_envelope, cap_executor):
 
 
 @pytest.mark.asyncio
-async def test_anomaly_detector_exception_is_safe(make_envelope, cap_executor):
-    """If the anomaly detector raises, the tool call is denied (fail-closed).
-    The governance system must not grant tool access when its safety check fails."""
+async def test_anomaly_detector_exception_fails_open_to_detection(make_envelope, cap_executor):
+    """v4.12 contract: the anomaly detector is advisory (detection register).
+
+    On detector error we do NOT hard-deny — that would put a steerable component
+    back on the trusted path. The structural gates (capability, taint, degradation)
+    still ran, so the read proceeds; the error is recorded as a DETECTION_SIGNAL
+    (verdict="error") and would tighten degradation if one were wired.
+    """
+    from axor_core.contracts.trace import DetectionSignalEvent
+
     trace_events: list = []
     detector = AsyncMock()
     detector.score = AsyncMock(side_effect=RuntimeError("detector exploded"))
@@ -209,9 +248,12 @@ async def test_anomaly_detector_exception_is_safe(make_envelope, cap_executor):
 
     events, trace = await _run_loop(loop, envelope, tool_name="read")
 
-    # Should not raise; tool call is denied (fail-closed on detector error)
+    # Read proceeds (fail-open at the detector — it is detection, not a gate).
     tool_results = [e for e in events if e.kind == ExecutorEventKind.TEXT]
-    assert tool_results[0].payload.get("approved") is False
+    assert tool_results[0].payload.get("approved") is True
 
-    # No anomaly event recorded when detector raises (denial is recorded as INTENT_DENIED)
+    # The detector error is recorded as a detection signal, not swallowed.
+    det = [e for e in trace if isinstance(e, DetectionSignalEvent)]
+    assert det and det[0].detector == "anomaly" and det[0].verdict == "error"
+    # No spurious ANOMALY_FLAGGED on an error.
     assert len([e for e in trace if e.kind == TraceEventKind.ANOMALY_FLAGGED]) == 0
