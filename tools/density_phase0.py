@@ -35,7 +35,25 @@ from pathlib import Path
 # Make axor_core importable when run from the repo root.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from axor_core.contracts.canonical import ConsequenceClass  # noqa: E402
 from axor_core.taint.density import DensityMeter  # noqa: E402
+
+# Consequence class per CORPUS OPERATION. The corpus speaks in operation names;
+# the core consequence table (axor_core.policy.consequence) is keyed on TOOL
+# names, so calling consequence_class() on these strings would silently return the
+# CONSEQUENTIAL default for all of them. We therefore map each measured operation
+# to its class explicitly, mirroring the core table's structural intent:
+#   execute / install / egress  -> CONSEQUENTIAL (hard-to-reverse world effect)
+#   file_write                  -> REVERSIBLE    (local mutation, VCS-recoverable)
+# The θ-partition (Corollary, stratified enforcement) then tests the prediction:
+# per-value should COLLAPSE toward session-sticky in the ≥θ (high) partition and
+# SEPARATE in the <θ (low) partition.
+_OP_CONSEQUENCE: dict[str, ConsequenceClass] = {
+    "execute_generated_code": ConsequenceClass.CONSEQUENTIAL,
+    "package_install":        ConsequenceClass.CONSEQUENTIAL,
+    "network_request":        ConsequenceClass.CONSEQUENTIAL,
+    "file_write":             ConsequenceClass.REVERSIBLE,
+}
 
 # World-effecting sinks. Reported per-operation below for full transparency.
 HIGH_STAKES_OPS = frozenset(
@@ -131,6 +149,50 @@ def replay(trajectories: list[tuple[list[dict], str]]) -> tuple[DensityMeter, di
     return overall, by_label
 
 
+def _ratio(num: int, den: int) -> float:
+    return (num / den) if den else 0.0
+
+
+def partition_by_theta(report, theta: ConsequenceClass) -> dict[str, dict]:
+    """Regroup a DensityReport's by_operation rows into the ≥θ (high) and <θ (low)
+    consequence partitions and compute per-axis densities for each.
+
+    No re-measurement: this sums the rows the meter already recorded
+    (firings, sess_integ, val_integ, sess_sens, val_sens), so the partition figures
+    are exactly consistent with the overall ones. Operations with no class mapping
+    are reported separately as 'unclassified' rather than silently bucketed."""
+    buckets = {
+        "high (≥θ)": [0, 0, 0, 0, 0],
+        "low (<θ)": [0, 0, 0, 0, 0],
+        "unclassified": [0, 0, 0, 0, 0],
+    }
+    for op, row in report.by_operation.items():
+        cls = _OP_CONSEQUENCE.get(op)
+        if cls is None:
+            key = "unclassified"
+        elif cls >= theta:
+            key = "high (≥θ)"
+        else:
+            key = "low (<θ)"
+        for k in range(5):
+            buckets[key][k] += row[k]
+
+    out: dict[str, dict] = {}
+    for key, (f, si, vi, ss, vs) in buckets.items():
+        if f == 0:
+            continue
+        out[key] = {
+            "firings": f,
+            "integ_sticky": _ratio(si, f),
+            "integ_value": _ratio(vi, f),
+            "integ_gap": _ratio(si, f) - _ratio(vi, f),
+            "sens_sticky": _ratio(ss, f),
+            "sens_value": _ratio(vs, f),
+            "sens_gap": _ratio(ss, f) - _ratio(vs, f),
+        }
+    return out
+
+
 def load_corpus(limit: int | None) -> tuple[list[tuple[list[dict], str]], str]:
     try:
         sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "axor-classifier-simple"))
@@ -155,7 +217,13 @@ def load_corpus(limit: int | None) -> tuple[list[tuple[list[dict], str]], str]:
 def main() -> None:
     ap = argparse.ArgumentParser(description="Phase 0 density experiment (observe-only)")
     ap.add_argument("--limit", type=int, default=None, help="cap number of trajectories")
+    ap.add_argument(
+        "--theta", default="CONSEQUENTIAL",
+        choices=[c.name for c in ConsequenceClass],
+        help="θ boundary for the high/low consequence partition (default CONSEQUENTIAL)",
+    )
     args = ap.parse_args()
+    theta = ConsequenceClass[args.theta]
 
     corpus, source = load_corpus(args.limit)
     print(f"corpus: {source}\n")
@@ -163,6 +231,34 @@ def main() -> None:
 
     report = overall.report()
     print(report.render())
+
+    # ── Stratified by consequence class (Corollary: stratified enforcement) ──────
+    # Prediction under test: the per-value→session-sticky COLLAPSE that TM3.3 flags
+    # as the main risk should be confined to the ≥θ (high) partition — and that is
+    # exactly where over-taint is wanted. The <θ (low) partition should keep a real
+    # per-value separation. A near-zero high gap + a healthy low gap CONFIRMS the
+    # corollary's empirical leg on this corpus; a uniform gap across partitions
+    # WEAKENS it.
+    parts = partition_by_theta(report, theta)
+    print(f"\n=== Stratified by consequence θ={theta.name} (Corollary) ===")
+    print("partition       firings | integ sticky/value (gap) | conf sticky/value (gap)")
+    for key in ("high (≥θ)", "low (<θ)", "unclassified"):
+        p = parts.get(key)
+        if p is None:
+            continue
+        print(
+            f"  {key:13s} {p['firings']:7d} | "
+            f"{p['integ_sticky']:6.1%}/{p['integ_value']:6.1%} ({p['integ_gap']:+6.1%}) | "
+            f"{p['sens_sticky']:6.1%}/{p['sens_value']:6.1%} ({p['sens_gap']:+6.1%})"
+        )
+    hi, lo = parts.get("high (≥θ)"), parts.get("low (<θ)")
+    if hi and lo:
+        verdict = (
+            "CONFIRMS corollary (high collapses, low separates)"
+            if hi["integ_gap"] < lo["integ_gap"]
+            else "does NOT confirm (gap not larger in low partition)"
+        )
+        print(f"  -> integrity gap  high={hi['integ_gap']:+.1%}  low={lo['integ_gap']:+.1%}  => {verdict}")
 
     # Confidentiality caveat: this corpus has no per-value secret-lineage field
     # (is_value_sensitive cannot fire), so per-value confidentiality reads 0 by
