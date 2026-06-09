@@ -1,111 +1,72 @@
+"""TaintEngine — per-value provenance (TM2 / ValueProvenance) + governance release.
+
+Session-taint state was removed (dead in enforcement); the engine is per-value:
+register a value's causal_root, derive it at a sink, release by governance
+(endorse one value, or clear all).
+"""
 from __future__ import annotations
 
 import pytest
 
-from axor_core.contracts.taint import TaintScope, TaintSource
+from axor_core.contracts.taint import TaintSource
 from axor_core.errors.exceptions import TaintClearanceError
+from axor_core.taint.causal_root import CausalRoot
 from axor_core.taint.engine import TaintEngine
 
-
-def test_initial_state_not_tainted():
-    engine = TaintEngine()
-    assert not engine.state.is_tainted
+V = "TAINTED_FRAGMENT_abcdef12"
 
 
-def test_propagate_adds_source():
-    engine = TaintEngine()
-    state = engine.propagate(TaintSource.WEB)
-    assert TaintSource.WEB in state.sources
-    assert state.is_tainted
+def test_clean_by_default():
+    assert TaintEngine().derive_value("anything at all").is_tainted is False
 
 
-def test_propagate_accumulates_sources():
-    engine = TaintEngine()
-    engine.propagate(TaintSource.WEB)
-    state = engine.propagate(TaintSource.MCP)
-    assert TaintSource.WEB in state.sources
-    assert TaintSource.MCP in state.sources
+def test_register_then_derive_tainted():
+    e = TaintEngine()
+    e.register_value(V, CausalRoot.external_read(TaintSource.WEB))
+    assert e.derive_value(f"prefix {V} suffix").is_tainted is True
 
 
-def test_sticky_by_default():
-    engine = TaintEngine()
-    engine.propagate(TaintSource.WEB)
-    assert engine.state.sticky is True
+def test_clean_value_stays_clean_even_with_taint_registered():
+    e = TaintEngine()
+    e.register_value(V, CausalRoot.external_read(TaintSource.WEB))
+    assert e.derive_value("nothing tainted here").is_tainted is False
 
 
-def test_taint_persists_across_many_intents():
-    engine = TaintEngine()
-    engine.propagate(TaintSource.WEB, TaintScope.SESSION)
-    for _ in range(50):
-        engine.tick_intent()
-    assert engine.state.is_tainted
-    assert engine.state.intent_age == 50
-
-
-def test_worker_cannot_clear_taint():
-    engine = TaintEngine()
-    engine.propagate(TaintSource.WEB)
+def test_worker_cannot_clear():
+    e = TaintEngine()
+    e.register_value(V, CausalRoot.external_read(TaintSource.WEB))
     with pytest.raises(TaintClearanceError):
-        engine.attempt_clear_by_worker()
-    # Taint must still be active
-    assert engine.state.is_tainted
+        e.attempt_clear_by_worker()
+    assert e.derive_value(V).is_tainted is True  # still tainted
 
 
-def test_governance_clear_removes_taint():
-    engine = TaintEngine()
-    engine.propagate(TaintSource.WEB)
-    state = engine.clear_by_governance(
-        authority="operator",
-        authority_type="human_operator",
-        reason_code="session_reset",
-        authorized_by_principal_id="op-1",
-        audit_id="audit-123",
-    )
-    assert not state.is_tainted
+def test_governance_clear_removes_all():
+    e = TaintEngine()
+    e.register_value(V, CausalRoot.external_read(TaintSource.WEB))
+    e.clear_by_governance("operator", "human_operator", "reviewed")
+    assert e.derive_value(V).is_tainted is False
 
 
-def test_governance_clear_records_audit_fields():
-    engine = TaintEngine()
-    engine.propagate(TaintSource.WEB)
-    engine.clear_by_governance(
-        authority="operator",
-        authority_type="human_operator",
-        reason_code="session_reset",
-        authorized_by_principal_id="op-1",
-        audit_id="audit-xyz",
-    )
-    history = engine.state.clearance_history
-    assert len(history) == 1
-    record = history[0]
-    assert record.cleared_by == "operator"
-    assert record.authority_type == "human_operator"
-    assert record.reason_code == "session_reset"
-    assert record.authorized_by_principal_id == "op-1"
-    assert record.audit_id == "audit-xyz"
-    assert record.clearance_id.startswith("clr_")
-    assert record.timestamp > 0
+def test_governance_clear_rejects_bad_authority():
+    e = TaintEngine()
+    e.register_value(V, CausalRoot.external_read(TaintSource.WEB))
+    with pytest.raises(TaintClearanceError):
+        e.clear_by_governance("", "worker", "")
+    assert e.derive_value(V).is_tainted is True
 
 
-def test_scope_widens_to_broadest():
-    engine = TaintEngine()
-    engine.propagate(TaintSource.WEB, TaintScope.NODE)
-    state = engine.propagate(TaintSource.MCP, TaintScope.SESSION)
-    assert state.scope == TaintScope.SESSION
+def test_endorse_releases_one_value_under_governance():
+    e = TaintEngine()
+    e.register_value(V, CausalRoot.external_read(TaintSource.FILE, sensitive=True))
+    removed = e.endorse_value(V, "operator", "human_operator", "ok")
+    assert removed >= 1
+    assert e.derive_value(V).is_tainted is False
 
 
-def test_child_inherits_parent_taint():
-    parent_engine = TaintEngine()
-    parent_engine.propagate(TaintSource.WEB, TaintScope.SESSION)
-
-    child_engine = TaintEngine()
-    state = child_engine.inherit_from_parent(parent_engine.state)
-    assert state.is_tainted
-    assert state.parent_inherited is True
-    assert TaintSource.WEB in state.sources
-
-
-def test_child_inherits_clean_parent_stays_clean():
-    parent_engine = TaintEngine()
-    child_engine = TaintEngine()
-    state = child_engine.inherit_from_parent(parent_engine.state)
-    assert not state.is_tainted
+def test_child_inherits_value_ledger():
+    parent = TaintEngine()
+    parent.register_value(V, CausalRoot.external_read(TaintSource.WEB))
+    child = TaintEngine()
+    assert child.derive_value(V).is_tainted is False
+    child.inherit_value_ledger(parent)
+    assert child.derive_value(V).is_tainted is True

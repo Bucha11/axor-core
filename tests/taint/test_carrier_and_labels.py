@@ -8,13 +8,9 @@ classifier and the confidentiality label.
 
 from __future__ import annotations
 
-from axor_core.contracts.taint import (
-    Carrier,
-    TaintScope,
-    TaintSource,
-    carrier_join,
-)
+from axor_core.contracts.taint import Carrier, TaintSource, carrier_join
 from axor_core.security.carrier import classify_carrier
+from axor_core.taint.causal_root import CausalRoot
 from axor_core.taint.engine import TaintEngine
 
 
@@ -65,29 +61,22 @@ def test_carrier_join_is_lub():
     assert carrier_join(Carrier.CLOSED_SCHEMA, Carrier.CLOSED_SCHEMA) == Carrier.CLOSED_SCHEMA
 
 
-# ── dual labels: sensitivity (confidentiality) on TaintState (TM2) ───────────────
+# ── dual labels: sensitivity (confidentiality) is PER-VALUE on CausalRoot (TM2) ──
 
-def test_sensitive_label_defaults_false():
+def test_causal_root_sensitivity_label():
+    assert CausalRoot.external_read(TaintSource.WEB).sensitive is False
+    assert CausalRoot.external_read(TaintSource.FILE, sensitive=True).sensitive is True
+
+
+def test_mint_ors_sensitivity():
+    clean = CausalRoot.external_read(TaintSource.WEB)
+    secret = CausalRoot.external_read(TaintSource.FILE, sensitive=True)
+    assert CausalRoot.mint(clean, secret).sensitive is True
+
+
+def test_sensitive_value_derives_sensitive_and_clears():
     eng = TaintEngine()
-    assert eng.state.sensitive is False
-
-
-def test_sensitive_label_set_and_monotone():
-    eng = TaintEngine()
-    eng.propagate(TaintSource.WEB, TaintScope.SESSION, sensitive=False)
-    assert eng.state.sensitive is False
-    eng.propagate(TaintSource.FILE, TaintScope.SESSION, sensitive=True)
-    assert eng.state.sensitive is True
-    # monotone — a later non-sensitive propagation does not clear it
-    eng.propagate(TaintSource.WEB, TaintScope.SESSION, sensitive=False)
-    assert eng.state.sensitive is True
-
-
-def test_sensitive_survives_tick_and_clears_on_governance():
-    eng = TaintEngine()
-    eng.propagate(TaintSource.FILE, TaintScope.SESSION, sensitive=True)
-    eng.tick_intent()
-    assert eng.state.sensitive is True
+    eng.register_value("SENSITIVE_VAL_abc123", CausalRoot.external_read(TaintSource.FILE, sensitive=True))
+    assert eng.derive_value("x SENSITIVE_VAL_abc123").sensitive is True
     eng.clear_by_governance("op", "human_operator", "reviewed")
-    assert eng.state.sensitive is False
-    assert eng.state.is_tainted is False
+    assert eng.derive_value("SENSITIVE_VAL_abc123").is_tainted is False

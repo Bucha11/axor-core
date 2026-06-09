@@ -19,7 +19,7 @@ from axor_core.contracts.policy import (
     ToolPolicy,
 )
 from axor_core.contracts.result import ExecutorEvent, ExecutorEventKind
-from axor_core.contracts.taint import TaintScope, TaintSource
+from axor_core.contracts.taint import TaintSource
 from axor_core.degradation.engine import DegradationEngine
 from axor_core.contracts.degradation import DegradationLevel, GovernanceAuthority
 from axor_core.errors.exceptions import DegradationClearanceError, TaintClearanceError
@@ -95,9 +95,7 @@ async def test_tainted_session_blocks_ssrf_exfil(make_envelope):
     """A tainted session cannot exfiltrate to an (encoded) metadata/internal host."""
     import dataclasses
     executor = CapabilityExecutor()
-    taint = TaintEngine()
-    taint.propagate(TaintSource.FILE, TaintScope.SESSION)  # e.g. prior secret read
-    loop = IntentLoop(executor, [], taint_engine=taint)
+    loop = IntentLoop(executor, [], taint_engine=TaintEngine())
     env = make_envelope()
     caps = dataclasses.replace(env.capabilities,
                                allowed_tools=frozenset({"read", "fetch"}))
@@ -125,12 +123,12 @@ class _OkFetchHandler(ToolHandler):
 
 
 def _fetch_loop_env(make_envelope, taint_source):
+    # taint_source is retained for call-site readability; per-value enforcement
+    # (v4.12) carries no session-taint flag, so there is nothing to propagate here.
     import dataclasses
     executor = CapabilityExecutor()
     executor.register(_OkFetchHandler())
-    taint = TaintEngine()
-    taint.propagate(taint_source, TaintScope.SESSION)
-    loop = IntentLoop(executor, [], taint_engine=taint)
+    loop = IntentLoop(executor, [], taint_engine=TaintEngine())
     env = make_envelope()
     caps = dataclasses.replace(env.capabilities, allowed_tools=frozenset({"fetch"}))
     return loop, dataclasses.replace(env, capabilities=caps)
@@ -210,9 +208,8 @@ async def test_secret_read_taints_session(make_envelope):
     )
     resolved = await loop._resolve_tool_intent(event, env)
     assert resolved.approved
-    # Per-value (v4.12): a secret read registers its produced VALUE; the session
-    # state stays clean (no session-taint flag).
-    assert taint.state.is_tainted is False
+    # Per-value (v4.12): a secret read registers its produced VALUE; there is no
+    # session-taint flag, and the produced value derives tainted + sensitive.
     root = taint.derive_value("secret content")
     assert root.is_tainted and root.sensitive
 
@@ -270,18 +267,20 @@ class TestExportFilter:
 
 class TestAuthorityValidation:
     def test_taint_clear_rejects_blank_authority(self):
+        from axor_core.taint.causal_root import CausalRoot
         eng = TaintEngine()
-        eng.propagate(TaintSource.WEB, TaintScope.SESSION)
+        eng.register_value("WEB_VAL_aabbccddeeff", CausalRoot.external_read(TaintSource.WEB))
         with pytest.raises(TaintClearanceError):
             eng.clear_by_governance(authority="", authority_type="worker", reason_code="")
-        assert eng.state.is_tainted  # still tainted
+        assert eng.derive_value("WEB_VAL_aabbccddeeff").is_tainted  # still tainted
 
     def test_taint_clear_accepts_valid_authority(self):
+        from axor_core.taint.causal_root import CausalRoot
         eng = TaintEngine()
-        eng.propagate(TaintSource.WEB, TaintScope.SESSION)
+        eng.register_value("WEB_VAL_aabbccddeeff", CausalRoot.external_read(TaintSource.WEB))
         eng.clear_by_governance(
             authority="op-1", authority_type="human_operator", reason_code="reviewed")
-        assert not eng.state.is_tainted
+        assert not eng.derive_value("WEB_VAL_aabbccddeeff").is_tainted
 
     def test_degradation_clear_rejects_worker_authority(self):
         eng = DegradationEngine()

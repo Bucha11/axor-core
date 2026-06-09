@@ -15,7 +15,8 @@ async def test_drift_does_not_taint_enforcement_state():
     observer = TaintEngineDriftObserver(engine)
     await observer.on_drift("s", "a", "elevated_review")
     await observer.on_drift("s", "a", "restricted_mode")
-    assert engine.state.is_tainted is False  # watcher: untouched
+    # watcher: the engine's per-value ledger is untouched (registers nothing).
+    assert engine.derive_value("anything").is_tainted is False
 
 
 async def test_drift_observer_runs_without_engine():

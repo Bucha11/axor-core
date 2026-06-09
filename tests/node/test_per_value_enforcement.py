@@ -122,7 +122,6 @@ async def test_clean_value_passes_even_in_a_session_that_read_a_secret():
     ])
     assert r[0]["approved"] is True
     # No session-taint flag; the secret is tracked per-value. The clean write passes.
-    assert eng.state.is_tainted is False
     assert eng.derive_value(SECRET).is_tainted is True   # value IS tracked...
     assert r[1]["approved"] is True                       # ...but the clean write passes
 
@@ -147,8 +146,9 @@ async def test_governance_clear_releases_per_value_taint():
     eng = TaintEngine()
     loop = IntentLoop(capability_executor=_executor(), trace_events=[], taint_engine=eng)
     await _drive(loop, _envelope(), [("read", {"path": ".env"})])
+    assert eng.derive_value(SECRET).is_tainted is True  # registered by the read
     eng.clear_by_governance("operator", "human_operator", "reviewed")
-    assert eng.state.is_tainted is False
+    assert eng.derive_value(SECRET).is_tainted is False
 
     r = await _drive(loop, _envelope(), [
         ("write", {"path": "/etc/evil.txt", "content": f"x={SECRET}"}),

@@ -24,16 +24,17 @@ def test_worker_self_taint_clear_raises():
     """Worker calling attempt_clear_by_worker() always raises TaintClearanceError."""
     from axor_core.contracts.taint import TaintSource
     from axor_core.errors.exceptions import TaintClearanceError
+    from axor_core.taint.causal_root import CausalRoot
     from axor_core.taint.engine import TaintEngine
 
     engine = TaintEngine(node_id="test")
-    engine.propagate(TaintSource.WEB)
+    engine.register_value("WEB_VAL_aabbccddeeff", CausalRoot.external_read(TaintSource.WEB))
 
     with pytest.raises(TaintClearanceError, match="worker"):
         engine.attempt_clear_by_worker()
 
-    # Taint must still be active after the failed attempt
-    assert engine.state.is_tainted
+    # Per-value provenance must survive the failed worker clear attempt.
+    assert engine.derive_value("WEB_VAL_aabbccddeeff").is_tainted
 
 
 # ── 2. Direct executor bypass in PRODUCTION mode → GovernanceBypassError ─────

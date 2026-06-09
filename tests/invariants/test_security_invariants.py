@@ -43,11 +43,16 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../.."))
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
+# A registered value whose provenance the per-value gate tracks (TM2).
+_TAINTED_VALUE = "WEB_FRAGMENT_aabbccddeeff00"
+
+
 def _tainted_engine(source=None):
-    from axor_core.contracts.taint import TaintSource, TaintScope
+    from axor_core.contracts.taint import TaintSource
+    from axor_core.taint.causal_root import CausalRoot
     from axor_core.taint.engine import TaintEngine
     engine = TaintEngine(node_id="test")
-    engine.propagate(source or TaintSource.WEB, TaintScope.SESSION)
+    engine.register_value(_TAINTED_VALUE, CausalRoot.external_read(source or TaintSource.WEB))
     return engine
 
 
@@ -127,7 +132,7 @@ def test_inv02_adversarial_taint_remains_after_failed_clear():
         engine.attempt_clear_by_worker()
     except TaintClearanceError:
         pass
-    assert engine.state.is_tainted
+    assert engine.derive_value(_TAINTED_VALUE).is_tainted
 
 
 # ── 3. Worker cannot read DecisionTrace ───────────────────────────────────────
@@ -151,20 +156,19 @@ def test_inv03_adversarial_operator_read_requires_token():
 # ── 4. External taint persists until cleared by governance ────────────────────
 
 def test_inv04_positive_taint_persists_50_intents():
-    """Taint persists across 50 intents (sticky=True)."""
+    """Per-value provenance persists across repeated derivations (no decay)."""
     engine = _tainted_engine()
     for _ in range(50):
-        engine.tick_intent()
-    assert engine.state.is_tainted
+        assert engine.derive_value(_TAINTED_VALUE).is_tainted
 
 
 def test_inv04_adversarial_taint_not_cleared_by_intent_flood():
-    """Even 1000 intents do not clear sticky taint."""
+    """A flood of derivations does not erode a value's provenance — only
+    governance release can clear it."""
     engine = _tainted_engine()
     for _ in range(1000):
-        engine.tick_intent()
-    assert engine.state.is_tainted
-    assert engine.state.sticky is True
+        engine.derive_value(_TAINTED_VALUE)
+    assert engine.derive_value(_TAINTED_VALUE).is_tainted
 
 
 # ── 5. Taint clearance cannot be initiated by the worker ─────────────────────
@@ -177,7 +181,7 @@ def test_inv05_positive_governance_can_clear_taint():
         authority_type="human_operator",
         reason_code="test_clearance",
     )
-    assert not engine.state.is_tainted
+    assert not engine.derive_value(_TAINTED_VALUE).is_tainted
 
 
 def test_inv05_adversarial_worker_cannot_clear():
@@ -191,12 +195,12 @@ def test_inv05_adversarial_worker_cannot_clear():
 # ── 6. Child nodes inherit parent taint and policy ceilings ──────────────────
 
 def test_inv06_positive_child_inherits_parent_taint():
-    """Child inherits taint via inherit_from_parent()."""
+    """Child inherits the parent's per-value provenance via inherit_value_ledger()."""
     from axor_core.taint.engine import TaintEngine
     parent = _tainted_engine()
     child = TaintEngine(node_id="child")
-    child.inherit_from_parent(parent.state)
-    assert child.state.is_tainted
+    child.inherit_value_ledger(parent)
+    assert child.derive_value(_TAINTED_VALUE).is_tainted
 
 
 def test_inv06_adversarial_child_cannot_exceed_parent_policy():

@@ -11,8 +11,8 @@ Four variants:
   3. Isolated child cannot clear inherited taint via worker path
   4. Child export back to parent is bounded by parent's export_mode ceiling
 
-Reverse-verify: removing taint inheritance (inherit_from_parent) breaks variant 1
-and 3; removing _validate_child_policy breaks variant 4.
+Reverse-verify: removing per-value ledger inheritance (inherit_value_ledger)
+breaks variant 1 and 3; removing _validate_child_policy breaks variant 4.
 """
 from __future__ import annotations
 
@@ -24,10 +24,13 @@ from axor_core.contracts.policy import (
     ExportMode,
     ToolPolicy,
 )
-from axor_core.contracts.taint import TaintScope, TaintSource
+from axor_core.contracts.taint import TaintSource
 from axor_core.errors.exceptions import SpawnValidationError, TaintClearanceError
 from axor_core.node.spawn import _validate_child_policy
+from axor_core.taint.causal_root import CausalRoot
 from axor_core.taint.engine import TaintEngine
+
+_WEBVAL = "WEB_FRAGMENT_aabbccddeeff00"
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -48,21 +51,21 @@ def _policy(**kw) -> ExecutionPolicy:
 
 def test_tainted_parent_child_inherits_taint():
     """
-    A tainted parent cannot spawn a clean child.
+    A child inherits the parent's per-value provenance ledger on spawn.
 
-    Taint propagates through spawn — child inherits all parent taint sources.
-    The adversary cannot use spawning as a taint-washing mechanism.
+    Values the parent marked tainted remain tainted when derived in the child.
+    The adversary cannot use spawning to wash a value's provenance.
     """
     parent = TaintEngine(node_id="parent")
-    parent.propagate(TaintSource.WEB, TaintScope.SESSION)
-    assert parent.state.is_tainted
+    parent.register_value(_WEBVAL, CausalRoot.external_read(TaintSource.WEB))
+    assert parent.derive_value(_WEBVAL).is_tainted
 
     child = TaintEngine(node_id="child")
-    child.inherit_from_parent(parent.state)
+    assert child.derive_value(_WEBVAL).is_tainted is False  # clean before inheriting
+    child.inherit_value_ledger(parent)
 
-    assert child.state.is_tainted, "child must inherit parent taint"
-    assert TaintSource.WEB in child.state.sources
-    assert child.state.parent_inherited is True
+    assert child.derive_value(_WEBVAL).is_tainted, "child must inherit parent provenance"
+    assert TaintSource.WEB in child.derive_value(_WEBVAL).sources
 
 
 # ── variant 2: clean parent → tainted child is not a privilege escalation ─────
@@ -98,16 +101,16 @@ def test_isolated_child_cannot_clear_inherited_taint():
     Isolation boundary does not imply taint clearance.
     """
     parent = TaintEngine(node_id="parent")
-    parent.propagate(TaintSource.WEB, TaintScope.SESSION)
+    parent.register_value(_WEBVAL, CausalRoot.external_read(TaintSource.WEB))
 
     child = TaintEngine(node_id="isolated-child")
-    child.inherit_from_parent(parent.state)
+    child.inherit_value_ledger(parent)
 
     # Worker within isolated child cannot clear taint
     with pytest.raises(TaintClearanceError):
         child.attempt_clear_by_worker()
 
-    assert child.state.is_tainted, "taint must remain after failed clearance attempt"
+    assert child.derive_value(_WEBVAL).is_tainted, "provenance must remain after failed clear"
 
 
 # ── variant 4: child export is bounded by parent export ceiling ───────────────
