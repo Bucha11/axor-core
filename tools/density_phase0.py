@@ -101,6 +101,22 @@ def replay(trajectories: list[tuple[list[dict], str]]) -> tuple[DensityMeter, di
         sticky = False
         sticky_sensitive = False
         for i in intents:
+            # Session-sticky taint turns on at INGEST, and ingest precedes use within
+            # a step: a real session model taints on the read sub-call before the act
+            # sub-call. An externally-derived value (is_value_tainted) is itself
+            # ingest evidence, so the sticky predicate is the UNION of the read
+            # heuristic and the per-value signal. This models the real-world
+            # implication "tainted value ⟹ an external read happened" — exactly the
+            # property the LIVE engine guarantees (session_shadow and the per-value
+            # ledger are both set by the same register_value call). It is NOT the
+            # NM8 masking (rewriting the booleans at record time): we fix WHEN the
+            # session model turns on, then record both models honestly. The meter
+            # still counts any residual violation, so a future per-value signal not
+            # mirrored here would resurface.
+            if is_external_read(i) or is_value_tainted(i):
+                sticky = True
+            if is_sensitive_read(i) or is_value_sensitive(i):
+                sticky_sensitive = True
             if i.get("operation") in HIGH_STAKES_OPS:
                 vt = is_value_tainted(i)
                 vs = is_value_sensitive(i)
@@ -112,11 +128,6 @@ def replay(trajectories: list[tuple[list[dict], str]]) -> tuple[DensityMeter, di
                         session_sensitive=sticky_sensitive,
                         value_sensitive=vs,
                     )
-            # taint takes effect AFTER the read executes -> "prior reads" semantics
-            if is_external_read(i):
-                sticky = True
-            if is_sensitive_read(i):
-                sticky_sensitive = True
     return overall, by_label
 
 
@@ -150,7 +161,28 @@ def main() -> None:
     print(f"corpus: {source}\n")
     overall, by_label = replay(corpus)
 
-    print(overall.report().render())
+    report = overall.report()
+    print(report.render())
+
+    # Confidentiality caveat: this corpus has no per-value secret-lineage field
+    # (is_value_sensitive cannot fire), so per-value confidentiality reads 0 by
+    # construction. That is unobservable-here, NOT "per-value fails" — and it is
+    # itself the argument for the cheap session-sticky confidentiality floor (1.1b).
+    if report.sensitivity.per_value_tainted == 0 and report.sensitivity.session_sticky_tainted:
+        print(
+            "\n[note] per-value confidentiality is UNOBSERVABLE on this corpus "
+            "(no per-value secret-lineage field); the session-sticky figure is the\n"
+            "       meaningful confidentiality signal here — consistent with riding "
+            "the sound session floor on the confidentiality axis."
+        )
+    if report.integrity.invariant_violations:
+        print(
+            f"\n[warn] {report.integrity.invariant_violations} integrity invariant "
+            "violations remain — the session-sticky shadow under-reports ingest "
+            "relative to the per-value signal;\n       the integrity gap is therefore "
+            "a LOWER bound until the ingest predicate is completed."
+        )
+
     print("\n--- by label (integrity axis) ---")
     for label in sorted(by_label):
         r = by_label[label].report()

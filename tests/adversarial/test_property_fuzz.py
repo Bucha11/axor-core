@@ -15,7 +15,13 @@ import ipaddress
 import os
 from pathlib import Path
 
-from hypothesis import given, settings, strategies as st
+import pytest
+
+# hypothesis ships in the [dev] extra (pyproject). Skip — rather than hard-fail
+# collection — when the suite is run from an install that omitted it.
+pytest.importorskip("hypothesis")
+
+from hypothesis import given, settings, strategies as st  # noqa: E402
 
 from axor_core.capability.lease_validator import path_matches_allowlist
 from axor_core.node.normalizer import IntentNormalizer
