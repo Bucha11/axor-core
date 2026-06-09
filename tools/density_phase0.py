@@ -251,13 +251,28 @@ def main() -> None:
             f"{p['integ_sticky']:6.1%}/{p['integ_value']:6.1%} ({p['integ_gap']:+6.1%}) | "
             f"{p['sens_sticky']:6.1%}/{p['sens_value']:6.1%} ({p['sens_gap']:+6.1%})"
         )
+    # Honest verdict. The corollary's empirical prediction is COLLAPSE in the high
+    # partition (gap -> ~0), not merely "high gap < low gap". A large high gap that
+    # is only slightly below the low gap is directional, but means per-value still
+    # buys a lot in the high partition — the predicted collapse did NOT happen, and
+    # the density gap is then an upper bound on what flipping to positional would
+    # cost (the "tax is free where it lands" premise is unsupported). NOTE: the
+    # gap is NOT the tax; the tax is the per-value-clean high-stakes fraction that
+    # carries a non-positional (FREE_TEXT) carrier — unmeasurable on this corpus.
+    COLLAPSE_EPS = 0.10
     hi, lo = parts.get("high (≥θ)"), parts.get("low (<θ)")
     if hi and lo:
-        verdict = (
-            "CONFIRMS corollary (high collapses, low separates)"
-            if hi["integ_gap"] < lo["integ_gap"]
-            else "does NOT confirm (gap not larger in low partition)"
-        )
+        delta = lo["integ_gap"] - hi["integ_gap"]
+        if hi["integ_gap"] <= COLLAPSE_EPS and delta > 0:
+            verdict = "COLLAPSE in high as predicted (high gap ~0, low separates)"
+        elif delta > 0:
+            verdict = (
+                f"DIRECTIONAL ONLY (low−high = {delta:+.1%}); high partition does NOT "
+                f"collapse — per-value still buys {hi['integ_gap']:.1%} there. Soundness "
+                "case for the flip is unaffected; 'tax-free-where-it-lands' is unsupported."
+            )
+        else:
+            verdict = "NOT confirmed (high gap >= low gap)"
         print(f"  -> integrity gap  high={hi['integ_gap']:+.1%}  low={lo['integ_gap']:+.1%}  => {verdict}")
 
     # Confidentiality caveat: this corpus has no per-value secret-lineage field
