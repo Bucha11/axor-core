@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import pytest
 
-from axor_core.contracts.anomaly import NormalizedIntent  # noqa: F401  (ensures import graph ok)
 from axor_core.contracts.canonical import ConsequenceClass
 from axor_core.contracts.cancel import make_token
 from axor_core.contracts.context import ContextView, LineageSummary

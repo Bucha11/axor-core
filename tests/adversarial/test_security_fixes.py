@@ -153,7 +153,6 @@ async def test_sensitive_value_in_outbound_payload_blocked_per_value(make_envelo
     """Per-value (TM2): exfil is blocked when the outbound payload *carries* a
     registered sensitive value — not merely because the session is tainted. A
     fetch whose payload does not carry it is allowed (the per-value win)."""
-    import dataclasses
     from axor_core.taint.causal_root import CausalRoot
     secret = "SENSITIVE_KEY_zzz9988776655"
     loop, env = _fetch_loop_env(make_envelope, TaintSource.FILE)

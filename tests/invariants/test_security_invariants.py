@@ -737,15 +737,14 @@ def test_invD1_positive_level_rises_monotonically():
     """Level goes NORMAL→CAUTIOUS→RESTRICTED via signals; never goes back."""
     from axor_core.contracts.degradation import DegradationLevel
     engine = _make_degradation_engine()
-    ts = _make_taint_state()
     ni = _make_normalized_intent()
     denial = _make_denial()
 
-    engine.record_signal(ni, denial, ts)
+    engine.record_signal(ni, denial)
     assert engine.state.level >= DegradationLevel.NORMAL
 
     prev = engine.state.level
-    engine.record_signal(ni, denial, ts)
+    engine.record_signal(ni, denial)
     assert engine.state.level >= prev
 
 
@@ -753,17 +752,16 @@ def test_invD1_adversarial_level_never_drops_without_governance():
     """Sending a 'clean' signal after escalation cannot lower the level."""
     from axor_core.contracts.degradation import DegradationLevel
     engine = _make_degradation_engine()
-    ts = _make_taint_state()
     ni = _make_normalized_intent()
     denial = _make_denial()
 
     # Escalate to RESTRICTED via pressure
     for _ in range(3):
-        engine.record_signal(ni, denial, ts)
+        engine.record_signal(ni, denial)
     level_after_pressure = engine.state.level
 
     # Now send an approved signal (denial=None) — level must not decrease
-    engine.record_signal(ni, None, ts)
+    engine.record_signal(ni, None)
     assert engine.state.level >= level_after_pressure
 
 
@@ -806,7 +804,6 @@ def test_invD3_positive_cross_origin_export_deny_locks():
     """Cross-origin export denial immediately escalates to LOCKED."""
     from axor_core.contracts.degradation import DegradationLevel
     engine = _make_degradation_engine()
-    ts = _make_taint_state()
     ni = _make_normalized_intent(
         tool="write",
         operation="file_write",
@@ -814,7 +811,7 @@ def test_invD3_positive_cross_origin_export_deny_locks():
     )
     denial = _make_denial()
 
-    transition = engine.record_signal(ni, denial, ts)
+    transition = engine.record_signal(ni, denial)
     assert engine.state.level == DegradationLevel.LOCKED
     assert transition is not None
     assert transition.new_level == DegradationLevel.LOCKED
@@ -824,7 +821,6 @@ def test_invD3_adversarial_cross_origin_deny_skips_cautious_and_restricted():
     """Cross-origin export denial jumps directly to LOCKED, skipping lower levels."""
     from axor_core.contracts.degradation import DegradationLevel
     engine = _make_degradation_engine()
-    ts = _make_taint_state()
     ni = _make_normalized_intent(
         tool="export",
         operation="network_request",
@@ -832,7 +828,7 @@ def test_invD3_adversarial_cross_origin_deny_skips_cautious_and_restricted():
     )
     denial = _make_denial()
 
-    engine.record_signal(ni, denial, ts)
+    engine.record_signal(ni, denial)
     # Must be at LOCKED, not CAUTIOUS or RESTRICTED
     assert engine.state.level == DegradationLevel.LOCKED
     assert engine.state.level not in (DegradationLevel.CAUTIOUS, DegradationLevel.RESTRICTED)
