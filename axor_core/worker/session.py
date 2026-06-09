@@ -101,10 +101,12 @@ class GovernedSession:
         profile: "str | Any | None" = None,
         workspace: str | None = None,
         danger: "dict | None" = None,
+        positional_sinks: "set[str] | frozenset[str] | None" = None,
     ) -> None:
         # Profile = a named bundle of existing knobs (no new mechanism); it
         # pre-fills mode / isolation / escalation / consequence-ceiling / watcher.
         self._consequence_overrides = dict(danger or {})
+        self._positional_sinks = frozenset(positional_sinks or ())
         _overlay_ceiling = None
         _overlay_escalation = None
         if profile is not None:
@@ -114,6 +116,7 @@ class GovernedSession:
             require_isolation = require_isolation or prof.require_isolation
             _overlay_ceiling = prof.consequence_ceiling
             _overlay_escalation = prof.escalation_policy
+            self._positional_sinks = self._positional_sinks | prof.positional_sinks
             if behavioral_drift_observer is None and prof.attach_watcher:
                 from axor_core.node.drift_observer import TaintEngineDriftObserver
                 behavioral_drift_observer = TaintEngineDriftObserver()
@@ -539,6 +542,7 @@ class GovernedSession:
             taint_engine=self._taint_engine,
             degradation_engine=self._degradation_engine,
             consequence_overrides=self._consequence_overrides,
+            positional_sinks=self._positional_sinks,
         )
 
     async def _handle_command(self, raw: str) -> ExecutionResult:

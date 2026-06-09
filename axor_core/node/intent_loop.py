@@ -125,6 +125,7 @@ class IntentLoop:
         max_total_spawns: int | None = None,
         value_policies: "dict | None" = None,
         consequence_overrides: "dict | None" = None,
+        positional_sinks: "frozenset[str] | set[str] | None" = None,
     ) -> None:
         self._executor = capability_executor
         self._trace_events = trace_events
@@ -148,6 +149,23 @@ class IntentLoop:
         self._max_total_spawns = max_total_spawns
         self._value_policies = value_policies or {}
         self._consequence_overrides = consequence_overrides or {}
+        # D_high partition (Corollary: stratified enforcement). Sinks the operator
+        # DECLARES to have an instruction-incomplete codomain — i.e. their legitimate
+        # input cannot encode an instruction, and the trusted side constrains input
+        # to that codomain (constrained decoding, obligation 1). For these sinks,
+        # admission flips from the X1-leaky content-derivation DENY-LIST to a sound
+        # POSITIONAL ALLOW-LIST: admit only if the driving value's carrier is
+        # instruction-incomplete, content-independently (closes O2 vs paraphrase).
+        # Opt-in/empty by default; exec-class sinks can NEVER be declared here
+        # (shell command codomain is instruction-complete by definition).
+        self._positional_sinks = frozenset(positional_sinks or ())
+        _illegal = {s for s in self._positional_sinks if s.lower() in _INSTRUCTION_COMPLETE_SINKS}
+        if _illegal:
+            raise ValueError(
+                "instruction-complete sinks cannot be declared positional (D_high): "
+                f"{sorted(_illegal)} — their codomain admits instructions by "
+                "definition; they must stay in D_low (content-derivation)."
+            )
         self._spawn_count = 0
 
     async def run(
@@ -519,6 +537,36 @@ class IntentLoop:
                     session_tainted=session_tainted,
                     session_sensitive=session_sensitive,
                 ))
+
+            # D_high POSITIONAL ADMISSION (Corollary: stratified enforcement).
+            # For a sink the operator DECLARED instruction-incomplete, admission
+            # flips from the X1-leaky content-derivation deny-list to a sound
+            # positional allow-list: admit ONLY if the driving value's carrier is
+            # instruction-incomplete (ENDORSED/CLOSED_SCHEMA), else fail-closed.
+            # Crucially this does NOT consult driving_root.is_tainted — that is the
+            # whole point: a paraphrase that launders the content-derivation label
+            # cannot change the value's FORM, and classify_carrier is structural
+            # (T0), so the induction step O2 closes against semantic derivation,
+            # content-independently. classify_carrier takes the WORST carrier over
+            # all argument leaves, so a single non-positional argument path nullifies
+            # admission (O3 / complete mediation, local to this sink). No-upgrade
+            # holds by construction: the carrier is recomputed structurally each
+            # call, there is no stored positional label to launder through D_low.
+            if tool_name in self._positional_sinks:
+                if classify_carrier(tool_args) == Carrier.FREE_TEXT:
+                    reason = (
+                        f"positional gate (D_high): '{tool_name}' is a declared "
+                        f"instruction-incomplete sink; its driving value is FREE_TEXT "
+                        f"(non-positional) — admitted only via an instruction-incomplete "
+                        f"carrier, independent of content-derivation"
+                    )
+                    self._record_denial(intent, reason, envelope)
+                    denial_resp = _make_denial_response(reason, "positional_gate")
+                    self._record_degradation_signal(intent, denial_resp, normalized)
+                    return ResolvedIntent(
+                        intent=intent, approved=False, reason=reason,
+                        result=denial_resp.to_tool_result(),
+                    )
 
             # Carrier / imperative-channel gate (TM1): a tainted FREE_TEXT value
             # reaching an instruction-following sink (it would be interpreted as a
@@ -1079,6 +1127,17 @@ class IntentLoop:
 _IMPERATIVE_SINKS = frozenset({
     "spawn_child", "send", "message", "prompt", "ask", "delegate",
     "reply", "email", "slack", "post", "notify",
+})
+
+# Sinks whose codomain is instruction-COMPLETE by definition: they interpret their
+# argument as a program / directive (a shell command, a child-agent task). These
+# can NEVER be lifted into the D_high positional partition — a positional gate would
+# either deny every legitimate call (their legit input IS free text) or, worse,
+# admit a closed-schema string the sink still executes. They stay in D_low with the
+# X1 residual acknowledged. Declaring one positional is a configuration error.
+_INSTRUCTION_COMPLETE_SINKS = frozenset({
+    "bash", "shell", "execute", "run", "exec", "execute_generated_code",
+    "spawn_child", "eval", "python", "sh", "command", "system",
 })
 
 
