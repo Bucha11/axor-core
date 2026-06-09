@@ -609,7 +609,6 @@ def test_inv21_positive_wrap_tools_mode_no_warning(caplog):
     """When wrap_tools is called, no callback-only warning is emitted."""
     import logging
     from tests.normalizers.mock_langchain import AxorMiddleware
-    from unittest.mock import MagicMock
 
     middleware = AxorMiddleware()
     middleware._wrap_tools_called = True  # simulate having called wrap_tools
@@ -750,7 +749,6 @@ def test_invD1_positive_level_rises_monotonically():
 
 def test_invD1_adversarial_level_never_drops_without_governance():
     """Sending a 'clean' signal after escalation cannot lower the level."""
-    from axor_core.contracts.degradation import DegradationLevel
     engine = _make_degradation_engine()
     ni = _make_normalized_intent()
     denial = _make_denial()
@@ -779,8 +777,6 @@ def test_invD2_adversarial_terminal_session_raises():
     """GovernedSession at TERMINAL raises SessionTerminatedError before start()."""
     from axor_core.errors.exceptions import SessionTerminatedError
     from axor_core.contracts.degradation import DegradationLevel, GovernanceAuthority
-    from unittest.mock import MagicMock, AsyncMock
-    import asyncio
 
     engine = _make_degradation_engine()
     # Force TERMINAL via governance (only legitimate path)
@@ -884,7 +880,6 @@ def test_invD5_adversarial_quarantined_source_forces_restricted_export():
 
 def test_invD6_positive_parent_normal_child_starts_normal():
     """Parent at NORMAL: child can also start at NORMAL (floor = NORMAL)."""
-    from axor_core.contracts.degradation import DegradationLevel
     parent_engine = _make_degradation_engine()
     child_engine = _make_degradation_engine()
     # Child floor: must be >= parent level
@@ -895,7 +890,6 @@ def test_invD6_adversarial_child_shares_parent_engine_instance():
     """GovernedNode child spawn uses the same DegradationEngine instance as parent."""
     from axor_core.node.wrapper import GovernedNode
     from unittest.mock import MagicMock
-    from axor_core.taint.engine import TaintEngine
     node = GovernedNode(
         executor=MagicMock(),
         capability_executor=MagicMock(),

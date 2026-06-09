@@ -1,7 +1,6 @@
 """Tests for the 0.5.0 trace event factories: cache_event, routing_decision, cost_threshold."""
 from __future__ import annotations
 
-import pytest
 
 from axor_core.contracts.trace import (
     CacheEvent,

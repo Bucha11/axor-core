@@ -16,11 +16,10 @@ from __future__ import annotations
 
 import time
 
-import pytest
 
 from axor_core.capability.lease_validator import LeaseValidator
 from axor_core.contracts.lease import CapabilityLease, LeaseAuthorityType
-from axor_core.contracts.policy import ExecutionPolicy, ToolPolicy
+from axor_core.contracts.policy import ExecutionPolicy
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────

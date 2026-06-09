@@ -5,7 +5,6 @@ import asyncio
 import pytest
 from axor_core import GovernedSession, presets
 from axor_core.budget import TokenCostRates
-from axor_core.contracts.cancel import CancelReason
 from axor_core.contracts.result import ExecutorEvent, ExecutorEventKind
 from axor_core.contracts.trace import TraceConfig
 from axor_core.contracts.invokable import Invokable
@@ -274,7 +273,6 @@ class TestContextManagerIntegration:
     @pytest.mark.asyncio
     async def test_file_read_cached_after_execution(self, cap_executor):
         from tests.conftest import EchoExecutor
-        from axor_core.context.manager import ContextManager
         from axor_core.contracts.policy import (
             ExecutionPolicy, TaskComplexity, ContextMode, CompressionMode,
             ChildMode, ExportMode, ToolPolicy,

@@ -7,7 +7,6 @@ Validation must work even with python -O (no assert removal).
 from __future__ import annotations
 
 import pytest
-from dataclasses import replace
 
 from axor_core.contracts.policy import (
     ChildMode,

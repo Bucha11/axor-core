@@ -164,7 +164,7 @@ def test_incomplete_streaming_no_tool_use_event():
     """
     sys.path.insert(0, "axor-claude")
     from tests.normalizers.mock_claude_normalizer import StreamNormalizer
-    from dataclasses import dataclass, field
+    from dataclasses import dataclass
     from axor_core.contracts.result import ExecutorEventKind
 
     @dataclass

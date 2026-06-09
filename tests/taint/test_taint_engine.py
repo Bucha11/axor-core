@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from axor_core.contracts.taint import TaintScope, TaintSource, TaintState
+from axor_core.contracts.taint import TaintScope, TaintSource
 from axor_core.errors.exceptions import TaintClearanceError
 from axor_core.taint.engine import TaintEngine
 

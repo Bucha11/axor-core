@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import time
 
 from axor_core.capability.session_grant import (
     SESSION_KEY_ENV,

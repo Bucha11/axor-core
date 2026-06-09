@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import pytest
 
 from axor_core.capability.flood import EscalationFloodGuard
 

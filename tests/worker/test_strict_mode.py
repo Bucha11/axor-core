@@ -15,7 +15,6 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-import pytest
 
 from axor_core.capability.executor import CapabilityExecutor
 from axor_core.contracts.mode import ExecutionMode

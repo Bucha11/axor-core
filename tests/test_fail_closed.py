@@ -18,7 +18,7 @@ from __future__ import annotations
 import sys
 import os
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
 
@@ -149,7 +149,7 @@ def test_fail_closed_empty_allowed_tools_denies_all():
     from axor_core.contracts.envelope import ExecutionEnvelope, ExportContract, Capabilities
     from axor_core.contracts.context import ContextView, LineageSummary
     from axor_core.contracts.cancel import make_token
-    from axor_core.contracts.policy import ExecutionPolicy, ToolPolicy, ExportMode
+    from axor_core.contracts.policy import ExecutionPolicy, ExportMode
 
     lineage = LineageSummary(node_id="n", parent_id=None, depth=0,
                              ancestry_ids=[], inherited_restrictions=[])
@@ -184,7 +184,6 @@ def test_fail_closed_trace_access_requires_token():
     This is the audit-required fail-closed contract: worker cannot read trace.
     """
     from axor_core.trace.collector import TraceCollector
-    from axor_core.trace.guard import TraceAccessGuard
 
     collector = TraceCollector(operator_token="audit-token")
     collector.register_node("n1", None, 0, "audit-policy")
@@ -216,7 +215,7 @@ def test_fail_closed_telemetry_failure_does_not_bypass_policy():
     from axor_core.contracts.envelope import ExecutionEnvelope, ExportContract, Capabilities
     from axor_core.contracts.context import ContextView, LineageSummary
     from axor_core.contracts.cancel import make_token
-    from axor_core.contracts.policy import ExecutionPolicy, ToolPolicy, ExportMode
+    from axor_core.contracts.policy import ExecutionPolicy, ExportMode
     from axor_core.budget.tracker import BudgetTracker
 
     # Simulate telemetry/subscriber failure

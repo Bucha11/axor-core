@@ -4,8 +4,7 @@ from __future__ import annotations
 import pytest
 from axor_core.context.cache import ContextCache
 from axor_core.context.compressor import ContextCompressor
-from axor_core.context.selector import ContextSelector
-from axor_core.context.symbol_table import SymbolTable, SymbolStatus
+from axor_core.context.symbol_table import SymbolTable
 from axor_core.context.manager import ContextManager
 from axor_core.contracts.context import ContextFragment, RawExecutionState, LineageSummary
 from axor_core.contracts.policy import (

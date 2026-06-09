@@ -18,7 +18,6 @@ import pytest
 
 from axor_core.contracts.denial import DenialResponse
 from axor_core.trace.collector import TraceCollector
-from axor_core.contracts.taint import TaintSource
 
 
 # ── variant 1: direct trace read blocked ─────────────────────────────────────

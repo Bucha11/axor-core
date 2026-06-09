@@ -8,7 +8,6 @@ from axor_core.contracts.result import ExecutorEvent, ExecutorEventKind
 from axor_core.contracts.trace import TraceEventKind
 from axor_core.node.intent_loop import IntentLoop
 from axor_core.node.export import ExportFilter
-from axor_core.contracts.policy import ExportMode
 from axor_core.capability.executor import CapabilityExecutor, ToolHandler
 
 

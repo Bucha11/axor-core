@@ -11,7 +11,6 @@ import pytest
 
 from axor_core.trace.collector import TraceCollector
 from axor_core.trace.guard import TraceAccessGuard
-from axor_core.contracts.trace import TraceConfig
 
 
 # ── TraceAccessGuard ───────────────────────────────────────────────────────────
@@ -79,7 +78,6 @@ def test_operator_read_empty_returns_empty_list():
 def test_execution_envelope_has_no_trace_reference():
     """Executor's ExecutionEnvelope must not contain a reference to TraceCollector."""
     from axor_core.contracts.envelope import ExecutionEnvelope
-    import inspect
 
     # Check the fields of ExecutionEnvelope
     fields = {
