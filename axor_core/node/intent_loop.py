@@ -465,15 +465,29 @@ class IntentLoop:
         if self._taint_engine is not None and normalized is not None:
             driving_root = self._taint_engine.derive_value(tool_args)
 
-            # Density (TM3.3): record, per high-stakes sink firing, whether the
-            # driving value is tainted. The make-or-break number, measured live.
-            if consequence_class(tool_name) >= ConsequenceClass.REVERSIBLE:
+            # Density (TM3.3): record, per high-stakes sink firing, the per-value
+            # taint (both axes) and the session-sticky shadow. The make-or-break
+            # number, measured live and split integrity vs confidentiality so the
+            # taint-explosion asymmetry is visible. Uses the same overrides as the
+            # enforcement gate so density and enforcement agree on which sinks count.
+            sink_consequence = consequence_class(
+                tool_name, overrides=self._consequence_overrides
+            )
+            if sink_consequence >= ConsequenceClass.REVERSIBLE:
+                session_tainted, session_sensitive = (
+                    self._taint_engine.session_shadow()
+                    if hasattr(self._taint_engine, "session_shadow")
+                    else (driving_root.is_tainted, driving_root.sensitive)
+                )
                 self._trace_events.append(SinkDensityEvent(
                     kind=TraceEventKind.SINK_DENSITY,
                     node_id=envelope.node_id,
                     sequence=len(self._trace_events),
                     operation=tool_name,
                     tainted=driving_root.is_tainted,
+                    sensitive=driving_root.sensitive,
+                    session_tainted=session_tainted,
+                    session_sensitive=session_sensitive,
                 ))
 
             # Carrier / imperative-channel gate (TM1): a tainted FREE_TEXT value

@@ -26,15 +26,39 @@ class GovernanceMetrics:
     escalations_granted: int = 0
     escalations_denied: int = 0
     # Density (TM3.3): high-stakes sink firings and how many carried a tainted
-    # driving value, per operation. per-value density = tainted / firings.
+    # driving value, per operation, split by axis. per-value density = tainted /
+    # firings; session-sticky density = session-shadow tainted / firings.
     sink_firings_by_op: Counter[str] = field(default_factory=Counter)
-    sink_tainted_by_op: Counter[str] = field(default_factory=Counter)
+    sink_tainted_by_op: Counter[str] = field(default_factory=Counter)          # per-value integrity
+    sink_sensitive_by_op: Counter[str] = field(default_factory=Counter)        # per-value confidentiality
+    sink_session_tainted_by_op: Counter[str] = field(default_factory=Counter)  # session-sticky integrity
+    sink_session_sensitive_by_op: Counter[str] = field(default_factory=Counter)  # session-sticky confidentiality
+
+    @staticmethod
+    def _density(num: Counter[str], den: Counter[str]) -> float:
+        total = sum(den.values())
+        return (sum(num.values()) / total) if total else 0.0
 
     @property
     def density(self) -> float:
-        """Overall per-value density: tainted high-stakes firings / all firings."""
-        total = sum(self.sink_firings_by_op.values())
-        return (sum(self.sink_tainted_by_op.values()) / total) if total else 0.0
+        """Overall per-value integrity density: tainted high-stakes firings / all."""
+        return self._density(self.sink_tainted_by_op, self.sink_firings_by_op)
+
+    @property
+    def integrity_density(self) -> float:
+        return self._density(self.sink_tainted_by_op, self.sink_firings_by_op)
+
+    @property
+    def confidentiality_density(self) -> float:
+        return self._density(self.sink_sensitive_by_op, self.sink_firings_by_op)
+
+    @property
+    def session_integrity_density(self) -> float:
+        return self._density(self.sink_session_tainted_by_op, self.sink_firings_by_op)
+
+    @property
+    def session_confidentiality_density(self) -> float:
+        return self._density(self.sink_session_sensitive_by_op, self.sink_firings_by_op)
 
     @classmethod
     def from_events(cls, events: Iterable[TraceEvent]) -> "GovernanceMetrics":
@@ -65,6 +89,12 @@ class GovernanceMetrics:
                 m.sink_firings_by_op[op] += 1
                 if getattr(ev, "tainted", False):
                     m.sink_tainted_by_op[op] += 1
+                if getattr(ev, "sensitive", False):
+                    m.sink_sensitive_by_op[op] += 1
+                if getattr(ev, "session_tainted", False):
+                    m.sink_session_tainted_by_op[op] += 1
+                if getattr(ev, "session_sensitive", False):
+                    m.sink_session_sensitive_by_op[op] += 1
         return m
 
     def to_prometheus(self, prefix: str = "axor_governance") -> str:
@@ -89,4 +119,23 @@ class GovernanceMetrics:
         for lvl, n in sorted(self.degradation_transitions_by_level.items()):
             counter("degradation_transitions_total", n,
                     "Degradation transitions by target level.", labels=f'{{level="{lvl}"}}')
+
+        # Density (TM3.3) — the make-or-break number, scrapeable, split by axis and
+        # by model (per-value vs session-sticky shadow).
+        def gauge(name: str, value: float, help_text: str) -> None:
+            metric = f"{prefix}_{name}"
+            lines.append(f"# HELP {metric} {help_text}")
+            lines.append(f"# TYPE {metric} gauge")
+            lines.append(f"{metric} {value:.6f}")
+
+        gauge("sink_firings_total", float(sum(self.sink_firings_by_op.values())),
+              "High-stakes sink firings observed (density denominator).")
+        gauge("density_integrity_per_value", self.integrity_density,
+              "Per-value integrity density (TM3.3).")
+        gauge("density_integrity_session_sticky", self.session_integrity_density,
+              "Session-sticky integrity density shadow (TM3.3).")
+        gauge("density_confidentiality_per_value", self.confidentiality_density,
+              "Per-value confidentiality density (TM3.3).")
+        gauge("density_confidentiality_session_sticky", self.session_confidentiality_density,
+              "Session-sticky confidentiality density shadow (TM3.3).")
         return "\n".join(lines) + "\n"

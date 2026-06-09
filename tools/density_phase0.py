@@ -70,7 +70,7 @@ def is_external_read(i: dict) -> bool:
 def is_value_tainted(i: dict) -> bool:
     """Is the *driving value* of this sink call derived from external data?
 
-    Per-value signal, read from the intent's own structural fields:
+    Per-value INTEGRITY signal, read from the intent's own structural fields:
       - data_flow == external_to_shell : external data is being fed into a shell.
       - provenance == external_web     : the action itself is driven by external content.
     local_to_external (local data leaving) and local_to_local/none keep the driving
@@ -79,20 +79,44 @@ def is_value_tainted(i: dict) -> bool:
     return i.get("data_flow") == "external_to_shell" or i.get("provenance") == "external_web"
 
 
+def is_sensitive_read(i: dict) -> bool:
+    """Does this intent introduce a *sensitive* (secret) source — the confidentiality
+    session-sticky trigger? Far sparser than external reads (that asymmetry is the
+    whole point of measuring the two axes separately)."""
+    return bool(i.get("reads_secret_like_data") or i.get("target_kind") == "secret")
+
+
+def is_value_sensitive(i: dict) -> bool:
+    """Proxy for 'this sink's driving value carries a secret' (per-value
+    confidentiality). The corpus has no per-value secret-lineage field, so this is
+    a conservative proxy: a sink reading/forwarding a secret-typed source."""
+    return bool(i.get("carries_secret") or i.get("provenance") == "secret")
+
+
 def replay(trajectories: list[tuple[list[dict], str]]) -> tuple[DensityMeter, dict[str, DensityMeter]]:
     overall = DensityMeter()
     by_label: dict[str, DensityMeter] = {}
     for intents, label in trajectories:
         meter_for_label = by_label.setdefault(label, DensityMeter())
         sticky = False
+        sticky_sensitive = False
         for i in intents:
             if i.get("operation") in HIGH_STAKES_OPS:
                 vt = is_value_tainted(i)
-                overall.record(i["operation"], session_tainted=sticky, value_tainted=vt)
-                meter_for_label.record(i["operation"], session_tainted=sticky, value_tainted=vt)
+                vs = is_value_sensitive(i)
+                for meter in (overall, meter_for_label):
+                    meter.record(
+                        i["operation"],
+                        session_tainted=sticky,
+                        value_tainted=vt,
+                        session_sensitive=sticky_sensitive,
+                        value_sensitive=vs,
+                    )
             # taint takes effect AFTER the read executes -> "prior reads" semantics
             if is_external_read(i):
                 sticky = True
+            if is_sensitive_read(i):
+                sticky_sensitive = True
     return overall, by_label
 
 
@@ -127,14 +151,15 @@ def main() -> None:
     overall, by_label = replay(corpus)
 
     print(overall.report().render())
-    print("\n--- by label ---")
+    print("\n--- by label (integrity axis) ---")
     for label in sorted(by_label):
         r = by_label[label].report()
+        a = r.integrity
         print(
             f"{label:11s} firings={r.high_stakes_firings:7d}  "
-            f"sticky={r.session_sticky_density:6.1%}  "
-            f"per-value={r.per_value_density:6.1%}  "
-            f"gap={r.gap:6.1%}"
+            f"sticky={a.session_sticky_density:6.1%}  "
+            f"per-value={a.per_value_density:6.1%}  "
+            f"gap={a.gap:6.1%}"
         )
 
 

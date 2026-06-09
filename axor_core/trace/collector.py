@@ -396,7 +396,14 @@ _KIND_ALLOWED_FIELDS: dict[TraceEventKind, set[str]] = {
     TraceEventKind.DEGRADATION_TRANSITION: {
         "previous_level", "new_level", "trigger_source_id", "trigger_intent", "reason",
     },
-    TraceEventKind.SOURCE_QUARANTINED: {"source_id", "reason"},
+    TraceEventKind.SOURCE_QUARANTINED: {"source_id", "quarantined_at", "reason"},
+    # density / detection events (TM3.3 / TM7.1)
+    TraceEventKind.SINK_DENSITY: {
+        "operation", "tainted", "sensitive", "session_tainted", "session_sensitive",
+    },
+    TraceEventKind.DETECTION_SIGNAL: {
+        "detector", "verdict", "score", "tool", "fed_degradation", "reason",
+    },
     # anomaly events
     TraceEventKind.ANOMALY_FLAGGED: {
         "tool", "score", "anomaly_class", "reasons", "policy_action",

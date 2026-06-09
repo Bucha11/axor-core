@@ -45,6 +45,9 @@ packages = ["axor_core"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+markers = [
+    "adversarial: end-to-end attacker scenarios and soundness fuzzing (CI gate)",
+]
 
 [tool.coverage.run]
 source = ["axor_core"]

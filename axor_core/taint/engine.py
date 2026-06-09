@@ -52,12 +52,31 @@ class TaintEngine:
         self._node_id = node_id
         self._pending_events: list[TraceEvent] = []
         self._ledger = ValueTaintLedger()
+        # Session-sticky SHADOW (observe-only, for the TM3.3 density experiment):
+        # "has any tainted / any sensitive value ever been registered this session?"
+        # This is what a coarse session-scoped model would gate on; it never feeds
+        # `allow`, it only lets the density meter compare session-sticky vs
+        # per-value honestly.
+        self._session_any_tainted = False
+        self._session_any_sensitive = False
 
     # ── Per-value provenance (TM2 / ValueProvenance) ──────────────────────────
 
     def register_value(self, content: object, root: CausalRoot) -> None:
         """Record that a value with the given causal_root produced this content."""
         self._ledger.register(content, root)
+        if root.is_tainted:
+            self._session_any_tainted = True
+        if root.sensitive:
+            self._session_any_sensitive = True
+
+    def session_shadow(self) -> tuple[bool, bool]:
+        """(any_tainted, any_sensitive) for the session-sticky shadow model.
+
+        Observe-only (TM3.3 density). NOT an enforcement input — `allow` is
+        per-value; this only exists to measure what a session model would have done.
+        """
+        return (self._session_any_tainted, self._session_any_sensitive)
 
     def derive_value(self, value: object) -> CausalRoot:
         """Per-value causal_root of `value` by content derivation. Clean (constant)
@@ -69,6 +88,12 @@ class TaintEngine:
         """Inherit the parent's per-value provenance into this (child) engine so
         the child's per-value gate sees values the parent marked tainted/sensitive."""
         self._ledger.merge(parent._ledger)
+        # Inherit the session-sticky shadow too, so child density measurement is
+        # comparable to the parent's (observe-only).
+        self._session_any_tainted = self._session_any_tainted or parent._session_any_tainted
+        self._session_any_sensitive = (
+            self._session_any_sensitive or parent._session_any_sensitive
+        )
 
     def drain_events(self) -> list[TraceEvent]:
         """Return and clear pending trace events for the trace collector."""
@@ -117,6 +142,8 @@ class TaintEngine:
                 f"(authority={authority!r}, authority_type={authority_type!r})"
             )
         self._ledger = ValueTaintLedger()
+        self._session_any_tainted = False
+        self._session_any_sensitive = False
         self._pending_events.append(TaintClearedEvent(
             kind=TraceEventKind.TAINT_CLEARED,
             node_id=self._node_id,

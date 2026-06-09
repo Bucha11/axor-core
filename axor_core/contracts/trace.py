@@ -292,10 +292,20 @@ class SourceQuarantinedEvent(TraceEvent):
 
 @dataclass(frozen=True)
 class SinkDensityEvent(TraceEvent):
-    """Emitted when a high-stakes sink fires — records whether its driving value
-    was tainted (TM3.3). Aggregated into per-value density."""
+    """Emitted when a high-stakes sink fires — records, per axis, whether the
+    driving value (per-value model) and the session (session-sticky shadow) were
+    tainted (TM3.3). Aggregated into per-value vs session-sticky density.
+
+    `tainted` is the per-value INTEGRITY label (kept as the primary field name for
+    back-compat); `sensitive` is the per-value CONFIDENTIALITY label. The
+    `session_*` fields are the observe-only session-sticky shadow — never an
+    enforcement input.
+    """
     operation: str = ""
     tainted: bool = False
+    sensitive: bool = False
+    session_tainted: bool = False
+    session_sensitive: bool = False
 
 
 @dataclass(frozen=True)
