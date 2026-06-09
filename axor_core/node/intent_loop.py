@@ -47,7 +47,7 @@ if TYPE_CHECKING:
     from axor_core.contracts.lease import CapabilityLease
     from axor_core.contracts.reputation import ReputationEnricher
     from axor_core.degradation.engine import DegradationEngine
-    from axor_core.taint.engine import TaintEngine
+    from axor_core.contracts.provenance import ValueProvenance
 
 log = logging.getLogger("axor.intent_loop")
 
@@ -118,7 +118,7 @@ class IntentLoop:
         tool_result_callback: ToolResultCallback | None = None,
         spawn_callback: SpawnCallback | None = None,
         escalation_callback: EscalationCallback | None = None,
-        taint_engine: "TaintEngine | None" = None,
+        taint_engine: "ValueProvenance | None" = None,
         degradation_engine: "DegradationEngine | None" = None,
         reputation_enricher: "ReputationEnricher | None" = None,
         max_intents_per_session: int | None = None,
