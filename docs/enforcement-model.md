@@ -103,7 +103,7 @@ User types tool invocation
 - Evaluate against `ExecutionPolicy` (Layer 1)
 - Run anomaly detection (Layer 2) if configured
 - Run LLM verifier (Layer 3) if anomaly score is in gray zone
-- Apply taint rules (`TaintEngine.propagate()` on external reads)
+- Apply per-value taint rules (`TaintEngine.register_value()` on external reads; `derive_value()` at sinks)
 - Apply lease rules (`LeaseValidator.check_tool_allowed()`)
 - Apply degradation pre-check (`DegradationEngine.apply_to_policy()` before Layer 1)
 - Record `DegradationEngine.record_signal()` after every cascade outcome (pass or deny)

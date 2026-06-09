@@ -286,46 +286,49 @@ the parent's current `DegradationLevel` (invariant D-6).
 
 ---
 
-## Taint Propagation
+## Taint: Per-Value Provenance (TM2)
 
-When a session processes external content — a web fetch, an MCP result, an untrusted file read — the session is marked tainted. This is what drives the `preceded_by_external_read` signal. Taint is **sticky by default**: it persists through all subsequent intents until explicitly cleared by governance.
+When a session processes external content — a web fetch, an MCP result, an untrusted file read — the **value** it produced is registered with its causal root. Enforcement is **per-value**: a sink decides on the causal root of its driving argument (by content derivation), not on a session-wide flag. A value's provenance does not decay on its own; only a governance boundary can release it.
 
 ```python
-# External content enters the session
-TaintEngine.propagate(TaintSource.WEB, scope=TaintScope.SESSION)
+# External content enters the session — register the produced VALUE
+engine.register_value(web_text, CausalRoot.external_read(TaintSource.WEB))
 
-# Taint persists through N subsequent benign intents
-# (verified by burstfire adversarial tests at N=1, N=10, N=50)
-assert session.taint_state.is_tainted is True
-assert session.taint_state.sticky is True
+# A sink derives the causal root of its driving argument. A value carrying the
+# registered fragment is flagged; an argument that does not carry it is clean —
+# the per-value win over session-sticky taint.
+assert engine.derive_value(f"... {web_text} ...").is_tainted is True
+assert engine.derive_value("unrelated text").is_tainted is False
 
-# Child agents inherit parent taint
-child_node._taint_engine.inherit_from_parent(parent.state)
-assert child_node.taint_state.parent_inherited is True
+# Child agents inherit the parent's per-value ledger (cannot launder provenance)
+child_engine.inherit_value_ledger(parent_engine)
 
-# Workers cannot clear taint — raises TaintClearanceError
-# Only governance can clear
-TaintEngine.clear_by_governance(authority=..., reason=...)
+# Workers cannot release taint — raises TaintClearanceError. Only governance can,
+# per value (endorse_value) or wholesale (clear_by_governance).
+engine.endorse_value(value, authority=..., authority_type=..., reason_code=...)
+engine.clear_by_governance(authority=..., authority_type=..., reason_code=...)
 ```
 
-Taint state carries source provenance, scope, intent age, and full clearance history.
-Taint source metadata also feeds `DegradationEngine`: the source identifier derived from
-`TaintState` is used to track per-source behavioral pressure counts, driving the
+A value's causal root carries its source set and the confidentiality (`sensitive`) label.
+The `DegradationEngine` is fed by the per-value *driving root* at a denied sink: the source
+identifier derived from that root tracks per-source behavioral pressure counts, driving the
 quarantine-and-restrict transitions when a single origin accumulates tool or instruction
 pressure signals.
 
-### Taint sources and default scopes
+### Taint sources
 
-| Source | `TaintSource` | Default scope |
-|--------|--------------|---------------|
-| Web fetch / search | `WEB` | `SESSION` |
-| MCP result | `MCP` | `SESSION` |
-| File read (untrusted workspace) | `FILE` | `NODE` or `SESSION` |
-| External API | `API` | `SESSION` |
-| Child agent output | `CHILD_AGENT` | `SUBTREE` |
-| Memory (external session) | `MEMORY` | `NODE` |
+A registered value records which `TaintSource`(s) it derived from in its causal root.
 
-Child agents inherit parent taint. The current implementation blocks clearing of inherited taint via the worker path — child agents are not designed to launder parent taint.
+| Source | `TaintSource` | Typically sensitive |
+|--------|--------------|---------------------|
+| Web fetch / search | `WEB` | no |
+| MCP result | `MCP` | no |
+| File read (untrusted workspace) | `FILE` | depends (secret reads → yes) |
+| External API | `API` | no |
+| Child agent output | `CHILD_AGENT` | inherited |
+| Memory (external session) | `MEMORY` | inherited |
+
+Child agents inherit the parent's per-value ledger (`inherit_value_ledger`). The worker path cannot release inherited provenance — child agents are not designed to launder a parent's tainted values.
 
 ---
 
