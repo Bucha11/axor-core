@@ -50,3 +50,24 @@ def path_matches_allowlist(path: str, allowed_paths: Sequence[str]) -> bool:
 def paths_within(candidate_paths: Sequence[str], allowed_paths: Sequence[str]) -> bool:
     """True only when every candidate path is contained by an allowed root."""
     return all(path_matches_allowlist(p, allowed_paths) for p in candidate_paths)
+
+
+def intersect_allowlist(
+    policy_paths: Sequence[str], ceiling_paths: Sequence[str]
+) -> tuple[str, ...]:
+    """Narrowing intersection of two path allowlists.
+
+    For each (policy root p, ceiling root c) the deeper of the two is kept only
+    when they overlap; disjoint pairs contribute nothing. Every returned root is
+    therefore contained by BOTH a policy root and a ceiling root — the result can
+    only narrow, never widen past either side. An empty result means the two
+    allowlists are disjoint (confine to nothing — fail closed)."""
+    result: list[str] = []
+    for p in policy_paths:
+        for c in ceiling_paths:
+            if path_within(p, c):       # p is inside the ceiling — p is narrower
+                result.append(p)
+            elif path_within(c, p):     # ceiling is inside p — c is narrower
+                result.append(c)
+            # disjoint: neither contains the other — grants nothing
+    return tuple(dict.fromkeys(result))  # dedupe, preserve order

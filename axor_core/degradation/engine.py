@@ -358,6 +358,21 @@ class DegradationEngine:
         self._state.tools_frozen = target_level >= DegradationLevel.LOCKED
         if target_level < DegradationLevel.LOCKED:
             self._locked_at = None
+        # NC3: clearing below RESTRICTED means governance has reviewed and released
+        # the quarantine. Without resetting the per-source quarantine flags and the
+        # telemetry counters, apply_to_policy keeps narrowing at the next RESTRICTED
+        # (the lowered level is cosmetic) and re-quarantine logic is skewed by stale
+        # pressure. Release them so the session genuinely returns to a clean state.
+        if target_level < DegradationLevel.RESTRICTED:
+            self._state.session_deny_count = 0
+            for source in self._state.sources.values():
+                source.quarantined = False
+                source.tool_pressure_count = 0
+                source.instruction_pressure_count = 0
+        # Observe-mode shadow must track the clearance too, or its monotonic gate
+        # would keep emitting from the stale (higher) shadow level.
+        if self._observe and target_level < self._shadow_level:
+            self._shadow_level = target_level
         entry = (now, target_level, f"governance_clearance:{authority.authority_id}:{reason}")
         self._state.level_history.append(entry)
         self._emit_transition_event(

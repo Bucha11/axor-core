@@ -257,6 +257,27 @@ class IntentLoop:
                                 )
                             continue
 
+                        # Per-value carrier/taint gate (NC2) — the capability check
+                        # above only asks "may this node spawn"; it does not inspect
+                        # WHAT drives the spawn. A tainted free-text task is prompt
+                        # injection reaching an instruction-following sink.
+                        spawn_args = event.payload.get("args", {})
+                        taint_reason = self._spawn_taint_reason(spawn_args)
+                        if taint_reason is not None:
+                            self._record_denial(spawn_intent, taint_reason, envelope)
+                            denial = _denial_result(tool_name, taint_reason)
+                            if self._tool_result_callback is not None:
+                                await self._tool_result_callback(
+                                    tool_use_id, tool_name, denial, False
+                                )
+                            else:
+                                yield ExecutorEvent(
+                                    kind=ExecutorEventKind.TEXT,
+                                    payload={"tool_result": denial, "approved": False},
+                                    node_id=envelope.node_id,
+                                )
+                            continue
+
                         # Approved — count this spawn once at the dispatch site.
                         self._spawn_count += 1
                         task = event.payload.get("args", {}).get("task", "")
@@ -417,8 +438,17 @@ class IntentLoop:
         # degradation-narrowed policy gate. Degradation is driven only by
         # structural facts; no probabilistic detector feeds it (ML/judge removed).
         if self._degradation_engine is not None and normalized is not None:
+            # Per-value (NM3): hand the driving value's causal_root to the check
+            # path so a value-keyed quarantine ("value:<src>") is matched here, not
+            # only on the record_signal path. Without it derive_source_id falls back
+            # to provenance/"unknown" and the narrowing silently misses.
+            check_root = (
+                self._taint_engine.derive_value(tool_args)
+                if self._taint_engine is not None
+                else None
+            )
             degradation_denial = self._check_degradation_denial(
-                tool_name, normalized, envelope
+                tool_name, normalized, envelope, driving_root=check_root
             )
             if degradation_denial is not None:
                 self._record_denial(intent, degradation_denial, envelope)
@@ -879,6 +909,27 @@ class IntentLoop:
             )
         )
 
+    def _spawn_taint_reason(self, spawn_args: dict) -> str | None:
+        """Carrier/taint gate for spawn_child (NC2). The child's `task` is free text
+        the child interprets as instructions — spawn_child is an instruction-
+        following sink (it is in `_IMPERATIVE_SINKS`). A tainted FREE_TEXT task is
+        the imperative channel (TM1). The regular tool path applies exactly this
+        gate; the spawn branch dispatches before reaching it, so apply it here too.
+
+        Returns a denial reason, or None to allow. (Structured/sensitive values that
+        are not the imperative channel stay gated at the child's own sinks: the
+        child inherits this engine's per-value ledger.)
+        """
+        if self._taint_engine is None:
+            return None
+        driving_root = self._taint_engine.derive_value(spawn_args)
+        if driving_root.is_tainted and classify_carrier(spawn_args) == Carrier.FREE_TEXT:
+            return (
+                "carrier gate (TM1): untrusted FREE_TEXT value into spawn_child — "
+                "the child task is interpreted as instructions (imperative channel)"
+            )
+        return None
+
     def _record_denial(
         self,
         intent: Intent,
@@ -989,6 +1040,7 @@ class IntentLoop:
         tool_name: str,
         normalized: NormalizedIntent,
         envelope: ExecutionEnvelope,
+        driving_root: "CausalRoot | None" = None,
     ) -> str | None:
         """
         Return a denial reason string if degradation state forbids this tool call, else None.
@@ -996,7 +1048,7 @@ class IntentLoop:
         """
         if self._degradation_engine is None:
             return None
-        source_id = self._degradation_engine.derive_source_id(normalized)
+        source_id = self._degradation_engine.derive_source_id(normalized, driving_root)
         effective = self._degradation_engine.apply_to_policy(envelope.policy, source_id)
         # LOCKED/TERMINAL: only read + escalate allowed
         level = self._degradation_engine.state.level
