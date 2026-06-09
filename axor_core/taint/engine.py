@@ -85,6 +85,11 @@ class TaintEngine:
         """
         return self._ledger.derive(value)
 
+    def inherit_value_ledger(self, parent: "TaintEngine") -> None:
+        """Inherit the parent's per-value provenance into this (child) engine so
+        the child's per-value gate sees values the parent marked tainted/sensitive."""
+        self._ledger.merge(parent._ledger)
+
     def drain_events(self) -> list[TraceEvent]:
         """Return and clear pending trace events for the trace collector."""
         events = list(self._pending_events)

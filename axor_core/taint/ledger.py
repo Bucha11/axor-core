@@ -46,6 +46,15 @@ class ValueTaintLedger:
             existing = self._segments.get(seg)
             self._segments[seg] = CausalRoot.mint(existing, root) if existing else root
 
+    def merge(self, other: "ValueTaintLedger") -> None:
+        """Fold another ledger's fragments into this one (parent → child spawn) —
+        the per-value analog of taint-source inheritance."""
+        for seg, root in other._segments.items():
+            if len(self._segments) >= _MAX_TOTAL_SEGMENTS:
+                break
+            existing = self._segments.get(seg)
+            self._segments[seg] = CausalRoot.mint(existing, root) if existing else root
+
     def unregister(self, content: object) -> int:
         """Remove the fragments of `content` from the ledger (endorsement / release).
         Returns the number of fragments removed."""

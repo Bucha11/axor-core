@@ -418,9 +418,11 @@ class GovernedNode:
         # Build child taint engine before constructing the node so taint
         # inheritance is set atomically via the constructor, not via private field.
         child_taint = TaintEngine(node_id=child_lineage.node_id)
-        parent_taint = self._taint_engine.state
-        if parent_taint.is_tainted:
-            child_taint.inherit_from_parent(parent_taint)
+        # Spawn inheritance is PER-VALUE (v4.12): the child inherits the parent's
+        # value-ledger, NOT the coarse session-taint flag (which would re-explode
+        # taint over the subtree). Subtree lock-down is via the SHARED degradation
+        # engine; federation-lateral protection is preserved per-value.
+        child_taint.inherit_value_ledger(self._taint_engine)
 
         child_node = GovernedNode(
             executor=self._child_executor or self._executor,
@@ -439,6 +441,8 @@ class GovernedNode:
             max_intents_per_session=self._max_intents_per_session,
             max_total_spawns=self._max_total_spawns,
             taint_engine=child_taint,
+            consequence_overrides=self._consequence_overrides,
+            value_policies=self._value_policies,
         )
 
         child_cancel = envelope.cancel_token.child_token()
