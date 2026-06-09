@@ -124,6 +124,7 @@ class IntentLoop:
         max_intents_per_session: int | None = None,
         max_total_spawns: int | None = None,
         value_policies: "dict | None" = None,
+        consequence_overrides: "dict | None" = None,
     ) -> None:
         self._executor = capability_executor
         self._trace_events = trace_events
@@ -146,6 +147,7 @@ class IntentLoop:
         self._max_intents_per_session = max_intents_per_session
         self._max_total_spawns = max_total_spawns
         self._value_policies = value_policies or {}
+        self._consequence_overrides = consequence_overrides or {}
         self._spawn_count = 0
 
     async def run(
@@ -918,7 +920,7 @@ class IntentLoop:
         The governance gate is satisfied by an active escalation grant or
         capability lease for the tool (a human/operator-authorised path).
         """
-        cls = consequence_class(tool_name)
+        cls = consequence_class(tool_name, overrides=self._consequence_overrides)
         ceiling = getattr(
             envelope.policy, "max_unattended_consequence", ConsequenceClass.CONSEQUENTIAL
         )

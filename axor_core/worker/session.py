@@ -98,10 +98,32 @@ class GovernedSession:
         telemetry: "Any | None" = None,
         mode: ExecutionMode = ExecutionMode.LIBRARY,
         require_isolation: bool = False,
+        profile: "str | Any | None" = None,
+        workspace: str | None = None,
+        danger: "dict | None" = None,
     ) -> None:
+        # Profile = a named bundle of existing knobs (no new mechanism); it
+        # pre-fills mode / isolation / escalation / consequence-ceiling / watcher.
+        self._consequence_overrides = dict(danger or {})
+        _overlay_ceiling = None
+        _overlay_escalation = None
+        if profile is not None:
+            from axor_core.profiles import resolve_profile
+            prof = resolve_profile(profile)
+            mode = prof.mode
+            require_isolation = require_isolation or prof.require_isolation
+            _overlay_ceiling = prof.consequence_ceiling
+            _overlay_escalation = prof.escalation_policy
+            if behavioral_drift_observer is None and prof.attach_watcher:
+                from axor_core.node.drift_observer import TaintEngineDriftObserver
+                behavioral_drift_observer = TaintEngineDriftObserver()
+        self._overlay_allowed_paths = (workspace,) if workspace else None
+
         self._session_id     = f"session_{uuid.uuid4().hex[:12]}"
         self._mode           = mode
         self._behavioral_drift_observer = behavioral_drift_observer
+        self._overlay_ceiling = _overlay_ceiling
+        self._overlay_escalation = _overlay_escalation
 
         # STRICT mode is a superset of PRODUCTION.
         # Apply all STRICT-only restrictions here before anything else is wired.
@@ -165,7 +187,11 @@ class GovernedSession:
             agent_domain=agent_domain,
         )
         self._selector  = PolicySelector()
-        self._composer  = PolicyComposer()
+        self._composer  = PolicyComposer(
+            consequence_ceiling=self._overlay_ceiling,
+            escalation_policy=self._overlay_escalation,
+            allowed_paths=self._overlay_allowed_paths,
+        )
 
         # budget subsystem — shared across all nodes
         self._tracker       = BudgetTracker()
@@ -512,6 +538,7 @@ class GovernedSession:
             child_executor=self._child_executor,
             taint_engine=self._taint_engine,
             degradation_engine=self._degradation_engine,
+            consequence_overrides=self._consequence_overrides,
         )
 
     async def _handle_command(self, raw: str) -> ExecutionResult:

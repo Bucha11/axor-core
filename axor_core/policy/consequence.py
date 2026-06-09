@@ -71,11 +71,22 @@ _OPERATION_OVERRIDE: dict[str, ConsequenceClass] = {
 _DEFAULT = ConsequenceClass.CONSEQUENTIAL
 
 
-def consequence_class(sink: str, operation: str | None = None) -> ConsequenceClass:
+def consequence_class(
+    sink: str,
+    operation: str | None = None,
+    overrides: "dict[str, ConsequenceClass] | None" = None,
+) -> ConsequenceClass:
     """Return the ConsequenceClass for a sink (tool name), optionally refined by
     the operation enum. Deterministic; reads no argument content.
+
+    `overrides` is an operator table for custom sinks (the `danger=` profile knob),
+    taking precedence over the built-in defaults.
     """
-    base = _CONSEQUENCE_TABLE.get((sink or "").lower(), _DEFAULT)
+    key = (sink or "").lower()
+    if overrides and key in overrides:
+        base = overrides[key]
+    else:
+        base = _CONSEQUENCE_TABLE.get(key, _DEFAULT)
     if operation is not None:
         override = _OPERATION_OVERRIDE.get(operation)
         if override is not None and override > base:

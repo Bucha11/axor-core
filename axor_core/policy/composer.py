@@ -32,6 +32,19 @@ class PolicyComposer:
        Full pipeline: base → extensions → parent restrictions.
     """
 
+    def __init__(
+        self,
+        *,
+        consequence_ceiling=None,
+        escalation_policy: EscalationPolicy | None = None,
+        allowed_paths: tuple[str, ...] | None = None,
+    ) -> None:
+        # Deployment overlay from a profile (operator-wide knobs applied to every
+        # per-task policy). None → no overlay.
+        self._consequence_ceiling = consequence_ceiling
+        self._overlay_escalation = escalation_policy
+        self._overlay_allowed_paths = allowed_paths
+
     def compose(
         self,
         base: ExecutionPolicy,
@@ -39,9 +52,23 @@ class PolicyComposer:
         parent_policy: ExecutionPolicy | None = None,
     ) -> ExecutionPolicy:
         policy = self.apply_extension_overrides(base, extensions)
+        policy = self._apply_deployment_overlay(policy)
         if parent_policy is not None:
             policy = self.apply_parent_restrictions(policy, parent_policy)
         return policy
+
+    def _apply_deployment_overlay(self, policy: ExecutionPolicy) -> ExecutionPolicy:
+        """Impose operator-wide profile knobs (ceiling / escalation / workspace),
+        applied before parent restrictions so a child can still be narrowed
+        further, never widened past the operator's choice."""
+        changes: dict = {}
+        if self._consequence_ceiling is not None:
+            changes["max_unattended_consequence"] = self._consequence_ceiling
+        if self._overlay_escalation is not None:
+            changes["escalation_policy"] = self._overlay_escalation
+        if self._overlay_allowed_paths and not (policy.allowed_paths or ()):
+            changes["allowed_paths"] = tuple(self._overlay_allowed_paths)
+        return dataclasses.replace(policy, **changes) if changes else policy
 
     def apply_extension_overrides(
         self,
