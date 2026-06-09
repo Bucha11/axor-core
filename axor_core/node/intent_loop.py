@@ -18,6 +18,8 @@ from axor_core.contracts.intent import Intent, IntentKind, ResolvedIntent
 from axor_core.contracts.canonical import ConsequenceClass
 from axor_core.contracts.policy import PolicyDecision, PolicyDecisionKind
 from axor_core.policy.consequence import consequence_class
+from axor_core.policy.value_policy import check_value_policies
+from axor_core.security.carrier import classify_carrier
 from axor_core.contracts.result import ExecutorEvent, ExecutorEventKind
 from axor_core.contracts.trace import (
     CancelledEvent,
@@ -25,6 +27,7 @@ from axor_core.contracts.trace import (
     EscalationDeniedEvent,
     EscalationGrantedEvent,
     IntentDeniedEvent,
+    SinkDensityEvent,
     SuspiciousIntentEvent,
     TokensSpentEvent,
     TraceEvent,
@@ -42,7 +45,7 @@ from axor_core.capability.lease_validator import (
 )
 from axor_core.contracts.lease import LeaseAuthorityType
 from axor_core.contracts.degradation import DegradationLevel
-from axor_core.contracts.taint import TaintScope, TaintSource, TaintState
+from axor_core.contracts.taint import Carrier, TaintScope, TaintSource, TaintState
 from axor_core.degradation.engine import _LOCKED_ALLOWED_TOOLS
 from axor_core.node.normalizer import IntentNormalizer
 from axor_core.taint.causal_root import CausalRoot
@@ -129,6 +132,7 @@ class IntentLoop:
         reputation_enricher: "ReputationEnricher | None" = None,
         max_intents_per_session: int | None = None,
         max_total_spawns: int | None = None,
+        value_policies: "dict | None" = None,
     ) -> None:
         self._executor = capability_executor
         self._trace_events = trace_events
@@ -153,6 +157,7 @@ class IntentLoop:
         # DoS guards — opt-in (None = unlimited). GovernedSession sets prod defaults.
         self._max_intents_per_session = max_intents_per_session
         self._max_total_spawns = max_total_spawns
+        self._value_policies = value_policies or {}
         self._spawn_count = 0
 
     async def run(
@@ -387,6 +392,22 @@ class IntentLoop:
                 result=denial_resp.to_tool_result(),
             )
 
+        # value-policy predicates (TM3.1 predicate layer) — operator-registered
+        # range/enum predicates over an admissible projection of an argument
+        # (e.g. transfer(amount) within bounds). Content-blind: reads the numeric/
+        # enum projection, discharged by the Thm. 0 decision procedures.
+        value_denial = check_value_policies(tool_name, tool_args, self._value_policies)
+        if value_denial is not None:
+            self._record_denial(intent, value_denial, envelope)
+            denial_resp = _make_denial_response(value_denial, "value_policy")
+            self._record_degradation_signal(intent, denial_resp)
+            return ResolvedIntent(
+                intent=intent,
+                approved=False,
+                reason=value_denial,
+                result=denial_resp.to_tool_result(),
+            )
+
         # normalize intent once — shared by anomaly detection, taint, degradation, and reputation
         needs_normalized = (
             self._anomaly_detector is not None
@@ -470,6 +491,38 @@ class IntentLoop:
         # session-sticky and needs an interpreter (ceded to CaMeL).
         if self._taint_engine is not None and normalized is not None:
             driving_root = self._taint_engine.derive_value(tool_args)
+
+            # Density (TM3.3): record, per high-stakes sink firing, whether the
+            # driving value is tainted. The make-or-break number, measured live.
+            if consequence_class(tool_name) >= ConsequenceClass.REVERSIBLE:
+                self._trace_events.append(SinkDensityEvent(
+                    kind=TraceEventKind.SINK_DENSITY,
+                    node_id=envelope.node_id,
+                    sequence=len(self._trace_events),
+                    operation=tool_name,
+                    tainted=driving_root.is_tainted,
+                ))
+
+            # Carrier / imperative-channel gate (TM1): a tainted FREE_TEXT value
+            # reaching an instruction-following sink (it would be interpreted as a
+            # directive — spawn a sub-agent, send a message, execute) is the
+            # imperative channel. classify_carrier reads the *form*, deterministic
+            # (T0). Complements per-value: catches free-text-as-directive that the
+            # risky-op list below does not (e.g. spawn_child(task=<free text>)).
+            if driving_root.is_tainted and _is_imperative_sink(tool_name, normalized):
+                if classify_carrier(tool_args) == Carrier.FREE_TEXT:
+                    reason = (
+                        f"carrier gate (TM1): untrusted FREE_TEXT value into the "
+                        f"instruction-following sink '{tool_name}' (imperative channel)"
+                    )
+                    self._record_denial(intent, reason, envelope)
+                    denial_resp = _make_denial_response(reason, "carrier_gate")
+                    self._record_degradation_signal(intent, denial_resp, normalized)
+                    return ResolvedIntent(
+                        intent=intent, approved=False, reason=reason,
+                        result=denial_resp.to_tool_result(),
+                    )
+
             exfil_destination = normalized.destination_kind in (
                 "cloud_metadata", "private_network", "external_domain"
             )
@@ -1129,6 +1182,24 @@ class IntentLoop:
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
+
+
+_IMPERATIVE_SINKS = frozenset({
+    "spawn_child", "send", "message", "prompt", "ask", "delegate",
+    "reply", "email", "slack", "post", "notify",
+})
+
+
+def _is_imperative_sink(tool_name: str, normalized) -> bool:
+    """Instruction-following sink: it would interpret its argument as a directive
+    (spawn a sub-agent, send a message, execute generated code). The imperative
+    channel (TM1) — distinct from the risky-op list, which misses free-text-as-
+    directive (e.g. spawn_child(task=<free text>))."""
+    return (
+        tool_name.lower() in _IMPERATIVE_SINKS
+        or getattr(normalized, "executes_generated_code", False)
+        or getattr(normalized, "operation", "") == "execute_generated_code"
+    )
 
 
 def _denial_result(tool_name: str, reason: str) -> dict:

@@ -46,6 +46,16 @@ class ValueTaintLedger:
             existing = self._segments.get(seg)
             self._segments[seg] = CausalRoot.mint(existing, root) if existing else root
 
+    def unregister(self, content: object) -> int:
+        """Remove the fragments of `content` from the ledger (endorsement / release).
+        Returns the number of fragments removed."""
+        removed = 0
+        for seg in self._segmentize(content):
+            if seg in self._segments:
+                del self._segments[seg]
+                removed += 1
+        return removed
+
     def derive(self, value: object) -> CausalRoot:
         """Return the joined causal_root of every registered fragment that the
         given value contains. Constant (clean) if none — the per-value win:

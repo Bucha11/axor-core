@@ -25,6 +25,16 @@ class GovernanceMetrics:
     sources_quarantined: int = 0
     escalations_granted: int = 0
     escalations_denied: int = 0
+    # Density (TM3.3): high-stakes sink firings and how many carried a tainted
+    # driving value, per operation. per-value density = tainted / firings.
+    sink_firings_by_op: Counter[str] = field(default_factory=Counter)
+    sink_tainted_by_op: Counter[str] = field(default_factory=Counter)
+
+    @property
+    def density(self) -> float:
+        """Overall per-value density: tainted high-stakes firings / all firings."""
+        total = sum(self.sink_firings_by_op.values())
+        return (sum(self.sink_tainted_by_op.values()) / total) if total else 0.0
 
     @classmethod
     def from_events(cls, events: Iterable[TraceEvent]) -> "GovernanceMetrics":
@@ -50,6 +60,11 @@ class GovernanceMetrics:
                 m.escalations_granted += 1
             elif kind == TraceEventKind.ESCALATION_DENIED:
                 m.escalations_denied += 1
+            elif kind == TraceEventKind.SINK_DENSITY:
+                op = getattr(ev, "operation", "") or "unknown"
+                m.sink_firings_by_op[op] += 1
+                if getattr(ev, "tainted", False):
+                    m.sink_tainted_by_op[op] += 1
         return m
 
     def to_prometheus(self, prefix: str = "axor_governance") -> str:

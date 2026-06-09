@@ -226,6 +226,41 @@ class TaintEngine:
         ))
         return self._state
 
+    def endorse_value(
+        self,
+        content: object,
+        authority: str,
+        authority_type: str,
+        reason_code: str,
+        audit_id: str = "",
+    ) -> int:
+        """Endorsement (TM4) — governed STRUCTURAL release of one specific value.
+
+        Removes the value's fragments from the per-value ledger so `derive_value`
+        no longer flags it. This attests release of *this value/lineage* (schema/
+        transform/bounded use), NOT a semantic "safe" judgement, and NOT the whole
+        session — the fine-grained alternative to clear_by_governance. Requires a
+        valid governance authority (a worker-reachable path cannot endorse).
+
+        Returns the number of fragments released.
+        """
+        if not _is_valid_governance_authority(authority, authority_type, reason_code):
+            raise TaintClearanceError(
+                "endorsement rejected: requires a valid governance authority "
+                f"(authority={authority!r}, authority_type={authority_type!r})"
+            )
+        removed = self._ledger.unregister(content)
+        self._pending_events.append(TaintClearedEvent(
+            kind=TraceEventKind.TAINT_CLEARED,
+            node_id=self._node_id,
+            sequence=len(self._pending_events),
+            cleared_by=authority,
+            authority_type=authority_type,
+            reason_code=f"endorsement:{reason_code}",
+            audit_id=audit_id,
+        ))
+        return removed
+
     # ── Cross-session persistence (§7.1) ──────────────────────────────────────
 
     def cross_session_persist(self, snapshot_dir: Path) -> None:

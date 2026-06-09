@@ -73,6 +73,11 @@ class TraceEventKind(str, Enum):
     DEGRADATION_TRANSITION = "degradation_transition"
     SOURCE_QUARANTINED = "source_quarantined"
 
+    # ── Density (TM3.3) ────────────────────────────────────────────────────────
+    # Emitted per high-stakes sink firing: did the driving value carry taint?
+    # Aggregated into the per-value density metric (the make-or-break number).
+    SINK_DENSITY = "sink_density"
+
     # ── Detection-register events (TM7) ───────────────────────────────────────
     # Emitted by the detection layer (reputation / anomaly). Detection NEVER
     # gates `allow` directly (would break T1); it records telemetry and may feed
@@ -283,6 +288,14 @@ class SourceQuarantinedEvent(TraceEvent):
     source_id: str = ""
     quarantined_at: float = 0.0
     reason: str = ""
+
+
+@dataclass(frozen=True)
+class SinkDensityEvent(TraceEvent):
+    """Emitted when a high-stakes sink fires — records whether its driving value
+    was tainted (TM3.3). Aggregated into per-value density."""
+    operation: str = ""
+    tainted: bool = False
 
 
 @dataclass(frozen=True)
