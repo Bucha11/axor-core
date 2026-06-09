@@ -223,44 +223,6 @@ class DegradationEngine:
         return self._shadow_level if self._observe else self._state.level
 
 
-    def record_detection_crossing(
-        self,
-        intent: "NormalizedIntent",
-        taint_state: "TaintState",
-        *,
-        reason: str,
-    ) -> DegradationTransition | None:
-        """Ingest a detection-layer threshold-crossing as a tightening-only fact (TM7.1).
-
-        Detection (reputation, anomaly) never gates `allow` directly — that would
-        break T1, since reputation/score are not part of the structural projection.
-        Instead a *decidable crossing* (a Boolean, not the underlying score) raises
-        degradation, which narrows `policy`; `allow` then enforces the narrowed
-        policy purely. This is fact-driven (a crossing Boolean, not a counter) and
-        strictly monotone — it may only tighten, never loosen.
-
-        Cross-origin export crossing → LOCKED; otherwise quarantine the source and
-        move to RESTRICTED.
-        """
-        if self._state.level == DegradationLevel.TERMINAL:
-            return None
-        ttl_transition = self._check_locked_ttl()
-        if ttl_transition is not None:
-            return ttl_transition
-
-        source_id = self.derive_source_id(intent, taint_state)
-        source = self._get_or_create_source(source_id, taint_state)
-        source.last_signal = time.time()
-
-        if _is_cross_origin_export(intent):
-            return self._transition_to(
-                DegradationLevel.LOCKED,
-                source_id=source_id,
-                trigger_intent=intent.tool,
-                reason=f"detection_crossing:{reason}",
-            )
-        return self._quarantine_and_restrict(source, source_id, intent.tool)
-
     def attempt_clear_by_worker(self) -> None:
         """Workers may not lower degradation level. Always raises DegradationClearanceError."""
         raise DegradationClearanceError(

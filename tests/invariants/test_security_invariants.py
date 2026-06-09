@@ -101,8 +101,7 @@ def test_inv01_adversarial_ml_allow_cannot_override_layer1():
     detector.score = AsyncMock(return_value=AnomalyResult(
         score=0.0, cls=AnomalyClass.NORMAL, reasons=()))
 
-    loop = IntentLoop(capability_executor=MagicMock(), trace_events=[],
-                      anomaly_detector=detector)
+    loop = IntentLoop(capability_executor=MagicMock(), trace_events=[])
     intent = Intent(kind=IntentKind.TOOL_CALL,
                     payload={"tool": "bash", "args": {}}, node_id="n")
     decision = loop._evaluate_tool_intent(intent, _mk_envelope(frozenset()))
@@ -229,8 +228,7 @@ def test_inv07_positive_ml_deny_blocks_tool():
     detector.score = AsyncMock(return_value=AnomalyResult(
         score=0.95, cls=AnomalyClass.CRITICAL, reasons=("exploit",)))
 
-    loop = IntentLoop(capability_executor=MagicMock(), trace_events=[],
-                      anomaly_detector=detector)
+    loop = IntentLoop(capability_executor=MagicMock(), trace_events=[])
     intent = Intent(kind=IntentKind.TOOL_CALL,
                     payload={"tool": "bash", "args": {}}, node_id="n")
     # Layer 1 blocks first — ML is not consulted for unauthorized tool
@@ -249,8 +247,7 @@ def test_inv07_adversarial_ml_allow_cannot_grant_capability():
     detector.score = AsyncMock(return_value=AnomalyResult(
         score=0.0, cls=AnomalyClass.NORMAL, reasons=()))
 
-    loop = IntentLoop(capability_executor=MagicMock(), trace_events=[],
-                      anomaly_detector=detector)
+    loop = IntentLoop(capability_executor=MagicMock(), trace_events=[])
     intent = Intent(kind=IntentKind.TOOL_CALL,
                     payload={"tool": "execute_shell", "args": {}}, node_id="n")
     decision = loop._evaluate_tool_intent(intent, _mk_envelope(frozenset()))

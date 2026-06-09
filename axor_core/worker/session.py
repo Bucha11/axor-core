@@ -11,7 +11,6 @@ if TYPE_CHECKING:
 from axor_core.contracts.cancel import make_token, CancelReason
 from axor_core.contracts.context import RawExecutionState, LineageSummary
 from axor_core.contracts.extension import ExtensionLoader
-from axor_core.contracts.anomaly import AnomalyDetector
 from axor_core.contracts.drift import BehavioralDriftObserver
 from axor_core.contracts.invokable import Invokable
 from axor_core.contracts.mode import ExecutionMode
@@ -87,7 +86,6 @@ class GovernedSession:
         executor: Invokable,
         capability_executor: CapabilityExecutor,
         classifier: SignalClassifier | None = None,
-        anomaly_detector: AnomalyDetector | None = None,
         behavioral_drift_observer: BehavioralDriftObserver | None = None,
         extension_loaders: list[ExtensionLoader] | None = None,
         trace_config: TraceConfig | None = None,
@@ -147,7 +145,6 @@ class GovernedSession:
 
         self._child_executor = child_executor
         self._cap_executor   = capability_executor
-        self._anomaly_detector = anomaly_detector
         self._agent_def      = agent_def
         self._memory_provider = memory_provider
         self._trace_config   = trace_config or TraceConfig()
@@ -507,7 +504,6 @@ class GovernedSession:
             trace_collector=self._collector,
             trace_config=self._trace_config,
             child_executor=self._child_executor,
-            anomaly_detector=self._anomaly_detector,
             taint_engine=self._taint_engine,
             degradation_engine=self._degradation_engine,
         )

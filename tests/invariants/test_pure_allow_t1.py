@@ -1,44 +1,22 @@
-"""T1 / pure-allow invariant (v4.12 Phase 1).
-
-`allow` must be a pure function of (structural projection, policy): equal
-projection + equal policy ⇒ equal decision. Detection-layer signals
-(reputation float, anomaly score/class) must NOT enter the gate — they are
-out-of-band (TM7) and may influence a decision only by tightening degradation,
-which narrows *policy* (a separate, monotone, session-state input).
-
-These tests pin the boundary: varying the anomaly verdict, with no degradation
-engine wired, does not change the gate's decision.
-"""
+"""T1 / pure-allow invariant (v4.12). Enforcement is purely structural — no
+probabilistic component near the gate (ML/judge removed)."""
 
 from __future__ import annotations
 
-import pytest
-from unittest.mock import AsyncMock
+import inspect
 
-from axor_core.contracts.anomaly import AnomalyClass, AnomalyResult
+import pytest
+
 from axor_core.contracts.result import ExecutorEvent, ExecutorEventKind
 from axor_core.node.intent_loop import IntentLoop
 
 
-def _detector(cls: AnomalyClass, score: float) -> AsyncMock:
-    d = AsyncMock()
-    d.score = AsyncMock(return_value=AnomalyResult(score=score, cls=cls, reasons=()))
-    return d
-
-
-async def _decide(loop: IntentLoop, envelope, tool_name: str) -> bool:
+async def _decide(loop, envelope, tool_name):
     async def _stream():
-        yield ExecutorEvent(
-            kind=ExecutorEventKind.TOOL_USE,
-            payload={"tool": tool_name, "args": {}, "tool_use_id": "t"},
-            node_id=envelope.node_id,
-        )
-        yield ExecutorEvent(
-            kind=ExecutorEventKind.STOP,
-            payload={"usage": {"input_tokens": 1, "output_tokens": 1, "tool_tokens": 0}},
-            node_id=envelope.node_id,
-        )
-
+        yield ExecutorEvent(kind=ExecutorEventKind.TOOL_USE,
+                            payload={"tool": tool_name, "args": {}, "tool_use_id": "t"}, node_id=envelope.node_id)
+        yield ExecutorEvent(kind=ExecutorEventKind.STOP,
+                            payload={"usage": {"input_tokens": 1, "output_tokens": 1, "tool_tokens": 0}}, node_id=envelope.node_id)
     approved = None
     async for ev in loop.run(_stream(), envelope):
         if ev.kind == ExecutorEventKind.TEXT and "approved" in ev.payload:
@@ -46,39 +24,21 @@ async def _decide(loop: IntentLoop, envelope, tool_name: str) -> bool:
     return approved
 
 
-@pytest.mark.asyncio
-async def test_anomaly_verdict_does_not_change_gate_decision(make_envelope, cap_executor):
-    """NORMAL / SUSPICIOUS / CRITICAL all yield the SAME gate decision on `read`
-    when no degradation engine is wired — detection is not part of `allow`.
-    """
-    decisions = {}
-    for cls, score in [
-        (AnomalyClass.NORMAL, 0.1),
-        (AnomalyClass.SUSPICIOUS, 0.6),
-        (AnomalyClass.CRITICAL, 0.95),
-    ]:
-        loop = IntentLoop(
-            capability_executor=cap_executor,
-            trace_events=[],
-            anomaly_detector=_detector(cls, score),
-        )
-        decisions[cls] = await _decide(loop, make_envelope(), "read")
-
-    assert decisions[AnomalyClass.NORMAL] is True
-    # All three identical — the gate did not read the anomaly verdict.
-    assert len(set(decisions.values())) == 1
+def test_no_probabilistic_component_in_the_loop():
+    params = inspect.signature(IntentLoop.__init__).parameters
+    assert "anomaly_detector" not in params
+    assert "anomaly_window_size" not in params
 
 
 @pytest.mark.asyncio
-async def test_gate_decision_matches_with_and_without_detector(make_envelope, cap_executor):
-    """The gate decision for an allowed tool is identical whether or not a
-    detector is present (detector cannot flip an allow/deny by itself)."""
-    no_det = IntentLoop(capability_executor=cap_executor, trace_events=[])
-    with_det = IntentLoop(
-        capability_executor=cap_executor,
-        trace_events=[],
-        anomaly_detector=_detector(AnomalyClass.CRITICAL, 0.99),
-    )
-    assert await _decide(no_det, make_envelope(), "read") == await _decide(
-        with_det, make_envelope(), "read"
-    )
+async def test_gate_decision_is_stable(make_envelope, cap_executor):
+    decisions = [await _decide(IntentLoop(capability_executor=cap_executor, trace_events=[]),
+                               make_envelope(), "read") for _ in range(3)]
+    assert decisions[0] is True and len(set(decisions)) == 1
+
+
+@pytest.mark.asyncio
+async def test_unauthorized_tool_denied(make_envelope, cap_executor):
+    approved = await _decide(IntentLoop(capability_executor=cap_executor, trace_events=[]),
+                             make_envelope(), "bash")
+    assert approved is False

@@ -7,12 +7,7 @@ from typing import TYPE_CHECKING, Any, AsyncIterator, Awaitable, Callable
 
 from axor_core.capability.executor import CapabilityExecutor
 from axor_core.capability.flood import EscalationFloodGuard
-from axor_core.contracts.anomaly import (
-    AnomalyClass,
-    AnomalyDetector,
-    AnomalyResult,
-    NormalizedIntent,
-)
+from axor_core.contracts.anomaly import NormalizedIntent
 from axor_core.contracts.envelope import ExecutionEnvelope
 from axor_core.contracts.intent import Intent, IntentKind, ResolvedIntent
 from axor_core.contracts.canonical import ConsequenceClass
@@ -23,12 +18,10 @@ from axor_core.security.carrier import classify_carrier
 from axor_core.contracts.result import ExecutorEvent, ExecutorEventKind
 from axor_core.contracts.trace import (
     CancelledEvent,
-    DetectionSignalEvent,
     EscalationDeniedEvent,
     EscalationGrantedEvent,
     IntentDeniedEvent,
     SinkDensityEvent,
-    SuspiciousIntentEvent,
     TokensSpentEvent,
     TraceEvent,
     TraceEventKind,
@@ -125,8 +118,6 @@ class IntentLoop:
         tool_result_callback: ToolResultCallback | None = None,
         spawn_callback: SpawnCallback | None = None,
         escalation_callback: EscalationCallback | None = None,
-        anomaly_detector: AnomalyDetector | None = None,
-        anomaly_window_size: int = 10,
         taint_engine: "TaintEngine | None" = None,
         degradation_engine: "DegradationEngine | None" = None,
         reputation_enricher: "ReputationEnricher | None" = None,
@@ -140,13 +131,10 @@ class IntentLoop:
         self._tool_result_callback = tool_result_callback
         self._spawn_callback = spawn_callback
         self._escalation_callback = escalation_callback
-        self._anomaly_detector = anomaly_detector
-        self._anomaly_window_size = anomaly_window_size
         self._taint_engine = taint_engine
         self._degradation_engine = degradation_engine
         self._reputation_enricher = reputation_enricher
         self._normalizer = IntentNormalizer()
-        self._intent_window: list[NormalizedIntent] = []
         self._intent_sequence = 0
         self._token_totals = _TokenAccumulator()
         self._granted_escalations: dict[str, _GrantedEscalation] = {}
@@ -408,10 +396,9 @@ class IntentLoop:
                 result=denial_resp.to_tool_result(),
             )
 
-        # normalize intent once — shared by anomaly detection, taint, degradation, and reputation
+        # normalize intent once — shared by taint, degradation, and reputation
         needs_normalized = (
-            self._anomaly_detector is not None
-            or self._taint_engine is not None
+            self._taint_engine is not None
             or self._degradation_engine is not None
             or self._reputation_enricher is not None
         )
@@ -419,29 +406,14 @@ class IntentLoop:
         if needs_normalized:
             normalized = self._normalizer.normalize(intent)
 
-        # reputation enrichment — populate reputation fields from sentinel snapshot.
-        # A-11: anomaly detector (Layer 2) must not receive enriched reputation floats in Phase 1.
-        # normalized_for_layer2 retains the pre-enrichment copy (0.0 defaults) for the intent window.
-        normalized_for_layer2: NormalizedIntent | None = normalized
+        # reputation enrichment (sentinel as a WATCHER) — telemetry only; reputation
+        # never gates `allow` and never feeds degradation (detection, not enforcement).
         if self._reputation_enricher is not None and normalized is not None:
             normalized = self._reputation_enricher.enrich(normalized, intent)
-            # normalized_for_layer2 keeps the pre-enrichment version (invariant A-11)
-
-        # ── Detection layer (TM7) — strictly out-of-band from `allow` ─────────
-        # reputation + anomaly are detection signals. They MUST NOT return a
-        # decision here: reading a probabilistic score/float into the gate would
-        # break T1 (equal projection → equal decision). Detection records
-        # telemetry and may feed degradation a tightening-only crossing-fact
-        # (TM7.1); any resulting denial then comes from the degradation-narrowed
-        # policy gate below, which is a pure function of (projection, policy).
-        if normalized is not None:
-            await self._run_detection(
-                intent, normalized, normalized_for_layer2, tool_name, envelope
-            )
 
         # ── allow gate (pure) — capability already checked above; here the
-        # degradation-narrowed policy gate, incl. any tightening just applied by
-        # detection. Reads policy/state and structural projections only.
+        # degradation-narrowed policy gate. Degradation is driven only by
+        # structural facts; no probabilistic detector feeds it (ML/judge removed).
         if self._degradation_engine is not None and normalized is not None:
             taint_state = self._taint_engine.state if self._taint_engine is not None else None
             degradation_denial = self._check_degradation_denial(
@@ -987,130 +959,6 @@ class IntentLoop:
         )
 
     # ── Detection layer (TM7) — out-of-band from `allow` ────────────────────────
-
-    async def _run_detection(
-        self,
-        intent: Intent,
-        normalized: NormalizedIntent,
-        normalized_for_layer2: NormalizedIntent | None,
-        tool_name: str,
-        envelope: ExecutionEnvelope,
-    ) -> None:
-        """Run detection-layer checks (reputation, anomaly).
-
-        Records detection telemetry and may tighten degradation (TM7.1, tightening
-        -only). Returns nothing: detection never decides `allow`. A1-11 preserved —
-        the anomaly detector receives the pre-enrichment projection.
-        """
-        # Reputation crossing (sentinel) — a decidable threshold-crossing fact,
-        # not a score read into the gate.
-        if normalized.target_resource_reputation >= 0.8 and normalized.after_external_read:
-            fed = self._feed_detection_crossing(
-                normalized,
-                reason=f"reputation>={normalized.target_resource_reputation:.3f}_after_external_read",
-            )
-            self._record_detection_signal(
-                detector="reputation",
-                verdict="crossing",
-                score=normalized.target_resource_reputation,
-                tool=tool_name,
-                fed_degradation=fed,
-                envelope=envelope,
-                reason="high resource reputation after external read",
-            )
-
-        # Anomaly (ML / LLM verifier) — behavioral, probabilistic, detection-only.
-        if self._anomaly_detector is None or normalized_for_layer2 is None:
-            return
-        self._intent_window.append(normalized_for_layer2)
-        if len(self._intent_window) > self._anomaly_window_size:
-            self._intent_window.pop(0)
-        try:
-            anomaly = await self._anomaly_detector.score(
-                window=list(self._intent_window),
-                policy_name=envelope.policy.name,
-            )
-        except Exception as exc:
-            # The detector is advisory (detection register). On error we do NOT
-            # hard-deny — that would put a steerable component back on the trusted
-            # path. We tighten degradation conservatively and record loudly.
-            log.error("anomaly detector error — detection degraded: %s", exc, exc_info=True)
-            fed = self._feed_detection_crossing(normalized, reason="anomaly_detector_error")
-            self._record_detection_signal(
-                detector="anomaly", verdict="error", score=0.0, tool=tool_name,
-                fed_degradation=fed, envelope=envelope,
-                reason=f"{type(exc).__name__}: {exc}",
-            )
-            return
-
-        if anomaly is not None and anomaly.cls == AnomalyClass.CRITICAL:
-            self._feed_detection_crossing(normalized, reason=f"anomaly_critical:{anomaly.score:.2f}")
-            self._record_anomaly_event(
-                tool_name=tool_name, normalized=normalized, anomaly=anomaly,
-                policy_action="detected", envelope=envelope,
-            )
-        elif anomaly is not None and anomaly.cls == AnomalyClass.SUSPICIOUS:
-            self._record_anomaly_event(
-                tool_name=tool_name, normalized=normalized, anomaly=anomaly,
-                policy_action="flagged", envelope=envelope,
-            )
-
-    def _feed_detection_crossing(self, normalized: NormalizedIntent, *, reason: str) -> bool:
-        """Feed a tightening-only crossing-fact into degradation. Returns True if fed."""
-        if self._degradation_engine is None:
-            return False
-        taint_state = self._taint_engine.state if self._taint_engine is not None else TaintState()
-        self._degradation_engine.record_detection_crossing(normalized, taint_state, reason=reason)
-        for event in self._degradation_engine.drain_events():
-            self._trace_events.append(event)
-        return True
-
-    def _record_detection_signal(
-        self,
-        *,
-        detector: str,
-        verdict: str,
-        score: float,
-        tool: str,
-        fed_degradation: bool,
-        envelope: ExecutionEnvelope,
-        reason: str,
-    ) -> None:
-        self._trace_events.append(
-            DetectionSignalEvent(
-                kind=TraceEventKind.DETECTION_SIGNAL,
-                node_id=envelope.node_id,
-                sequence=len(self._trace_events),
-                detector=detector,
-                verdict=verdict,
-                score=score,
-                tool=tool,
-                fed_degradation=fed_degradation,
-                reason=reason,
-            )
-        )
-
-    def _record_anomaly_event(
-        self,
-        tool_name: str,
-        normalized: NormalizedIntent,
-        anomaly: AnomalyResult,
-        policy_action: str,
-        envelope: ExecutionEnvelope,
-    ) -> None:
-        self._trace_events.append(
-            SuspiciousIntentEvent(
-                kind=TraceEventKind.ANOMALY_FLAGGED,
-                node_id=envelope.node_id,
-                sequence=len(self._trace_events),
-                tool=tool_name,
-                score=anomaly.score,
-                anomaly_class=anomaly.cls,
-                reasons=anomaly.reasons,
-                policy_action=policy_action,
-                provenance=normalized.provenance,
-            )
-        )
 
     def _record_cancellation(self, envelope: ExecutionEnvelope) -> None:
         token = envelope.cancel_token

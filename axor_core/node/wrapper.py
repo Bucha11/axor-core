@@ -7,7 +7,6 @@ from axor_core import trace as trace_mod
 from axor_core.budget.policy_engine import BudgetPolicyEngine, OptimizationAction
 from axor_core.capability.executor import CapabilityExecutor
 from axor_core.context.manager import ContextManager
-from axor_core.contracts.anomaly import AnomalyDetector
 from axor_core.contracts.cancel import CancelToken, make_token
 from axor_core.contracts.context import (
     ContextView,
@@ -82,7 +81,6 @@ class GovernedNode:
         trace_config: TraceConfig | None = None,
         current_depth: int = 0,
         child_executor: Invokable | None = None,
-        anomaly_detector: AnomalyDetector | None = None,
         escalation_callback=None,
         taint_engine: TaintEngine | None = None,
         degradation_engine: "DegradationEngine | None" = None,
@@ -100,7 +98,6 @@ class GovernedNode:
         self._trace_collector = trace_collector  # None → events not persisted
         self._trace_config = trace_config or TraceConfig()
         self._depth = current_depth
-        self._anomaly_detector = anomaly_detector  # None → no anomaly scoring
         self._escalation_callback = escalation_callback  # None → auto-deny escalation
         self._taint_engine = taint_engine if taint_engine is not None else TaintEngine()
         self._degradation_engine = degradation_engine
@@ -272,7 +269,6 @@ class GovernedNode:
             tool_result_callback=tool_result_callback,
             spawn_callback=_spawn_child_callback,
             escalation_callback=self._escalation_callback,
-            anomaly_detector=self._anomaly_detector,
             taint_engine=self._taint_engine,
             degradation_engine=self._degradation_engine,
             max_intents_per_session=self._max_intents_per_session,
@@ -432,7 +428,6 @@ class GovernedNode:
             trace_config=self._trace_config,
             current_depth=self._depth + 1,
             child_executor=self._child_executor,
-            anomaly_detector=self._anomaly_detector,
             escalation_callback=self._escalation_callback,
             degradation_engine=self._degradation_engine,
             max_intents_per_session=self._max_intents_per_session,
