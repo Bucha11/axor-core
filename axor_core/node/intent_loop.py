@@ -38,7 +38,7 @@ from axor_core.capability.lease_validator import (
 )
 from axor_core.contracts.lease import LeaseAuthorityType
 from axor_core.contracts.degradation import DegradationLevel
-from axor_core.contracts.taint import Carrier, TaintScope, TaintSource, TaintState
+from axor_core.contracts.taint import Carrier, TaintSource
 from axor_core.degradation.engine import _LOCKED_ALLOWED_TOOLS
 from axor_core.node.normalizer import IntentNormalizer
 from axor_core.taint.causal_root import CausalRoot
@@ -415,9 +415,8 @@ class IntentLoop:
         # degradation-narrowed policy gate. Degradation is driven only by
         # structural facts; no probabilistic detector feeds it (ML/judge removed).
         if self._degradation_engine is not None and normalized is not None:
-            taint_state = self._taint_engine.state if self._taint_engine is not None else None
             degradation_denial = self._check_degradation_denial(
-                tool_name, normalized, taint_state, envelope
+                tool_name, normalized, envelope
             )
             if degradation_denial is not None:
                 self._record_denial(intent, degradation_denial, envelope)
@@ -548,36 +547,11 @@ class IntentLoop:
             result = await self._executor.execute(
                 effective_intent, envelope.capabilities
             )
-            # Register the tool output into the per-value ledger (TM2) so a later
+            # Register the tool output into the PER-VALUE ledger (TM2) so a later
             # sink whose argument carries this content is gated at the value level.
+            # No session-taint propagation — a read taints its produced *value*,
+            # not the whole session.
             self._register_value_taint(effective_intent, result, normalized)
-            # Propagate taint after any successful privileged read.
-            if self._taint_engine is not None:
-                normalized_check = normalized or self._normalizer.normalize(effective_intent)
-                if normalized_check.target_kind in (
-                    "external_url", "cloud_metadata", "docker_socket"
-                ) or normalized_check.operation == "network_request":
-                    self._taint_engine.propagate(TaintSource.WEB, TaintScope.SESSION)
-                elif (
-                    normalized_check.target_kind in ("secret", "system_path")
-                    or normalized_check.reads_secret_like_data
-                    or normalized_check.writes_outside_workdir
-                ):
-                    # Reading secrets / system paths or touching files outside the
-                    # trusted workspace may introduce adversarial or sensitive
-                    # content — taint with FILE source so later high-risk ops are
-                    # contained by taint enforcement. A secret-like read also sets
-                    # the confidentiality label (TM2): the session is now sensitive.
-                    is_sensitive = (
-                        normalized_check.target_kind == "secret"
-                        or normalized_check.reads_secret_like_data
-                    )
-                    self._taint_engine.propagate(
-                        TaintSource.FILE, TaintScope.SESSION, sensitive=is_sensitive
-                    )
-                self._taint_engine.tick_intent()
-                for _ev in self._taint_engine.drain_events():
-                    self._trace_events.append(_ev)
             self._record_degradation_signal(intent, None)
             return ResolvedIntent(
                 intent=intent,
@@ -984,9 +958,13 @@ class IntentLoop:
         """Call record_signal on degradation engine and flush its events into the trace."""
         if self._degradation_engine is None:
             return
-        taint_state = self._taint_engine.state if self._taint_engine is not None else TaintState()
         ni = normalized if normalized is not None else self._normalizer.normalize(intent)
-        self._degradation_engine.record_signal(ni, denial, taint_state)
+        # Per-value: degradation keys on the driving argument's own causal_root,
+        # not a session-taint flag.
+        driving_root = None
+        if self._taint_engine is not None:
+            driving_root = self._taint_engine.derive_value(intent.payload.get("args", {}))
+        self._degradation_engine.record_signal(ni, denial, driving_root=driving_root)
         for event in self._degradation_engine.drain_events():
             self._trace_events.append(event)
 
@@ -994,7 +972,6 @@ class IntentLoop:
         self,
         tool_name: str,
         normalized: NormalizedIntent,
-        taint_state: "TaintState | None",
         envelope: ExecutionEnvelope,
     ) -> str | None:
         """
@@ -1003,8 +980,7 @@ class IntentLoop:
         """
         if self._degradation_engine is None:
             return None
-        ts = taint_state or TaintState()
-        source_id = self._degradation_engine.derive_source_id(normalized, ts)
+        source_id = self._degradation_engine.derive_source_id(normalized)
         effective = self._degradation_engine.apply_to_policy(envelope.policy, source_id)
         # LOCKED/TERMINAL: only read + escalate allowed
         level = self._degradation_engine.state.level

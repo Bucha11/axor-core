@@ -121,8 +121,10 @@ async def test_clean_value_passes_even_in_a_session_that_read_a_secret():
         ("write", {"path": "/work/notes.txt", "content": "ordinary text, no secret"}),
     ])
     assert r[0]["approved"] is True
-    assert eng.state.is_tainted is True            # session IS tainted...
-    assert r[1]["approved"] is True                # ...but the clean-valued write passes
+    # No session-taint flag; the secret is tracked per-value. The clean write passes.
+    assert eng.state.is_tainted is False
+    assert eng.derive_value(SECRET).is_tainted is True   # value IS tracked...
+    assert r[1]["approved"] is True                       # ...but the clean write passes
 
 
 @pytest.mark.asyncio

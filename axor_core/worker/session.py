@@ -297,9 +297,15 @@ class GovernedSession:
             # re-read re-mints as tainted — "soft release to memory" does not launder
             # it. We do not assume in-session memory is clean (stricter than CaMeL /
             # Firewalls, which assume the environment is not poisoned).
+            # Re-mint on read-back (TM3.2/TM4.1), PER-VALUE: register memory content
+            # in the per-value ledger so a sink later carrying a memory-derived value
+            # is gated at the value level. "Soft release to memory" does not launder.
             if memory_fragments:
-                from axor_core.contracts.taint import TaintScope, TaintSource
-                self._taint_engine.propagate(TaintSource.MEMORY, TaintScope.SESSION)
+                from axor_core.contracts.taint import TaintSource
+                from axor_core.taint.causal_root import CausalRoot
+                root = CausalRoot.external_read(TaintSource.MEMORY)
+                for frag in memory_fragments:
+                    self._taint_engine.register_value(frag, root)
 
         raw_state = RawExecutionState(
             task=task,

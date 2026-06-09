@@ -211,8 +211,11 @@ async def test_secret_read_taints_session(make_envelope):
     )
     resolved = await loop._resolve_tool_intent(event, env)
     assert resolved.approved
-    assert taint.state.is_tainted
-    assert TaintSource.FILE in taint.state.sources
+    # Per-value (v4.12): a secret read registers its produced VALUE; the session
+    # state stays clean (no session-taint flag).
+    assert taint.state.is_tainted is False
+    root = taint.derive_value("secret content")
+    assert root.is_tainted and root.sensitive
 
 
 # ── M-3: normalizer hardening ────────────────────────────────────────────────

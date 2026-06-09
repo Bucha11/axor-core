@@ -24,8 +24,8 @@ from axor_core.errors.exceptions import DegradationClearanceError
 if TYPE_CHECKING:
     from axor_core.contracts.anomaly import NormalizedIntent
     from axor_core.contracts.denial import DenialResponse
-    from axor_core.contracts.taint import TaintState
     from axor_core.contracts.trace import TraceEvent
+    from axor_core.taint.causal_root import CausalRoot
 
 # Tools that count as "write/bash/export" pressure when denied.
 _WRITE_BASH_EXPORT_TOOLS = frozenset({
@@ -114,7 +114,7 @@ class DegradationEngine:
         self,
         intent: "NormalizedIntent",
         denial: "DenialResponse | None",
-        taint_state: "TaintState",
+        driving_root: "CausalRoot | None" = None,
     ) -> DegradationTransition | None:
         """
         Called after every intent evaluation (pass or deny).
@@ -146,8 +146,8 @@ class DegradationEngine:
         if denial is None:
             return None
 
-        source_id = self.derive_source_id(intent, taint_state)
-        source = self._get_or_create_source(source_id, taint_state)
+        source_id = self.derive_source_id(intent, driving_root)
+        source = self._get_or_create_source(source_id, driving_root)
         source.last_signal = time.time()
 
         # Telemetry counters — recorded, but NOT transition drivers (TM8 / X2).
@@ -158,7 +158,7 @@ class DegradationEngine:
         if intent.executes_generated_code or intent.after_external_read:
             source.instruction_pressure_count += 1
 
-        untrusted_root = self._is_untrusted_root(intent, taint_state)
+        untrusted_root = self._is_untrusted_root(intent, driving_root)
         dangerous = (
             intent.executes_generated_code
             or intent.after_external_read
@@ -209,10 +209,14 @@ class DegradationEngine:
     def _is_untrusted_root(
         self,
         intent: "NormalizedIntent",
-        taint_state: "TaintState",
+        driving_root: "CausalRoot | None" = None,
     ) -> bool:
-        """Decidable: does the driving value have an untrusted causal_root?"""
-        if taint_state.is_tainted:
+        """Decidable: does the driving value have an untrusted causal_root?
+
+        Per-value (v4.12): keyed on the driving value's own causal_root + this
+        intent's provenance / after-external-read fact. No session-taint flag — a
+        tainted *session* no longer makes every action count as untrusted."""
+        if driving_root is not None and driving_root.is_tainted:
             return True
         if (intent.provenance or "") in ("external_web", "unknown"):
             return True
@@ -382,27 +386,26 @@ class DegradationEngine:
     def derive_source_id(
         self,
         intent: "NormalizedIntent",
-        taint_state: "TaintState",
+        driving_root: "CausalRoot | None" = None,
     ) -> str:
-        # Use provenance as primary key; fall back to taint sources.
+        # Per-value keying: provenance first; else the driving value's own source.
         provenance = getattr(intent, "provenance", "") or ""
         if provenance and provenance not in ("user", "unknown"):
             return f"provenance:{provenance}"
-        if taint_state.sources:
-            # Use the alphabetically-first source for determinism.
-            first = sorted(s.value for s in taint_state.sources)[0]
-            return f"taint:{first}"
+        if driving_root is not None and driving_root.sources:
+            first = sorted(s.value for s in driving_root.sources)[0]
+            return f"value:{first}"
         return "unknown"
 
     def _get_or_create_source(
         self,
         source_id: str,
-        taint_state: "TaintState",
+        driving_root: "CausalRoot | None" = None,
     ) -> SourceRecord:
         if source_id not in self._state.sources:
             taint_src = "unknown"
-            if taint_state.sources:
-                taint_src = sorted(s.value for s in taint_state.sources)[0]
+            if driving_root is not None and driving_root.sources:
+                taint_src = sorted(s.value for s in driving_root.sources)[0]
             self._state.sources[source_id] = SourceRecord(
                 source_id=source_id,
                 taint_source=taint_src,
