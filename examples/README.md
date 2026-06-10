@@ -61,9 +61,12 @@ AXOR_BENCH_BACKEND=anthropic python -m examples.run_agentdojo
 ```
 
 See **`agentdojo_results.md`** for the real numbers and an honest read. On
-**Qwen-2.5-72b** axor drives attack success from **66.7% to 0%**, at a measurable,
-explained utility cost on tasks whose legitimate action flows through the same
-untrusted-read channel as the attack. On **claude-haiku-4-5** the model already
-resists the attack (0% ASR undefended), so there is no headroom. The governor
-itself is a first-class kernel API (`axor_core.governor.ToolCallGovernor`) usable
-by any tool-wrapping framework, not just AgentDojo.
+**Qwen-2.5-72b**, against *serious* injections, axor drives attack success to
+**0%**: mass data exfiltration to an attacker website (slack) **88.9% → 0%** while
+utility *rises* 33.3% → 88.9%, and PII-exfiltration-via-transaction (banking)
+**66.7% → 0%**. The doc is equally honest about the cost (taint over-blocks a
+benign bill payment whose legitimate data comes from an untrusted file) and about
+what the model resists on its own (overt theft, no headroom). On
+**claude-haiku-4-5** the model already resists, so there is no headroom. The
+governor itself is a first-class kernel API
+(`axor_core.governor.ToolCallGovernor`) usable by any tool-wrapping framework.
