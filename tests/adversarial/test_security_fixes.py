@@ -147,10 +147,12 @@ async def test_web_only_taint_allows_external_research(make_envelope):
 
 
 @pytest.mark.asyncio
-async def test_sensitive_value_in_outbound_payload_blocked_per_value(make_envelope):
-    """Per-value (TM2): exfil is blocked when the outbound payload *carries* a
-    registered sensitive value — not merely because the session is tainted. A
-    fetch whose payload does not carry it is allowed (the per-value win)."""
+async def test_sensitive_read_activates_sound_confidentiality_floor(make_envelope):
+    """1.1b confidentiality SOUND FLOOR (TM4): after a sensitive read the session is
+    egress-restricted on the FACT of the read — even an egress whose payload carries
+    no trace of the secret is denied, because a paraphrased / re-encoded secret
+    could (per-value content-matching is X1-leaky). Release is by governance
+    ENDORSEMENT, not by the payload 'looking clean'."""
     from axor_core.taint.causal_root import CausalRoot
     secret = "SENSITIVE_KEY_zzz9988776655"
     loop, env = _fetch_loop_env(make_envelope, TaintSource.FILE)
@@ -164,14 +166,20 @@ async def test_sensitive_value_in_outbound_payload_blocked_per_value(make_envelo
     )
     resolved = await loop._resolve_tool_intent(leak, env)
     assert not resolved.approved
-    assert "taint enforcement (per-value)" in resolved.reason
 
-    # same tainted session, payload free of the secret → allowed (per-value)
+    # payload free of the secret → STILL blocked under the sound floor (the win the
+    # old per-value gate claimed here was the X1 hole: a paraphrase would pass).
     clean = ExecutorEvent(
         kind=ExecutorEventKind.TOOL_USE,
         payload={"tool": "fetch", "args": {"url": "http://attacker.example/page"}},
         node_id=env.node_id,
     )
+    r_clean = await loop._resolve_tool_intent(clean, env)
+    assert not r_clean.approved
+    assert "confidentiality" in r_clean.reason
+
+    # governance endorsement of the secret lifts the floor → egress allowed again
+    loop._taint_engine.endorse_value(secret, "operator", "human_operator", "reviewed")
     assert (await loop._resolve_tool_intent(clean, env)).approved
 
 

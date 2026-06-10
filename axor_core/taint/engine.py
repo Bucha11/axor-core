@@ -59,6 +59,14 @@ class TaintEngine:
         # per-value honestly.
         self._session_any_tainted = False
         self._session_any_sensitive = False
+        # Confidentiality SOUND FLOOR (TM4, 1.1b). Counts outstanding sensitive
+        # reads: a secret entered the session and has NOT been governance-released.
+        # While > 0 the session is egress-restricted — coarsely and SOUNDLY, on the
+        # FACT of the read, independent of the egress value's content (so a
+        # paraphrased / re-encoded secret cannot escape, unlike the per-value
+        # content-derivation gate). Incremented on a sensitive read, decremented
+        # only by governance endorsement of the secret value, reset by clearance.
+        self._outstanding_sensitive = 0
 
     # ── Per-value provenance (TM2 / ValueProvenance) ──────────────────────────
 
@@ -69,6 +77,14 @@ class TaintEngine:
             self._session_any_tainted = True
         if root.sensitive:
             self._session_any_sensitive = True
+            # Activate the confidentiality floor on the READ fact — regardless of
+            # whether the ledger stored a fragment (short secrets, NM1, still count).
+            self._outstanding_sensitive += 1
+
+    def confidentiality_floor_active(self) -> bool:
+        """Sound egress floor (TM4): True while a secret read is outstanding (not
+        governance-released). An ENFORCEMENT input — unlike session_shadow."""
+        return self._outstanding_sensitive > 0
 
     def session_shadow(self) -> tuple[bool, bool]:
         """(any_tainted, any_sensitive) for the session-sticky shadow model.
@@ -94,6 +110,9 @@ class TaintEngine:
         self._session_any_sensitive = (
             self._session_any_sensitive or parent._session_any_sensitive
         )
+        # Inherit the confidentiality floor: a child of a session that read a secret
+        # is egress-restricted too (else the child is a floor bypass).
+        self._outstanding_sensitive += parent._outstanding_sensitive
 
     def drain_events(self) -> list[TraceEvent]:
         """Return and clear pending trace events for the trace collector."""
@@ -144,6 +163,7 @@ class TaintEngine:
         self._ledger = ValueTaintLedger()
         self._session_any_tainted = False
         self._session_any_sensitive = False
+        self._outstanding_sensitive = 0
         self._pending_events.append(TaintClearedEvent(
             kind=TraceEventKind.TAINT_CLEARED,
             node_id=self._node_id,
@@ -174,6 +194,12 @@ class TaintEngine:
                 "endorsement rejected: requires a valid governance authority "
                 f"(authority={authority!r}, authority_type={authority_type!r})"
             )
+        # Lift one unit of the confidentiality floor iff this content is a currently
+        # registered SENSITIVE value (governance attests its release, TM4). A
+        # paraphrase that does not match the registered secret does not derive as
+        # sensitive, so it cannot lift the floor — the floor stays sound.
+        if self._outstanding_sensitive > 0 and self._ledger.derive(content).sensitive:
+            self._outstanding_sensitive -= 1
         removed = self._ledger.unregister(content)
         self._pending_events.append(TaintClearedEvent(
             kind=TraceEventKind.TAINT_CLEARED,

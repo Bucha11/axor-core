@@ -596,10 +596,25 @@ class IntentLoop:
                 or normalized.executes_generated_code
                 or exfil_destination
             )
-            confidentiality_risk = driving_root.sensitive and exfil_destination
+            # Confidentiality SOUND FLOOR (TM4, 1.1b). Egress is denied while a
+            # secret read is outstanding — on the FACT of the read, NOT on whether
+            # THIS value's content derives as sensitive. This is the sound floor the
+            # density numbers justified: per-value confidentiality (driving_root.
+            # sensitive) is X1-leaky (a paraphrased secret evades content-matching),
+            # so the floor gates egress coarsely and is lifted only by governance
+            # endorsement of the secret. Sparse by construction — it fires only
+            # after a sensitive read. The per-value sensitive check is subsumed
+            # (value sensitive ⟹ a sensitive read happened ⟹ floor active).
+            floor_active = (
+                self._taint_engine.confidentiality_floor_active()
+                if hasattr(self._taint_engine, "confidentiality_floor_active")
+                else driving_root.sensitive
+            )
+            confidentiality_risk = exfil_destination and floor_active
             if integrity_risk or confidentiality_risk:
                 axis = (
-                    "confidentiality (sensitive value to an egress sink)"
+                    "confidentiality (egress under the sound floor — a secret read is "
+                    "outstanding; release requires governance endorsement)"
                     if confidentiality_risk
                     else "integrity (untrusted-derived value into a high-risk operation)"
                 )
