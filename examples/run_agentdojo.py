@@ -173,6 +173,16 @@ make_governor = _CFG["governor"]
 USER_TASKS = _CFG["user_tasks"]
 INJECTION_TASKS = _CFG["injection_tasks"]
 
+# AXOR_BENCH_ALL_USER_TASKS=1 runs every user task in the suite (full benchmark
+# number) instead of the curated slice. Injection tasks stay the serious subset.
+if os.environ.get("AXOR_BENCH_ALL_USER_TASKS") == "1":
+    USER_TASKS = list(get_suites("v1")[SUITE].user_tasks.keys())
+
+# AXOR_BENCH_INJECTIONS="injection_task_4,..." overrides the injection slice (e.g.
+# pin one headline threat across all user tasks for a feasible full-suite number).
+if os.environ.get("AXOR_BENCH_INJECTIONS"):
+    INJECTION_TASKS = os.environ["AXOR_BENCH_INJECTIONS"].split(",")
+
 
 def _make_llm():
     if BACKEND == "openrouter":
