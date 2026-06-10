@@ -21,9 +21,9 @@ external content.  Policy enforcement must remain valid even under compromise.
 | `DegradationEngine` | Trusted | Monotonically degrades session level; workers cannot clear |
 | `LeaseValidator` | Trusted | Validates CapabilityLease claims |
 | `TraceCollector` | Trusted | Out-of-band audit trail |
-| `IntentCanonicalizer` | Trusted | Strips raw content before Layer 3 |
+| `IntentCanonicalizer` | Trusted | Strips raw content before any advisory/detection layer |
 | `LockedExecutor` | Trusted | Blocks direct executor bypass |
-| Layer 2 ML scorer | Conditionally trusted | Advisory; cannot expand capability |
+| ML detection layer | Conditionally trusted | Observe-only; cannot expand capability or allow |
 | Layer 3 LLM verifier | Conditionally trusted | Advisory; cannot override Layer 1 |
 | Provider adapters post-normalization | Conditionally trusted | After NormalizedIntent is produced |
 
