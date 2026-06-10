@@ -1,7 +1,7 @@
-"""TM8 fact-driven degradation contract (v4.12 Phase 3).
+"""Fact-driven degradation behavior.
 
-Pins the counters-out / facts-in change: transitions are driven by decidable
-facts (parameter-free Booleans), never by accumulation against a threshold.
+Degradation transitions are driven by decidable facts about each operation
+(plain yes/no conditions), never by counting events up to a threshold.
 """
 
 from __future__ import annotations
@@ -31,20 +31,20 @@ def _deny():
 
 def test_accumulation_of_benign_denials_does_not_escalate_past_cautious():
     """Many benign, clean, non-dangerous denials never reach RESTRICTED/LOCKED —
-    a count is not a fact. (Old engine escalated to LOCKED at session_deny>=5.)
+    a raw count is not grounds to escalate.
     """
     engine = DegradationEngine(DegradationPolicy())
     for _ in range(10):
         engine.record_signal(_ni(), _deny())  # clean driving value, benign tool
     assert engine.state.level == DegradationLevel.CAUTIOUS
-    assert engine.state.session_deny_count == 10  # counter recorded as telemetry only
+    assert engine.state.session_deny_count == 10  # count kept as telemetry only
 
 
 def test_single_untrusted_dangerous_deny_restricts_immediately():
-    """One deny on a tainted/dangerous root → RESTRICTED on the FIRST occurrence
-    (no pressure-count threshold of 2)."""
+    """One deny on a dangerous operation rooted in untrusted input → RESTRICTED
+    on the very first occurrence (no need to see it happen twice)."""
     engine = DegradationEngine(DegradationPolicy())
-    driving = CausalRoot.external_read(TaintSource.WEB)  # the driving value is tainted
+    driving = CausalRoot.external_read(TaintSource.WEB)  # the driving value is untrusted
     t = engine.record_signal(_ni(tool="bash", operation="execute"), _deny(), driving_root=driving)
     assert engine.state.level == DegradationLevel.RESTRICTED
     assert t is not None and t.new_level == DegradationLevel.RESTRICTED
@@ -52,7 +52,7 @@ def test_single_untrusted_dangerous_deny_restricts_immediately():
 
 def test_tool_pressure_counter_kept_as_telemetry_not_driver():
     """The counter still increments (telemetry) but is not what caused the
-    transition — the fact (untrusted dangerous deny) is."""
+    transition — the dangerous untrusted-rooted deny is."""
     engine = DegradationEngine(DegradationPolicy())
     driving = CausalRoot.external_read(TaintSource.WEB)
     engine.record_signal(_ni(tool="bash", operation="execute"), _deny(), driving_root=driving)

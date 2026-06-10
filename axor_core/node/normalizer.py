@@ -14,10 +14,11 @@ from axor_core.security.paths import lexical_normalize as _lexical_normalize
 _WRITE_TOOLS = frozenset({"write", "edit", "create", "str_replace_editor", "str_replace_based_edit_tool"})
 # Tools that execute shell commands
 _BASH_TOOLS = frozenset({"bash", "run_bash", "execute", "shell", "cmd"})
-# Power-state / irreversible-infrastructure command markers (X5 OpenClaw). Matched
-# as substrings of a lower-cased shell command. Conservative — clear catastrophic
-# actions only; over-matching is fail-closed (the consequence gate then requires a
-# governance/human gate, it does not silently allow).
+# Power-state / irreversible-infrastructure command markers (e.g. a destructive
+# action like a host shutdown or disk wipe issued under trusted provenance).
+# Matched as substrings of a lower-cased shell command. Conservative — clear
+# catastrophic actions only; over-matching is fail-closed (the consequence gate
+# then requires a governance/human gate, it does not silently allow).
 _POWER_STATE_MARKERS = (
     "shutdown", "reboot", "poweroff", "halt", "telinit", "init 0", "init 6",
     "systemctl poweroff", "systemctl reboot", "systemctl halt",
@@ -47,8 +48,8 @@ class IntentNormalizer:
     Converts raw Intents into NormalizedIntents for anomaly detection.
 
     Tracks per-session state to detect cross-intent behavioral patterns:
-    - write→execute linking (executesGeneratedCode)
-    - provenance chains (afterExternalRead, afterSecretAccess)
+    - write→execute linking (executes_generated_code)
+    - provenance chains (after_external_read, after_secret_access)
     """
 
     def __init__(self, workdir: str | None = None) -> None:
@@ -139,8 +140,8 @@ class IntentNormalizer:
         return "other"
 
     def _classify_bash_operation(self, cmd: str) -> str:
-        # Power-state / irreversible-infrastructure commands first (X5 OpenClaw):
-        # a trusted-provenance `bash shutdown` is invisible to the provenance axes
+        # Power-state / irreversible-infrastructure commands first: a
+        # trusted-provenance `bash shutdown` is invisible to the provenance axes
         # but CATASTROPHIC by action class. Emitting power_state_change lets the
         # consequence axis escalate it (content-blind, structural).
         if any(kw in cmd for kw in _POWER_STATE_MARKERS):

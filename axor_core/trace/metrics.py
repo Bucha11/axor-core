@@ -25,7 +25,7 @@ class GovernanceMetrics:
     sources_quarantined: int = 0
     escalations_granted: int = 0
     escalations_denied: int = 0
-    # Density (TM3.3): high-stakes sink firings and how many carried a tainted
+    # Density: high-stakes sink firings and how many carried a tainted
     # driving value, per operation, split by axis. per-value density = tainted /
     # firings; session-sticky density = session-shadow tainted / firings.
     sink_firings_by_op: Counter[str] = field(default_factory=Counter)
@@ -120,8 +120,8 @@ class GovernanceMetrics:
             counter("degradation_transitions_total", n,
                     "Degradation transitions by target level.", labels=f'{{level="{lvl}"}}')
 
-        # Density (TM3.3) — the make-or-break number, scrapeable, split by axis and
-        # by model (per-value vs session-sticky shadow).
+        # Density — the headline number, scrapeable, split by axis and by
+        # model (per-value vs session-sticky shadow).
         def gauge(name: str, value: float, help_text: str) -> None:
             metric = f"{prefix}_{name}"
             lines.append(f"# HELP {metric} {help_text}")
@@ -131,11 +131,11 @@ class GovernanceMetrics:
         gauge("sink_firings_total", float(sum(self.sink_firings_by_op.values())),
               "High-stakes sink firings observed (density denominator).")
         gauge("density_integrity_per_value", self.integrity_density,
-              "Per-value integrity density (TM3.3).")
+              "Per-value integrity density.")
         gauge("density_integrity_session_sticky", self.session_integrity_density,
-              "Session-sticky integrity density shadow (TM3.3).")
+              "Session-sticky integrity density shadow.")
         gauge("density_confidentiality_per_value", self.confidentiality_density,
-              "Per-value confidentiality density (TM3.3).")
+              "Per-value confidentiality density.")
         gauge("density_confidentiality_session_sticky", self.session_confidentiality_density,
-              "Session-sticky confidentiality density shadow (TM3.3).")
+              "Session-sticky confidentiality density shadow.")
         return "\n".join(lines) + "\n"

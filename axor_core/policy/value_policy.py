@@ -1,14 +1,14 @@
-"""Value-policy predicates (TM3.1 predicate layer).
+"""Value-policy predicates.
 
-The closed thing is the set of admissible *projections* (Def. 3b); the open thing
-is the set of *predicates* over them. This is that open layer: per-sink, per-arg
-predicates over an admissible projection — e.g. `transfer(amount)` admissible iff
-the amount is a bounded number in range. Predicates consume an admissible
-projection (number / enum), never raw content, and are discharged by the Thm. 0
-decision procedures (decidable T4).
+The fixed part of the system is the set of admissible *projections* of a value;
+the extensible part is the set of *predicates* over them. This is that extensible
+layer: per-sink, per-arg predicates over an admissible projection — e.g.
+`transfer(amount)` is admissible only if the amount is a bounded number in range.
+Predicates consume an admissible projection (number / enum), never raw content,
+and are checked by decidable comparisons.
 
-Operator-supplied (the `value_policies` knob), analogous to CaMeL's security
-policies over a value. Absent → no value-policy constraint (coarse default).
+Operator-supplied (the `value_policies` knob), like attaching security policies
+to a value. Absent → no value-policy constraint (the coarse default).
 """
 
 from __future__ import annotations

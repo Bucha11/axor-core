@@ -20,7 +20,7 @@ from axor_core.contracts.invokable import Invokable
 from axor_core.contracts.policy import ExecutionPolicy, ExportMode
 
 # Export restrictiveness ordering (least → most leakage-restrictive). Used to narrow
-# the export contract toward less leakage without ever widening it (M11).
+# the export contract toward less leakage without ever widening it.
 _EXPORT_RANK = {
     ExportMode.FULL: 0,
     ExportMode.SUMMARY: 1,
@@ -314,9 +314,9 @@ class GovernedNode:
         )
 
         # ── 7. Export filter ───────────────────────────────────────────────────
-        # M11: apply any budget-imposed export narrowing to the contract before the
+        # Apply any budget-imposed export narrowing to the contract before the
         # filter runs, so a crossed restrict_export threshold actually narrows what
-        # leaves the node (it was previously only logged).
+        # leaves the node.
         export_envelope = envelope
         if budget_export_mode is not None:
             effective_mode = _more_restrictive_export(
@@ -359,7 +359,7 @@ class GovernedNode:
     ) -> tuple[str, dict, "ExportMode | None"]:
         output_parts: list[str] = []
         payload: dict = {}
-        budget_export_mode: "ExportMode | None" = None  # M11: budget-imposed narrowing
+        budget_export_mode: "ExportMode | None" = None  # budget-imposed narrowing
 
         with governance_context():
             raw_stream = self._executor.stream(envelope)
@@ -385,7 +385,7 @@ class GovernedNode:
                                     "budget: %s recommended after result (node=%s, reason=%s)",
                                     result_decision.action.value, envelope.node_id, result_decision.reason,
                                 )
-                            # M11: actually ENFORCE the export restriction — narrow
+                            # Actually ENFORCE the export restriction — narrow
                             # the export mode to the more restrictive of the contract
                             # and the budget's suggestion (never widens).
                             if result_decision.action == OptimizationAction.RESTRICT_EXPORT:
@@ -465,10 +465,10 @@ class GovernedNode:
         # Build child taint engine before constructing the node so taint
         # inheritance is set atomically via the constructor, not via private field.
         child_taint = TaintEngine(node_id=child_lineage.node_id)
-        # Spawn inheritance is PER-VALUE (v4.12): the child inherits the parent's
+        # Spawn inheritance is PER-VALUE: the child inherits the parent's
         # value-ledger, NOT the coarse session-taint flag (which would re-explode
         # taint over the subtree). Subtree lock-down is via the SHARED degradation
-        # engine; federation-lateral protection is preserved per-value.
+        # engine; lateral protection across the node tree is preserved per-value.
         child_taint.inherit_value_ledger(self._taint_engine)
 
         child_node = GovernedNode(
@@ -501,7 +501,7 @@ class GovernedNode:
             cancel_token=child_cancel,
         )
 
-        # TM4.1 cross-process re-mint: the child's returned output crosses a trust
+        # Cross-process re-mint: the child's returned output crosses a trust
         # boundary the parent cannot see through (the parent has no visibility into
         # the child's internal reads). Re-mint it as untrusted in the parent's
         # per-value ledger, so a parent sink later carrying child output is gated —
@@ -534,7 +534,7 @@ class GovernedNode:
         if self._budget_engine:
             child_lineage = child_raw_state.lineage
             child_node_id = child_lineage.node_id if child_lineage else "child"
-            # M9: register the child's lineage (parent + depth) before recording, so
+            # Register the child's lineage (parent + depth) before recording, so
             # depth_tokens()/subtree accounting see the real tree, not depth=0/parent=None.
             if child_lineage:
                 self._budget_engine.register_node(

@@ -1,5 +1,7 @@
-"""Phase 3 — TM4.2 federation L1/L2: authenticated peers, provenance receipts,
-restore-on-L2, degrade-to-L1, deny-on-forgery."""
+"""Federation trust levels L1/L2: authenticated peers exchange provenance receipts.
+A receipt from a compatible, federated peer restores its provenance labels at L2;
+an authentic-but-incompatible or unattested value degrades to untrusted L1; and a
+forged, tampered, or unknown-peer receipt is denied outright."""
 
 from __future__ import annotations
 

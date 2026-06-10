@@ -23,9 +23,9 @@ class Profile:
     require_isolation: bool
     escalation_policy: EscalationPolicy | None
     attach_watcher: bool
-    # D_high partition (Corollary): sinks the operator declares instruction-incomplete,
-    # admitted by positional carrier rather than content-derivation. Opt-in; never an
-    # instruction-complete (exec-class) sink. Empty by default — a profile knob.
+    # Sinks the operator declares instruction-incomplete, admitted by positional
+    # carrier rather than content-derivation. Opt-in; never an instruction-complete
+    # (exec-class) sink. Empty by default — a profile knob.
     positional_sinks: frozenset[str] = frozenset()
 
 

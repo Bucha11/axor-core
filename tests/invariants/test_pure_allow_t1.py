@@ -1,5 +1,5 @@
-"""T1 / pure-allow invariant (v4.12). Enforcement is purely structural — no
-probabilistic component near the gate (ML/judge removed)."""
+"""Pure-allow invariant: enforcement is purely structural, with no
+probabilistic component anywhere near the gate (no ML scorer or judge)."""
 
 from __future__ import annotations
 

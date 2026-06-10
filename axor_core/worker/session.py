@@ -111,7 +111,7 @@ class GovernedSession:
         self._consequence_overrides = dict(danger or {})
         self._positional_sinks = frozenset(positional_sinks or ())
         self._value_policies = dict(value_policies or {})
-        self._detection_floor = detection_floor  # TM7.1 opt-in (None = detection observe-only)
+        self._detection_floor = detection_floor  # opt-in; None = detection observe-only
         _overlay_ceiling = None
         _overlay_escalation = None
         if profile is not None:
@@ -149,7 +149,7 @@ class GovernedSession:
         self._deny_on_ambiguity: bool = (mode == ExecutionMode.STRICT)
         self._strict_escalation: bool = (mode == ExecutionMode.STRICT)
 
-        # Process-isolation gate (Phase 1). In PRODUCTION/STRICT an untrusted
+        # Process-isolation gate. In PRODUCTION/STRICT an untrusted
         # agent should execute tools out-of-process (DaemonCapabilityClient);
         # an in-process CapabilityExecutor is not a hard boundary against a
         # compromised agent process. LockedExecutor only blocks the in-process
@@ -305,8 +305,9 @@ class GovernedSession:
         parent_export: str | None = None,
         lineage: LineageSummary | None = None,
     ) -> ExecutionResult:
-        # D-2 invariant: TERMINAL session raises before any intent evaluation.
-        # Also check LOCKED_TTL so idle sessions that hit LOCKED eventually reach TERMINAL.
+        # A session at the TERMINAL degradation level raises before any intent
+        # evaluation. Check the time-to-live first so an idle session sitting at
+        # LOCKED eventually advances to TERMINAL.
         from axor_core.contracts.degradation import DegradationLevel
         from axor_core.errors.exceptions import SessionTerminatedError
         self._degradation_engine.check_ttl()
@@ -330,13 +331,11 @@ class GovernedSession:
             query = MemoryQuery(namespaces=namespaces, max_results=20)
             fragments = await self._memory_provider.load(query)
             memory_fragments = [f.content for f in fragments]
-            # Re-mint on read-back (TM3.2 / TM4.1): a value persisted to memory and
-            # re-read re-mints as tainted — "soft release to memory" does not launder
-            # it. We do not assume in-session memory is clean (stricter than CaMeL /
-            # Firewalls, which assume the environment is not poisoned).
-            # Re-mint on read-back (TM3.2/TM4.1), PER-VALUE: register memory content
-            # in the per-value ledger so a sink later carrying a memory-derived value
-            # is gated at the value level. "Soft release to memory" does not launder.
+            # Re-mint on read-back, per value: a value persisted to memory and
+            # re-read is re-marked as tainted — writing to memory does not launder
+            # it. We do not assume in-session memory is clean. Register each memory
+            # fragment in the per-value ledger so a sink later carrying a
+            # memory-derived value is gated at the value level.
             if memory_fragments:
                 from axor_core.contracts.taint import TaintSource
                 from axor_core.taint.causal_root import CausalRoot
@@ -412,7 +411,7 @@ class GovernedSession:
         )
         self._active_token = None
 
-        # record tokens in session-level tracker. Register lineage first (M9) so
+        # record tokens in session-level tracker. Register lineage first so
         # depth-/subtree-aware accounting is correct rather than warn-and-default to
         # depth=0/parent=None. The top-level node is depth 0, no parent. Idempotent.
         self._tracker.register_node(result.node_id, None, 0)

@@ -1,9 +1,11 @@
-"""Adversarial regression tests for the Phase 1.1d critical bypasses.
+"""Adversarial regression tests for critical bypasses.
 
-Each test pins one bypass the review found, in deny-direction (a fix that only
-ever tightens). Grouped by finding id: C1 (SSRF notations), C2 (extra_allowed
-escalation), NC2 (spawn taint gate), NC3 (clearance resets quarantine), NC4
-(overlay intersects, never replaces), NM3 (value-keyed quarantine on check path).
+Each test pins one bypass in the deny direction (a fix that only ever tightens).
+Covers: obfuscated-host SSRF notations classify as internal; extra_allowed_tools
+cannot grant a tool the base never had; a deployment overlay intersects rather than
+widens; governance clearance below the restricted level resets quarantine and
+counters; value-keyed quarantine matches on the enforcement path; and spawn_child
+runs the carrier/taint gate before dispatch.
 """
 
 from __future__ import annotations
@@ -34,7 +36,7 @@ from axor_core.taint.causal_root import CausalRoot
 pytestmark = pytest.mark.adversarial
 
 
-# ── C1: SSRF — obfuscated host notations all classify as internal ──────────────
+# ── SSRF: obfuscated host notations all classify as internal ──────────────────
 
 @pytest.mark.parametrize("host", [
     "0177.0.0.1",          # dotted octal loopback
@@ -65,7 +67,7 @@ def test_genuine_external_still_external():
     assert classify_host("8.8.8.8") == "external_url"
 
 
-# ── C2: extra_allowed_tools cannot introduce a tool base never granted ─────────
+# ── extra_allowed_tools cannot introduce a tool the base never granted ─────────
 
 def test_extra_allowed_cannot_exceed_base():
     base = ExecutionPolicy(
@@ -93,7 +95,7 @@ def test_extra_allowed_empty_base_grants_nothing():
     assert "anything" not in set(result.tool_policy.extra_allowed)
 
 
-# ── NC4: deployment overlay intersects (a broad overlay never widens) ──────────
+# ── deployment overlay intersects (a broad overlay never widens) ───────────────
 
 def test_overlay_escalation_cannot_widen():
     # Per-task policy: no escalation. Overlay: permissive. Result must stay closed.
@@ -164,7 +166,7 @@ def test_intersect_allowlist_keeps_deeper_root():
     assert intersect_allowlist(("/home",), ("/home/user/proj",)) == ("/home/user/proj",)
 
 
-# ── NC3: governance clearance below RESTRICTED resets quarantine + counters ────
+# ── governance clearance below RESTRICTED resets quarantine + counters ─────────
 
 def _authority():
     return GovernanceAuthority(
@@ -197,7 +199,7 @@ def test_can_return_to_clean_then_requarantine_fresh():
     assert applied.tool_policy.allow_bash is True
 
 
-# ── NM3: value-keyed quarantine is matched on the enforcement (check) path ─────
+# ── value-keyed quarantine is matched on the enforcement (check) path ──────────
 
 def _ni(provenance="user", tool="bash"):
     return NormalizedIntent(
@@ -222,7 +224,7 @@ def test_value_keyed_source_id_matches_with_driving_root():
     assert sid_check_root == sid_record         # fixed: same id on the check path
 
 
-# ── NC2: spawn_child runs the carrier/taint gate before dispatch ───────────────
+# ── spawn_child runs the carrier/taint gate before dispatch ────────────────────
 
 from axor_core.capability.executor import CapabilityExecutor  # noqa: E402
 from axor_core.contracts.cancel import make_token  # noqa: E402

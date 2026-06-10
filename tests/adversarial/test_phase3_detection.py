@@ -1,9 +1,10 @@
-"""Phase 3 group C — TM7.1 opt-in detection→degradation (tightening-only).
+"""Opt-in detection that can tighten degradation but never loosen it.
 
-Detection is observe-only by default (X2). When an operator registers a reputation
-threshold θ, a reading in (0, θ] is a DECIDABLE crossing fact that may TIGHTEN
-degradation (never loosen, never return an allow). Per-tenant isolation is
-structural (per-session engine)."""
+Detection is observe-only by default. When an operator registers a reputation
+threshold, a reading at or below it (but above zero) is a clear crossing fact that
+may tighten the degradation level; it never lowers the level or turns a deny into
+an allow. Isolation between tenants is structural: each session has its own
+engine."""
 
 from __future__ import annotations
 
@@ -39,7 +40,7 @@ def test_detection_off_by_default_is_noop():
 
 def test_crossing_tightens_and_emits_event():
     eng = DegradationEngine(detection_floor=0.3)
-    t = eng.record_detection(_ni(resource_rep=0.1))   # 0.1 ≤ 0.3 → crossing
+    t = eng.record_detection(_ni(resource_rep=0.1))   # 0.1 at/below floor 0.3 → crossing
     assert t is not None
     assert eng.state.level == DegradationLevel.RESTRICTED
     evs = eng.drain_events()
@@ -49,7 +50,7 @@ def test_crossing_tightens_and_emits_event():
 
 def test_above_threshold_does_not_tighten():
     eng = DegradationEngine(detection_floor=0.3)
-    t = eng.record_detection(_ni(resource_rep=0.9))   # 0.9 > 0.3 → no crossing
+    t = eng.record_detection(_ni(resource_rep=0.9))   # 0.9 above floor 0.3 → no crossing
     assert t is None
     assert eng.state.level == DegradationLevel.NORMAL
     sig = [e for e in eng.drain_events() if e.kind == TraceEventKind.DETECTION_SIGNAL]

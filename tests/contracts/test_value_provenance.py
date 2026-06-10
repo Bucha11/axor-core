@@ -1,4 +1,4 @@
-"""ValueProvenance — public trust-model interface (K3). Enforcement runs through
+"""ValueProvenance — the public trust-model interface. Enforcement runs through
 ANY implementation, proving the boundary is the contract, not a concrete engine."""
 
 from __future__ import annotations

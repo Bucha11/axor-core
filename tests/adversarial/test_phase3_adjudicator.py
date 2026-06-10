@@ -1,5 +1,6 @@
-"""Phase 3 — TM3.4 advisory adjudicator: projection-only, memoized by π-hash,
-tightening-only (hard-deny never overridden)."""
+"""Advisory adjudicator: sees only a projection of an intent (never raw content),
+memoizes verdicts by the projection's hash, and may only tighten a decision
+(an existing hard-deny is never overridden into an allow)."""
 
 from __future__ import annotations
 
@@ -33,8 +34,8 @@ pytestmark = pytest.mark.adversarial
 
 
 class _CountingAdjudicator:
-    """Advises DENY for a given tool_category; counts how often it's queried and
-    records that it only ever sees a projection (no raw content)."""
+    """Advises DENY based on a caller-supplied predicate; counts how often it's
+    queried and records that it only ever sees a projection (no raw content)."""
 
     def __init__(self, deny_when=lambda p: False) -> None:
         self.calls = 0
@@ -56,7 +57,7 @@ def _projection(tool="bash", args=None) -> CanonicalizedIntent:
     return IntentCanonicalizer().canonicalize(ni, args or {})
 
 
-# ── unit: memoization + tightening-only contract ──────────────────────────────
+# ── unit: memoization + tightening-only behaviour ─────────────────────────────
 
 def test_equal_projection_equal_verdict_queried_once():
     inner = _CountingAdjudicator(deny_when=lambda p: True)
@@ -65,7 +66,7 @@ def test_equal_projection_equal_verdict_queried_once():
     v1 = adj.verdict(p)
     v2 = adj.verdict(p)
     assert v1 == v2 == AdjudicationVerdict.ADVISE_DENY
-    assert inner.calls == 1                      # memoized by π-hash
+    assert inner.calls == 1                      # memoized by projection hash
 
 
 def test_projection_hash_stable_and_equal_for_equal_projection():
@@ -99,7 +100,7 @@ def test_raising_adjudicator_abstains_does_not_block():
     assert adj.apply(_projection(), kernel_allowed=True) is True
 
 
-# ── integration: wired into the IntentLoop on the would-approve path ──────────
+# ── integration: wired into the intent loop on the would-approve path ─────────
 
 def _env(tool="write") -> ExecutionEnvelope:
     policy = ExecutionPolicy(name="t", tool_policy=ToolPolicy(allow_write=True))

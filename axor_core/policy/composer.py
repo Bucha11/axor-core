@@ -18,8 +18,8 @@ from axor_core.security.paths import intersect_allowlist
 def _intersect_escalation(
     policy: EscalationPolicy, ceiling: EscalationPolicy
 ) -> EscalationPolicy:
-    """Narrowing intersection of two escalation policies (NC4). Each field takes
-    the more restrictive side, so a permissive operator overlay can never widen a
+    """Narrowing intersection of two escalation policies. Each field takes the
+    more restrictive side, so a permissive operator overlay can never widen a
     tighter per-task escalation policy (or vice-versa)."""
     return EscalationPolicy(
         allow_escalation=policy.allow_escalation and ceiling.allow_escalation,
@@ -81,7 +81,7 @@ class PolicyComposer:
         further, never widened past the operator's choice.
 
         The overlay is a CEILING: it intersects with the per-task policy, never
-        replaces it (NC4). A broad overlay (e.g. workspace = root, or a permissive
+        replaces it. A broad overlay (e.g. workspace = root, or a permissive
         escalation profile) therefore cannot widen a narrower per-task policy."""
         changes: dict = {}
         if self._consequence_ceiling is not None:

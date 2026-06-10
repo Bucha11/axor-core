@@ -38,10 +38,10 @@ def _is_valid_governance_authority(
 
 class TaintEngine:
     """
-    Per-value taint tracker (TM2). Implements the ValueProvenance contract.
+    Per-value taint tracker. Implements the ValueProvenance contract.
 
     Enforcement is per-value: a sink decides on the driving argument's own
-    causal_root (content-derivation ledger), not a session-wide flag. There is no
+    causal root (content-derivation ledger), not a session-wide flag. There is no
     session-taint state — provenance lives on values, released by governance
     endorsement (per value) or cleared wholesale.
 
@@ -52,23 +52,23 @@ class TaintEngine:
         self._node_id = node_id
         self._pending_events: list[TraceEvent] = []
         self._ledger = ValueTaintLedger()
-        # Session-sticky SHADOW (observe-only, for the TM3.3 density experiment):
+        # Session-wide SHADOW (observe-only, for the density comparison):
         # "has any tainted / any sensitive value ever been registered this session?"
         # This is what a coarse session-scoped model would gate on; it never feeds
-        # `allow`, it only lets the density meter compare session-sticky vs
-        # per-value honestly.
+        # `allow`, it only lets the density meter compare the session-wide flag
+        # against per-value tracking honestly.
         self._session_any_tainted = False
         self._session_any_sensitive = False
-        # Confidentiality SOUND FLOOR (TM4, 1.1b). Counts outstanding sensitive
-        # reads: a secret entered the session and has NOT been governance-released.
-        # While > 0 the session is egress-restricted — coarsely and SOUNDLY, on the
-        # FACT of the read, independent of the egress value's content (so a
-        # paraphrased / re-encoded secret cannot escape, unlike the per-value
-        # content-derivation gate). Incremented on a sensitive read, decremented
-        # only by governance endorsement of the secret value, reset by clearance.
+        # Confidentiality floor (sound). Counts outstanding sensitive reads: a
+        # secret entered the session and has NOT been governance-released. While
+        # > 0 the session is egress-restricted — coarsely and soundly, on the FACT
+        # of the read, independent of the egress value's content (so a paraphrased
+        # / re-encoded secret cannot escape, unlike the per-value content-derivation
+        # gate). Incremented on a sensitive read, decremented only by governance
+        # endorsement of the secret value, reset by clearance.
         self._outstanding_sensitive = 0
 
-    # ── Per-value provenance (TM2 / ValueProvenance) ──────────────────────────
+    # ── Per-value provenance (ValueProvenance) ────────────────────────────────
 
     def register_value(self, content: object, root: CausalRoot) -> None:
         """Record that a value with the given causal_root produced this content."""
@@ -78,24 +78,25 @@ class TaintEngine:
         if root.sensitive:
             self._session_any_sensitive = True
             # Activate the confidentiality floor on the READ fact — regardless of
-            # whether the ledger stored a fragment (short secrets, NM1, still count).
+            # whether the ledger stored a fragment (very short secrets still count).
             self._outstanding_sensitive += 1
 
     def confidentiality_floor_active(self) -> bool:
-        """Sound egress floor (TM4): True while a secret read is outstanding (not
+        """Sound egress floor: True while a secret read is outstanding (not
         governance-released). An ENFORCEMENT input — unlike session_shadow."""
         return self._outstanding_sensitive > 0
 
     def session_shadow(self) -> tuple[bool, bool]:
-        """(any_tainted, any_sensitive) for the session-sticky shadow model.
+        """(any_tainted, any_sensitive) for the session-wide shadow model.
 
-        Observe-only (TM3.3 density). NOT an enforcement input — `allow` is
-        per-value; this only exists to measure what a session model would have done.
+        Observe-only, for the density comparison. NOT an enforcement input —
+        `allow` is per-value; this only exists to measure what a coarse
+        session-scoped model would have done.
         """
         return (self._session_any_tainted, self._session_any_sensitive)
 
     def derive_value(self, value: object) -> CausalRoot:
-        """Per-value causal_root of `value` by content derivation. Clean (constant)
+        """Per-value causal root of `value` by content derivation. Clean (constant)
         if it carries no registered tainted/sensitive content — the per-value win.
         """
         return self._ledger.derive(value)
@@ -104,7 +105,7 @@ class TaintEngine:
         """Inherit the parent's per-value provenance into this (child) engine so
         the child's per-value gate sees values the parent marked tainted/sensitive."""
         self._ledger.merge(parent._ledger)
-        # Inherit the session-sticky shadow too, so child density measurement is
+        # Inherit the session-wide shadow too, so child density measurement is
         # comparable to the parent's (observe-only).
         self._session_any_tainted = self._session_any_tainted or parent._session_any_tainted
         self._session_any_sensitive = (
@@ -182,10 +183,10 @@ class TaintEngine:
         reason_code: str,
         audit_id: str = "",
     ) -> int:
-        """Endorsement (TM4) — governed STRUCTURAL release of one specific value.
+        """Governed structural release of one specific value.
 
         Removes the value's fragments from the per-value ledger so `derive_value`
-        no longer flags it. Attests release of *this value/lineage* (schema/
+        no longer flags it. Attests release of this value/lineage (schema/
         transform/bounded use), NOT a semantic "safe" judgement, and NOT the whole
         session. Requires a valid governance authority. Returns fragments released.
         """
@@ -195,9 +196,9 @@ class TaintEngine:
                 f"(authority={authority!r}, authority_type={authority_type!r})"
             )
         # Lift one unit of the confidentiality floor iff this content is a currently
-        # registered SENSITIVE value (governance attests its release, TM4). A
-        # paraphrase that does not match the registered secret does not derive as
-        # sensitive, so it cannot lift the floor — the floor stays sound.
+        # registered SENSITIVE value (governance attests its release). A paraphrase
+        # that does not match the registered secret does not derive as sensitive,
+        # so it cannot lift the floor — the floor stays sound.
         if self._outstanding_sensitive > 0 and self._ledger.derive(content).sensitive:
             self._outstanding_sensitive -= 1
         removed = self._ledger.unregister(content)

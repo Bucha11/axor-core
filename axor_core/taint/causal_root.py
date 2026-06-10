@@ -1,25 +1,25 @@
-"""Per-value causal_root — the per-value provenance object the kernel decides on.
+"""Per-value causal root — the provenance object the kernel decides on.
 
-This is the *per-value* provenance object the spec's TM2 defines. It is now the
-ENFORCEMENT object: ``ValueProvenance.derive_value`` returns a ``CausalRoot`` for a
-sink's driving argument, and the per-value gate (``IntentLoop``) denies on its
-labels (integrity ``is_tainted`` / confidentiality ``sensitive``). The density
-meter (TM3.3) still reads the same object observe-only to measure per-value vs
-session-sticky separation, but the object itself is load-bearing in ``allow``.
+This is the provenance of a single value (as opposed to a whole session). It is
+the ENFORCEMENT object: ``ValueProvenance.derive_value`` returns a ``CausalRoot``
+for a sink's driving argument, and the per-value gate (``IntentLoop``) denies on
+its labels (integrity ``is_tainted`` / confidentiality ``sensitive``). The density
+meter reads the same object observe-only to compare per-value tracking against a
+coarse session-wide flag, but the object itself is load-bearing when deciding
+whether to allow a call.
 
-Semantics follow TM2 exactly:
+The causal root of a value is the set of external sources that influenced it:
 
-    causal_root(constant)        = ∅
+    causal_root(constant)        = {}      (a literal carries no external source)
     causal_root(external_read s) = { s }
-    causal_root(mint(v₁..vₙ))    = ⋃ causal_root(vᵢ)        # over-taint (safe direction)
-    causal_root(parse(v))        = causal_root(v)           # schema parse is passthrough
-    causal_root(cross_process_in)= { ⊤_untrusted, non-sensitive }   # re-mint (TM4.1)
+    causal_root(mint(v1..vn))    = union of causal_root(vi)   # over-taint, the safe direction
+    causal_root(parse(v))        = causal_root(v)             # schema parse passes provenance through
+    causal_root(cross_process_in)= { unknown-external }, non-sensitive   # re-minted at the boundary
 
-    tainted(v) ⟺ causal_root(v) ⊄ Trusted
-
-Here ``Trusted`` is empty (no source is trusted by default), so ``is_tainted``
-is simply "carries any external source". Integrity and sensitivity are tracked as
-the two independent labels TM2 calls for.
+A value is tainted exactly when its causal root contains any external source.
+No source is trusted by default, so ``is_tainted`` is simply "carries any
+external source". Integrity (tainted) and confidentiality (sensitive) are tracked
+as two independent labels.
 """
 
 from __future__ import annotations
@@ -33,8 +33,8 @@ from axor_core.contracts.taint import TaintSource
 class CausalRoot:
     """Provenance of a single value (not a session).
 
-    sources    — external sources that *explicitly* influenced this value (TM2).
-                 Empty == trusted/constant.
+    sources    — external sources that explicitly influenced this value.
+                 Empty means trusted / constant.
     sensitive  — confidentiality label: True if the value carries a sensitive
                  source (e.g. a secret read) and is harmful to let leave.
     """
@@ -44,27 +44,28 @@ class CausalRoot:
 
     @property
     def is_tainted(self) -> bool:
-        # TM2: tainted ⟺ causal_root ⊄ Trusted; Trusted is empty here.
+        # Tainted exactly when any external source is present (no source is
+        # trusted by default).
         return bool(self.sources)
 
-    # ── TM2 constructors ────────────────────────────────────────────────────
+    # ── constructors ────────────────────────────────────────────────────────
 
     @classmethod
     def constant(cls) -> "CausalRoot":
-        """A literal / user-trusted value: causal_root = ∅."""
+        """A literal / user-trusted value: no external sources."""
         return cls()
 
     @classmethod
     def external_read(cls, source: TaintSource, *, sensitive: bool = False) -> "CausalRoot":
-        """A value read from an external source: causal_root = {source}."""
+        """A value read from an external source: its causal root is {source}."""
         return cls(sources=frozenset({source}), sensitive=sensitive)
 
     @classmethod
     def mint(cls, *roots: "CausalRoot") -> "CausalRoot":
         """A value derived from others: union of sources, OR of sensitivity.
 
-        This is the over-taint point (TM2): the safe direction. A minted value is
-        at least as tainted as any of its inputs.
+        This over-taints in the safe direction: a minted value is at least as
+        tainted as any of its inputs.
         """
         sources: frozenset[TaintSource] = frozenset()
         sensitive = False
@@ -75,13 +76,13 @@ class CausalRoot:
 
     @classmethod
     def parse(cls, root: "CausalRoot") -> "CausalRoot":
-        """Schema parse of a value: causal_root is preserved unchanged (TM2)."""
+        """Schema parse of a value: causal root is preserved unchanged."""
         return root
 
     @classmethod
     def cross_process_in(cls) -> "CausalRoot":
-        """A value arriving across a process boundary is re-minted (TM4.1):
-        maximal integrity taint, explicitly *non*-sensitive (it carries none of
-        *our* secrets).
+        """A value arriving across a process boundary is re-minted: maximal
+        integrity taint, explicitly non-sensitive (it carries none of our own
+        secrets).
         """
         return cls(sources=frozenset({TaintSource.UNKNOWN_EXTERNAL}), sensitive=False)

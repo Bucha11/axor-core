@@ -1,7 +1,7 @@
-"""Consequence axis (TM3.1) — content-blind gate on the action class.
+"""Consequence axis — a content-blind gate on the action class.
 
-Covers: the deterministic lookup (T0), the OpenClaw class (consequential action
-under trusted provenance is caught while the provenance axes are silent), the
+Covers: the deterministic lookup, the case where a consequential action under
+trusted provenance is caught even though the taint axes are silent, the
 no-over-gating default, operator ceiling tightening, and the governance gate.
 """
 
@@ -19,10 +19,10 @@ from axor_core.node.intent_loop import IntentLoop, _GrantedEscalation
 from axor_core.policy.consequence import consequence_class
 
 
-# ── lookup (T0) ────────────────────────────────────────────────────────────────
+# ── lookup ───────────────────────────────────────────────────────────────────
 
 def test_consequence_lookup_is_deterministic_and_content_blind():
-    # Same input → same output, every time (T0: no model, no randomness).
+    # Same input → same output, every time: no model, no randomness.
     for _ in range(3):
         assert consequence_class("shutdown") == ConsequenceClass.CATASTROPHIC
         assert consequence_class("restart_gateway") == ConsequenceClass.CATASTROPHIC
@@ -95,13 +95,13 @@ def test_governance_gate_admits_catastrophic(cap_executor):
     assert loop._check_consequence("shutdown", env) is None
 
 
-# ── OpenClaw (X5): consequential action under trusted provenance ─────────────────
+# ── consequential action under trusted provenance ────────────────────────────────
 
 @pytest.mark.asyncio
 async def test_openclaw_shutdown_denied_with_provenance_axes_silent(cap_executor):
     """A `shutdown` driven by a trusted user — no taint, no untrusted source — is
-    invisible to the provenance axes but CATASTROPHIC by action class, so the
-    consequence gate denies it (X5). No taint/degradation engine is wired, proving
+    invisible to the taint axes but CATASTROPHIC by action class, so the
+    consequence gate denies it. No taint/degradation engine is wired, proving
     the catch is content-blind and provenance-independent.
     """
     from axor_core.contracts.trace import TraceEventKind
@@ -127,10 +127,10 @@ async def test_openclaw_shutdown_denied_with_provenance_axes_silent(cap_executor
 
 @pytest.mark.asyncio
 async def test_benign_admin_restart_is_the_accepted_structural_fp(cap_executor):
-    """The structural FP (TM3.1): a *benign* admin restart is gated identically to
-    a malicious one — the projection is structural and cannot see intent. Accepted
-    by K0; the operator relaxes it via the governance gate (escalation/lease), not
-    by reading content.
+    """The accepted structural false positive: a *benign* admin restart is gated
+    identically to a malicious one — the gate is structural and cannot see intent.
+    This is by design; the operator relaxes it via the governance gate
+    (escalation/lease), not by reading content.
     """
     loop = _loop(cap_executor)
     env = _envelope({"restart_gateway"})

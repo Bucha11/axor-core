@@ -6,14 +6,14 @@ log = logging.getLogger("axor.drift_observer")
 
 
 class TaintEngineDriftObserver:
-    """Implements BehavioralDriftObserver — **probe is a WATCHER**.
+    """Behavioral-drift observer — this probe is a WATCHER only.
 
-    v4.12 register separation: probe (behavioral drift) is detection, never
-    enforcement. A drift signal therefore does NOT mutate the enforcing
-    TaintEngine / degradation (that would let a probabilistic, out-of-band
-    counterfactual gate the live session — TM7 forbids it). It is recorded as
-    telemetry; an operator / governance actor consumes it and it may inform the
-    offline sentinel cross-session prior, but it does not gate `allow`.
+    Detection is kept strictly separate from enforcement. A drift signal does
+    NOT mutate the enforcing TaintEngine or degradation state: letting a
+    probabilistic, out-of-band observation gate a live session is exactly what
+    this layer must not do. The signal is recorded as telemetry for an operator
+    or governance actor to consume, and may inform offline cross-session
+    analysis, but it never affects the live allow/deny decision.
 
     Constructed with an optional TaintEngine for backward-compatible wiring; the
     engine is intentionally left untouched.

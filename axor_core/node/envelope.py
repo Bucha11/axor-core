@@ -33,7 +33,7 @@ class EnvelopeBuilder:
     Called by GovernedNode before invoking the executor.
     The executor receives the envelope — nothing else.
 
-    Build order:
+    Steps:
         1. Resolve capabilities from policy + extension tools
         2. Derive export contract from policy
         3. Assemble envelope

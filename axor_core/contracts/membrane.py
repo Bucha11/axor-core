@@ -22,7 +22,7 @@ class ClearanceEvent:
     """
     Auditable record of a taint clearance that occurred during summarization.
 
-    All §25.6 audit fields are required. Worker-initiated summarization cannot
+    All audit fields are required. Worker-initiated summarization cannot
     produce a ClearanceEvent — only operator-authority pathways can.
     """
     membrane_id: str

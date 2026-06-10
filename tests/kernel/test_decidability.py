@@ -1,9 +1,9 @@
-"""Thm. 0 — T4 decidability split (v4.12 Phase 4).
+"""Decidability split for value verification.
 
-The decidable branch (enum / bounded-numeric consumed as case-split / numeric)
-is discharged by a decision procedure; the rich-syntax branch (path / string /
-carrier) is classified FUZZ_REQUIRED. Plus a fuzz coverage-floor for the path
-normalizer — the fuzzing region the split predicts bugs must live in.
+The decidable branch (enum / bounded-numeric consumed as a case-split / a number)
+is discharged by an exact decision procedure; the rich-syntax branch (path /
+string / carrier) is classified FUZZ_REQUIRED. Also a coverage floor for the path
+normalizer — the region the split sends to fuzzing, where bugs are expected.
 """
 
 from __future__ import annotations
@@ -35,8 +35,9 @@ def test_rich_syntax_is_fuzz_required():
 
 def test_enum_consumed_by_an_interpreter_falls_to_fuzzing():
     # A low-capacity codomain handed to a rich-syntax consumer is NOT decidable:
-    # decidability is a property of (codomain, consumer), per Thm. 0 (and why
-    # FIDES's string-typed field is fuzzing, not a clean pass).
+    # decidability is a property of the (codomain, consumer) pair, which is why a
+    # string-typed field in a sound interpreter backend still needs fuzzing
+    # rather than passing cleanly.
     assert not is_decidable(CodomainKind.ENUM, ConsumptionMode.INTERPRET)
 
 
@@ -55,12 +56,12 @@ def test_verify_bounded_numeric():
     assert not verify_bounded_numeric(True, 0, 100).is_pass  # bool is not a real here
 
 
-# ── fuzz coverage floor (the rich-syntax region Thm. 0 sends to fuzzing) ──────────
+# ── fuzz coverage floor (the rich-syntax region the split sends to fuzzing) ───────
 
 def test_path_normalizer_fuzz_floor_no_escape():
-    """Coverage floor for the path projection (K5/T4 PLANNED). The decidable
-    procedure does not apply here; we fuzz that lexical normalization keeps `../`
-    escapes out of the allow-listed root — the class the two real bugs were in.
+    """Coverage floor for path handling. The exact decision procedure does not
+    apply here; we fuzz that lexical normalization keeps `../` escapes out of the
+    allow-listed root — the bug class this region is most prone to.
     """
     from axor_core.security.paths import path_matches_allowlist
 

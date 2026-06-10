@@ -1,17 +1,17 @@
 """
-Adversarial tests: escalation flood — Step 25.
+Adversarial tests: escalation flood.
 
 An adversary tries to overwhelm the operator channel via repeated or mutated
 gray-zone escalation requests, hoping one slips through or operator fatigue sets
 in.
 
 Three variants:
-  1. Identical spam — dedup activates and blocks after max_identical
-  2. Mutated spam — rate limit activates across different intents
-  3. Mixed-risk spam — repeated suspicious pattern triggers auto-deny
+  1. Identical spam — deduplication blocks after max_identical
+  2. Mutated spam — the per-minute rate limit kicks in across different intents
+  3. Mixed-risk spam — a repeated suspicious pattern triggers auto-deny
 
-Reverse-verify: removing EscalationFloodGuard (always returning None from check)
-would break all three tests.
+Without EscalationFloodGuard (i.e. if check always returned None), all three
+tests would fail.
 """
 from __future__ import annotations
 

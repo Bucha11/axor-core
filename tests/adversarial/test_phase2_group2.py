@@ -1,5 +1,10 @@
-"""Phase 2 group 2 — ledger soundness: endorsement over-release (refcount) and
-flood saturation (fail-closed, no silent drop)."""
+"""Taint-ledger soundness: reference-counted endorsement and flood saturation.
+
+Endorsing one value must not release a fragment another live value still shares,
+and a fragment is only dropped when its last reference is gone. Flooding the ledger
+past its capacity must fail closed (coarsely over-taint) rather than silently drop
+entries, and that saturated state propagates when ledgers merge.
+"""
 
 from __future__ import annotations
 

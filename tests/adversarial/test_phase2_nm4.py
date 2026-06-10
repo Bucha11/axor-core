@@ -1,11 +1,10 @@
-"""Phase 2 — NM4 (unknown sink posture).
+"""Posture for unknown (unclassified) sinks.
 
-Re-verification outcome: a global deny-by-default (unknown -> CATASTROPHIC) is both
-disruptive and wrong (fetch/curl-class custom sinks are not catastrophic). The
-kernel's actual posture is: unknown sinks default to CONSEQUENTIAL, which is
-fail-closed under the high-assurance ceiling (strict mode lowers it to REVERSIBLE)
-and operator-tunable via the `danger` table. These tests pin the fail-closed path so
-it cannot silently regress.
+Treating every unknown sink as catastrophic would be both disruptive and wrong:
+fetch/curl-class custom sinks are not catastrophic. Instead, unknown sinks default
+to a consequential class, which fails closed under a tight unattended ceiling
+(strict mode lowers the ceiling further) and is operator-tunable via the `danger`
+table. These tests pin the fail-closed path so it cannot silently regress.
 """
 
 from __future__ import annotations

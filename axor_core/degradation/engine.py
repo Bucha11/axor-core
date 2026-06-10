@@ -88,13 +88,13 @@ class DegradationEngine:
         self._node_id = node_id
         self._observe = observe
         self._shadow_level: DegradationLevel = DegradationLevel.NORMAL
-        # TM7.1: OPT-IN detection->degradation. detection_floor is θ, a registered
-        # reputation threshold. None = off (detection stays observe-only, X2). When
-        # set, a reputation reading in (0, θ] is a DECIDABLE threshold-crossing FACT
-        # (bounded-numeric comparison, T4-decidable) — NOT a probabilistic score —
-        # so it may feed degradation TIGHTENING-only. Per-tenant isolation is
-        # structural: each session/tenant has its own engine, so a poisoned
-        # reputation for one tenant cannot tighten another.
+        # Opt-in detection-to-degradation. detection_floor is a registered reputation
+        # threshold. None = off (detection stays observe-only). When set, a reputation
+        # reading in (0, floor] is a decidable threshold-crossing fact (a bounded-
+        # numeric comparison, not a probabilistic score), so it may feed degradation
+        # tightening-only. Per-tenant isolation is structural: each session/tenant has
+        # its own engine, so a poisoned reputation for one tenant cannot tighten
+        # another.
         self._detection_floor = detection_floor
 
     @classmethod
@@ -116,14 +116,15 @@ class DegradationEngine:
         self,
         normalized: "NormalizedIntent",
     ) -> DegradationTransition | None:
-        """TM7.1 (opt-in): feed a reputation threshold-CROSSING fact to degradation,
-        tightening-only. No-op unless a detection_floor (θ) is configured.
+        """Opt-in: feed a reputation threshold-crossing fact to degradation,
+        tightening-only. No-op unless a detection_floor is configured.
 
         The reputation reading is the worst (lowest positive) of the resource and
-        container reputations. A reading in (0, θ] is the decidable crossing — a 0.0
-        'unknown' reading never crosses. On a crossing we emit a DetectionSignalEvent
-        and tighten to RESTRICTED (monotone, never loosens). Detection never returns
-        an allow decision and never loosens — it can only tighten."""
+        container reputations. A reading in (0, floor] is the decidable crossing — a
+        0.0 'unknown' reading never crosses. On a crossing we emit a
+        DetectionSignalEvent and tighten to RESTRICTED (monotone, never loosens).
+        Detection never returns an allow decision and never loosens — it can only
+        tighten."""
         if self._detection_floor is None:
             return None
         reps = [r for r in (
@@ -141,7 +142,7 @@ class DegradationEngine:
             score=rep,
             tool=getattr(normalized, "tool", ""),
             fed_degradation=crossing,
-            reason=f"reputation {rep:.3f} {'≤' if crossing else '>'} θ={self._detection_floor}",
+            reason=f"reputation {rep:.3f} {'≤' if crossing else '>'} floor={self._detection_floor}",
         ))
         if not crossing:
             return None
@@ -177,9 +178,9 @@ class DegradationEngine:
         Called after every intent evaluation (pass or deny).
         Returns DegradationTransition if level changed, else None.
 
-        v4.12 TM8: transitions are driven **only by decidable facts** (parameter-
-        free Booleans over the current intent and its causal structure), never by
-        counters or thresholds. The fact table:
+        Transitions are driven **only by decidable facts** (parameter-free Booleans
+        over the current intent and its causal structure), never by counters or
+        thresholds. The fact table:
 
           cross-origin export of an untrusted-root value through a sink  → LOCKED
           deny where the driving value's causal_root is tainted          → RESTRICTED
@@ -187,9 +188,8 @@ class DegradationEngine:
           a further untrusted-root *dangerous* fact while in LOCKED       → TERMINAL
 
         Counters (session_deny_count, *_pressure_count) are kept as **telemetry**
-        only — they no longer drive a transition (accumulation → detection, X2).
-        LOCKED_TTL remains as an orchestrator "don't hang forever" hook, not a
-        guarantee fact.
+        only — they do not drive a transition. LOCKED_TTL remains as an orchestrator
+        "don't hang forever" hook, not a guarantee fact.
         """
         # TERMINAL → accept no more signals.
         if self._state.level == DegradationLevel.TERMINAL:
@@ -207,7 +207,7 @@ class DegradationEngine:
         source = self._get_or_create_source(source_id, driving_root)
         source.last_signal = time.time()
 
-        # Telemetry counters — recorded, but NOT transition drivers (TM8 / X2).
+        # Telemetry counters — recorded, but NOT transition drivers.
         tool_name = intent.tool.lower()
         self._state.session_deny_count += 1
         if _is_write_bash_export(tool_name):
@@ -270,9 +270,9 @@ class DegradationEngine:
     ) -> bool:
         """Decidable: does the driving value have an untrusted causal_root?
 
-        Per-value (v4.12): keyed on the driving value's own causal_root + this
-        intent's provenance / after-external-read fact. No session-taint flag — a
-        tainted *session* no longer makes every action count as untrusted."""
+        Per-value: keyed on the driving value's own causal_root plus this intent's
+        provenance / after-external-read fact. There is no session-taint flag — a
+        tainted *session* does not make every action count as untrusted."""
         if driving_root is not None and driving_root.is_tainted:
             return True
         if (intent.provenance or "") in ("external_web", "unknown"):
@@ -415,7 +415,7 @@ class DegradationEngine:
         self._state.tools_frozen = target_level >= DegradationLevel.LOCKED
         if target_level < DegradationLevel.LOCKED:
             self._locked_at = None
-        # NC3: clearing below RESTRICTED means governance has reviewed and released
+        # Clearing below RESTRICTED means governance has reviewed and released
         # the quarantine. Without resetting the per-source quarantine flags and the
         # telemetry counters, apply_to_policy keeps narrowing at the next RESTRICTED
         # (the lowered level is cosmetic) and re-quarantine logic is skewed by stale

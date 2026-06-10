@@ -1,8 +1,8 @@
-"""Phase 3 group B — persistence / cross-process re-mint (TM3.2 / TM4.1).
+"""Persistence and cross-process re-mint.
 
-A value that leaves and re-enters the trust boundary (memory read-back, or a
-child's output crossing a process boundary) is re-minted as untrusted: 'soft
-release' through memory or a sub-agent does not launder it.
+A value that leaves and re-enters the trust boundary (read back from memory, or a
+child's output crossing a process boundary) is re-minted as untrusted: routing a
+value through memory or a sub-agent does not launder its taint.
 """
 
 from __future__ import annotations
@@ -53,8 +53,8 @@ def _cap():
 @pytest.mark.asyncio
 async def test_memory_readback_is_reminted_tainted():
     # A fragment loaded from memory must be registered tainted in the per-value
-    # ledger, so a later sink carrying it is gated ('soft release' to memory does
-    # not launder).
+    # ledger, so a later sink carrying it is gated (routing through memory does
+    # not launder the taint).
     sess = GovernedSession(
         executor=EchoExecutor(tool_calls=[]),
         capability_executor=_cap(),
@@ -66,7 +66,7 @@ async def test_memory_readback_is_reminted_tainted():
     assert sess._taint_engine.derive_value(f"prefix {RECALLED} suffix").is_tainted is True
 
 
-# ── TM4.1 cross-process re-mint (engine level) ─────────────────────────────────
+# ── cross-process re-mint (engine level) ──────────────────────────────────────
 
 def test_cross_process_in_is_untrusted_nonsensitive():
     r = CausalRoot.cross_process_in()

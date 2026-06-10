@@ -1,24 +1,26 @@
-"""Thm. 0 — the T4 decidability split (v4.12, K3.6).
+"""The faithfulness decidability split.
 
-T4 is the faithfulness obligation: a projection's *effective* codomain equals its
-*nominal* one (no weird machine / residual channel — Def. 4). Whether T4 is
-*decidable* depends on the codomain **and** the consumer, and it splits cleanly:
+Faithfulness is the obligation that a projection's *effective* codomain equals its
+*nominal* one — i.e. the consumer cannot turn a projected value into an effect
+outside the declared set (no hidden residual channel). Whether this is *decidable*
+depends on the codomain **and** the consumer, and it splits cleanly:
 
   • DECIDABLE — discharged by a decision procedure (not fuzzing) — for
     low-capacity codomains: a **finite enum** consumed as a finite case-split, and
     a **bounded numeric** range consumed *numerically* (comparison/arithmetic/
-    range-check only). No pair π(x₁)=π(x₂) can be split by the consumer into
-    distinct effects, so no residual channel can exist — by construction.
+    range-check only). Two inputs with equal projections cannot be split by the
+    consumer into distinct effects, so no residual channel can exist — by
+    construction.
 
-  • FUZZING ONLY — undecidable in general (Rice / LangSec weird-machine) — for
-    rich-syntax codomains: **path** (a filesystem resolver: `..`, symlinks,
-    newline, unicode), **string subfields** (a shell/SQL/URL/template interpreter)
-    and **carrier over free text**. Here T4 stays a fuzz obligation (K5/T4); the
-    two real bugs (newline, `../`) live exactly here, as the split predicts.
+  • FUZZING ONLY — undecidable in general — for rich-syntax codomains: **path**
+    (a filesystem resolver: `..`, symlinks, newline, unicode), **string
+    subfields** (a shell/SQL/URL/template interpreter) and **carrier over free
+    text**. Here faithfulness stays a fuzz obligation; the classic real bugs
+    (newline injection, `../` traversal) live exactly here, as the split predicts.
 
-Decidability of the enum/numeric branch is **conditional on K2**: the consumer's
-*consumption mode* must be a registered, surveyable property of a finite sink —
-otherwise deciding it would be whole-program analysis (Rice), undecidable.
+Decidability of the enum/numeric branch is **conditional on the consumption mode
+being known**: it must be a registered, surveyable property of a finite sink —
+otherwise deciding it would require whole-program analysis, which is undecidable.
 
 This module is the decision procedure for the decidable branch and the classifier
 for which branch a (codomain, consumption-mode) pair falls into.
@@ -33,7 +35,7 @@ from typing import Iterable
 
 
 class CodomainKind(str, Enum):
-    """The admissible codomain kinds (Def. 3b), tagged by T4 tractability."""
+    """The admissible codomain kinds, tagged by faithfulness tractability."""
     ENUM = "enum"                       # decidable
     BOUNDED_NUMERIC = "bounded_numeric"  # decidable
     ORIGIN_CLASS = "origin_class"        # decidable (finite enum of origins)
@@ -43,7 +45,7 @@ class CodomainKind(str, Enum):
     STRING_SUBFIELD = "string_subfield"  # fuzzing
 
 
-# Consumption modes a registered sink (K2) may declare for a projection.
+# Consumption modes a registered sink may declare for a projection.
 class ConsumptionMode(str, Enum):
     CASE_SPLIT = "case_split"      # finite enum compared/branched — decidable
     NUMERIC = "numeric"            # compare/arithmetic/range only — decidable
@@ -78,12 +80,12 @@ class DecidabilityResult:
 
 
 def is_decidable(kind: CodomainKind, mode: ConsumptionMode) -> bool:
-    """Thm. 0 classifier: is T4 decidable for this (codomain, consumption) pair?
+    """Is faithfulness decidable for this (codomain, consumption) pair?
 
     Decidable iff the codomain is low-capacity AND the consumer treats it as a
     finite case-split / numeric value. If the consumer re-parses or resolves it
-    (rich-syntax), T4 is a fuzzing obligation regardless of the nominal codomain
-    (this is why FIDES's `string`-typed field is fuzzing, not decidable).
+    (rich-syntax), faithfulness is a fuzzing obligation regardless of the nominal
+    codomain — this is why a plain `string`-typed field is fuzzing, not decidable.
     """
     return kind in _DECIDABLE_KINDS and mode in _DECIDABLE_MODES
 
@@ -118,7 +120,7 @@ def verify_bounded_numeric(value: object, lo: Real, hi: Real) -> DecidabilityRes
 
 
 def classify(kind: CodomainKind, mode: ConsumptionMode) -> DecidabilityResult:
-    """Return the obligation a projection must discharge for T4 under Thm. 0:
+    """Return the obligation a projection must discharge for faithfulness:
     a decision procedure (decidable branch) or a fuzz obligation (rich-syntax).
     """
     if is_decidable(kind, mode):

@@ -1,4 +1,4 @@
-"""Federation gateway (TM4.2) — decide the provenance of an incoming federated value.
+"""Federation gateway — decide the provenance of an incoming federated value.
 
 receive() returns the CausalRoot to register locally for a value arriving from a
 peer, applying the L1/L2 ladder:

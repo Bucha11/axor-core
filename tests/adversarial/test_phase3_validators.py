@@ -1,5 +1,6 @@
-"""Phase 3 (validators / X4) — Thm. 0 classifier wired into registration, and the
-null-byte path fail-closed fix surfaced by the K5/T4 fuzz-floor."""
+"""Value-policy validators: the decidability classifier is wired into registration
+so that only guardable predicates are accepted, and the null-byte path check fails
+closed instead of crashing."""
 
 from __future__ import annotations
 
@@ -38,7 +39,7 @@ def test_unknown_predicate_kind_is_rejected():
 
 def test_intent_loop_rejects_fuzz_required_predicate():
     bad = ValuePredicate(arg="cmd", kind="regex_match")
-    with pytest.raises(ValueError, match="Thm. 0"):
+    with pytest.raises(ValueError, match="value_policies"):
         IntentLoop(capability_executor=CapabilityExecutor(), trace_events=[],
                    value_policies={"shell": [bad]})
 
@@ -54,7 +55,7 @@ def test_field_obligation_split():
 
 
 def test_null_byte_path_fails_closed_not_crash():
-    # The fuzz-floor caught this: a null byte makes Path.resolve raise; the
-    # governance check must DENY (fail closed), never propagate the exception.
+    # A null byte makes Path.resolve raise; the governance check must DENY
+    # (fail closed), never propagate the exception.
     assert path_within("x\x00y", "/repo") is False
     assert path_matches_allowlist("/repo/\x00etc", ["/repo"]) is False

@@ -1,6 +1,7 @@
-"""Phase 4 hygiene regressions: sanitizer case-insensitive reserved-prefix,
-symbol-table whole-word deprecation match, errors __all__ completeness, and the
-unified token estimator."""
+"""Hygiene regressions: the extension sanitizer matches reserved prefixes
+case-insensitively, the symbol table matches deprecated names on whole words only,
+the errors module exports every public exception, and the token estimator behaves
+on edge-case inputs."""
 
 from __future__ import annotations
 

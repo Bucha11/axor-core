@@ -1,4 +1,4 @@
-"""Tests for signed daemon session grants (H1)."""
+"""Tests for signed daemon session grants."""
 
 from __future__ import annotations
 

@@ -1,14 +1,14 @@
-"""Density pipeline regression tests (TM3.3 / NM7 / NM8).
+"""Density pipeline regression tests.
 
-The density number is the make-or-break measurement the spec stakes half of Part II
-on. These tests pin the two failure modes the review found:
+The density number is a key measurement, so it must survive being written to disk
+and re-read. These tests pin two failure modes:
 
-  NM7 — SinkDensityEvent fields were dropped on persistence (not whitelisted), so
-        the number could not be reconstructed from a durable trace.
-  NM8 — the meter masked the measured session boolean, fabricating gap >= 0.
+  - SinkDensityEvent fields could be dropped on persistence (not whitelisted by the
+    serializer), so the number could not be reconstructed from a durable trace.
+  - The meter could mask the measured session boolean, fabricating a gap >= 0.
 
 They also confirm the two axes (integrity / confidentiality) survive to disk and to
-the Prometheus exposition, since the Phase-1 fork decision depends on those numbers.
+the Prometheus exposition.
 """
 
 from __future__ import annotations
@@ -43,7 +43,7 @@ def _density_event(node_id="n1", *, op="bash", tainted=False, sensitive=False,
 
 
 def test_density_event_survives_persistence(tmp_path):
-    # NM7: every axis field must reach disk, not be silently dropped by the
+    # Every axis field must reach disk, not be silently dropped by the
     # serialization whitelist.
     cfg = TraceConfig(trace_dir=str(tmp_path), persist_to_disk=True)
     c = TraceCollector(config=cfg, session_id="dens")
@@ -59,7 +59,7 @@ def test_density_event_survives_persistence(tmp_path):
 
 
 def test_density_reconstructable_from_persisted_trace(tmp_path):
-    # The whole point of TM3.3: an operator can scrape the number from durable JSONL.
+    # The whole point: an operator can scrape the number back from durable JSONL.
     cfg = TraceConfig(trace_dir=str(tmp_path), persist_to_disk=True)
     c = TraceCollector(config=cfg, session_id="recon")
     # 4 firings: 1 per-value integrity-tainted, 3 session-tainted, 1 sensitive.

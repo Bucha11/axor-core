@@ -1,12 +1,12 @@
-"""ValueProvenance — the per-value trust-model interface (spec K3 / Part II).
+"""ValueProvenance — the per-value trust-model interface.
 
 Enforcement depends on THIS contract, not on a concrete engine. A trust model
 maps a value to its `causal_root` (the structural provenance projection) and
-records produced values. Replaceable: our content-derivation `TaintEngine`, a
-CaMeL-style interpreter, or a FIDES-style labeler all satisfy it.
+records produced values. Any backend satisfies it: a content-derivation taint
+tracker, a data-flow interpreter, or a label-propagating tracker.
 
-Typing enforcement against this Protocol is a *convention expressed in types*:
-engine internals NOT in the contract (legacy session-taint, cross-session
+Typing enforcement against this Protocol is a convention expressed in types:
+engine internals NOT in the contract (whole-session taint, cross-session
 persistence) are structurally outside the enforcement boundary.
 """
 

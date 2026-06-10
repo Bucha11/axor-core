@@ -1,14 +1,15 @@
-"""Advisory adjudicator (TM3.4) — projection-only, memoized by π-hash, tightening.
+"""Advisory adjudicator — projection-only, memoized by projection hash, tightening.
 
 An adjudicator is a pluggable advisory layer (e.g. an LLM judge / external policy
 oracle). The kernel keeps three hard guarantees over it:
 
-  • PROJECTION-ONLY (T0): it sees only the CanonicalizedIntent (π) — enums, ints,
-    bucketed lengths, hashed paths — never raw content. It cannot be steered by the
-    governed content's semantics (K4/T0).
-  • MEMOIZED by π-hash: equal projections get equal verdicts, queried once. The
-    advice is therefore a deterministic function of π (no per-call drift), and an
-    expensive/external oracle is consulted at most once per distinct projection.
+  • PROJECTION-ONLY: it sees only the CanonicalizedIntent (the projection) —
+    enums, ints, bucketed lengths, hashed paths — never raw content. It cannot be
+    steered by the governed content's semantics.
+  • MEMOIZED by projection hash: equal projections get equal verdicts, queried
+    once. The advice is therefore a deterministic function of the projection (no
+    per-call drift), and an expensive/external oracle is consulted at most once per
+    distinct projection.
   • ADVISORY / TIGHTENING-ONLY: it can only ADD a deny. A kernel HARD-DENY is never
     overridden by an adjudicator ALLOW, and an adjudicator that errors ABSTAINS
     (advice is a bonus restriction on top of the kernel, never a relaxation).
@@ -42,7 +43,7 @@ class Adjudicator(Protocol):
 
 
 def projection_hash(projection: CanonicalizedIntent) -> str:
-    """Stable digest of a projection (π-hash) for audit / cross-process memoization.
+    """Stable digest of a projection for audit / cross-process memoization.
 
     Deterministic over the dataclass fields in declaration order; values are enums/
     ints/strs/bools, so their str() is stable. No raw content is present by
@@ -56,7 +57,7 @@ def projection_hash(projection: CanonicalizedIntent) -> str:
 
 
 class MemoizingAdjudicator:
-    """Wraps an advisory Adjudicator: memoizes verdicts by projection (π-hash) and
+    """Wraps an advisory Adjudicator: memoizes verdicts by projection hash and
     enforces the tightening-only contract."""
 
     def __init__(self, inner: Adjudicator) -> None:
@@ -64,8 +65,9 @@ class MemoizingAdjudicator:
         self._cache: dict[CanonicalizedIntent, AdjudicationVerdict] = {}
 
     def verdict(self, projection: CanonicalizedIntent) -> AdjudicationVerdict:
-        """Memoized advisory verdict for this projection. Equal π → equal verdict.
-        A raising adjudicator ABSTAINS (advisory layer must not break the loop)."""
+        """Memoized advisory verdict for this projection. Equal projection → equal
+        verdict. A raising adjudicator ABSTAINS (advisory layer must not break the
+        loop)."""
         cached = self._cache.get(projection)
         if cached is not None:
             return cached

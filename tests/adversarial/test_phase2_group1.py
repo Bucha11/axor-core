@@ -1,5 +1,12 @@
-"""Phase 2 group 1 — NM5 (operation-aware consequence / X5), NM6 (carrier
-sanitization), NM2 (value_policies wired through GovernedSession)."""
+"""Operation-aware consequence gating, carrier sanitization, and value-policy
+wiring.
+
+Covers: dangerous-looking values (paths, URLs, non-finite numbers) classify as
+free text while closed structured forms do not; destructive shell operations
+(shutdown, reboot, disk wipes) are gated by action class even when they look
+benign to provenance checks; and value policies configured on a session reach the
+node that enforces them.
+"""
 
 from __future__ import annotations
 
@@ -27,7 +34,7 @@ from axor_core.taint.engine import TaintEngine
 pytestmark = pytest.mark.adversarial
 
 
-# ── NM6: carrier sanitization ─────────────────────────────────────────────────
+# ── carrier sanitization ──────────────────────────────────────────────────────
 
 @pytest.mark.parametrize("value", [
     "/etc/passwd", "../../secret", "http://attacker.example/x",
@@ -45,7 +52,7 @@ def test_closed_forms_unchanged(value):
     assert classify_carrier(value) != Carrier.FREE_TEXT
 
 
-# ── NM5: operation-aware consequence (X5 OpenClaw via bash) ────────────────────
+# ── operation-aware consequence (destructive bash commands) ────────────────────
 
 class _Handler(ToolHandler):
     def __init__(self, name: str, output: Any) -> None:
@@ -95,8 +102,9 @@ def _loop() -> IntentLoop:
 
 @pytest.mark.asyncio
 async def test_power_state_bash_is_gated():
-    # `bash shutdown` is invisible to the provenance axes but CATASTROPHIC by action
-    # class — the operation enum escalates it past the unattended ceiling (X5).
+    # `bash shutdown` looks benign to the provenance checks but is catastrophic by
+    # action class, so the operation classifier escalates it past the unattended
+    # ceiling and denies it.
     r = await _resolve(_loop(), _env(), "bash", {"cmd": "shutdown -h now"})
     assert not r.approved
     assert r.result.get("category") == "consequence_gate"
@@ -118,7 +126,7 @@ async def test_power_state_variants_gated(cmd):
     assert not r.approved
 
 
-# ── NM2: value_policies wired through GovernedSession ──────────────────────────
+# ── value_policies wired through GovernedSession ───────────────────────────────
 
 def test_session_forwards_value_policies_to_node():
     from axor_core.worker.session import GovernedSession

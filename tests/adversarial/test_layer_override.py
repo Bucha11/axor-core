@@ -1,8 +1,8 @@
-"""Layer-1 (capability gate) is authoritative — v4.12.
+"""The capability gate is authoritative.
 
-After the ML/judge removal, enforcement is a pure structural gate. The capability
-check (`_evaluate_tool_intent`) denies an unauthorized tool outright; there is no
-probabilistic layer in enforcement that could override it.
+Enforcement is a pure structural gate. The capability check
+(`_evaluate_tool_intent`) denies an unauthorized tool outright; there is no
+probabilistic layer in enforcement that could override that decision.
 """
 from __future__ import annotations
 

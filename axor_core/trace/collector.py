@@ -404,7 +404,7 @@ _KIND_ALLOWED_FIELDS: dict[TraceEventKind, set[str]] = {
         "previous_level", "new_level", "trigger_source_id", "trigger_intent", "reason",
     },
     TraceEventKind.SOURCE_QUARANTINED: {"source_id", "quarantined_at", "reason"},
-    # density / detection events (TM3.3 / TM7.1)
+    # density / detection events
     TraceEventKind.SINK_DENSITY: {
         "operation", "tainted", "sensitive", "session_tainted", "session_sensitive",
     },

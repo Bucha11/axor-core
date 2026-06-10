@@ -5,8 +5,8 @@
 2. The SSRF host parser must classify every integer/dotted encoding of a
    private / loopback / link-local address as non-external.
 
-These guard against the classes of bypass found in the security review
-(path-traversal escape, encoded-IP SSRF) — not just the specific examples.
+These guard against whole classes of bypass (path-traversal escape, encoded-IP
+SSRF) — not just the specific examples.
 """
 
 from __future__ import annotations
@@ -33,8 +33,8 @@ from axor_core.contracts.taint import Carrier
 # ── 1. path allowlist soundness (no false-accept) ────────────────────────────
 
 # Path segments including traversal, hidden dirs, newline/unicode injection, and
-# odd-but-legal names — the fuzz-required codomain (K5/T4) where the two real bugs
-# (newline, ../) live.
+# odd-but-legal names — the space where the two real bugs (embedded newline and
+# ../ traversal) tend to live.
 _segment = st.sampled_from(
     ["..", ".", "a", "b", "etc", "repo", "sub", "x.txt", "..%2f", " ", "f",
      "a\nb", "‮", "café", "x\x00y", "..\\", "%2e%2e"]
@@ -114,12 +114,12 @@ def test_public_ips_classified_external(octets: list[int]):
     assert kind == "external_url"
 
 
-# ── 3. carrier classifier soundness floor (K5/T4 — carrier over free text) ────
+# ── 3. carrier classifier soundness floor (carrier over free text) ────────────
 #
-# The carrier classifier backs the D_high positional gate. Its FUZZ_REQUIRED
-# obligation: it must NEVER admit an instruction-bearing string as
-# instruction-incomplete. Soundness floor: a BARE string (not a JSON structure)
-# that carries whitespace or any interpreter metacharacter must be FREE_TEXT.
+# The carrier classifier decides whether a string is safe structured data or free
+# text. It must NEVER admit an instruction-bearing string as if it were inert.
+# Soundness floor: a BARE string (not a JSON structure) that carries whitespace or
+# any interpreter metacharacter must be classified FREE_TEXT.
 
 _META = set(" \t\n\r/:;|&$`(){}<>\"'\\=*?!@#%^+,~")
 
@@ -143,5 +143,5 @@ def test_carrier_never_admits_dangerous_bare_string(s: str):
 def test_carrier_admits_bounded_identifier(s: str):
     # The converse: a genuine bounded identifier (leading letter/underscore, so it
     # is not a numeric literal that could overflow to inf/nan) is never spuriously
-    # FREE_TEXT — no over-restriction that would break legitimate D_high inputs.
+    # FREE_TEXT — no over-restriction that would break legitimate structured inputs.
     assert classify_carrier(s) != Carrier.FREE_TEXT

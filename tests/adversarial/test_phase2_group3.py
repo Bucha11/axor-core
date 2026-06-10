@@ -1,6 +1,10 @@
-"""Phase 2 group 3 — M9 (budget register_node wired) and M11 (restrict_export
-actually enforced). Only the genuinely-live inherited findings; M1/M2/C1/C2/C3/M7/M8
-verified already-resolved and M3/M14 superseded by the v4.12 observe-only design."""
+"""Budget-node registration and export restriction.
+
+The budget tracker must register a node before recording its tokens (so it never
+falls back to its unregistered-node default), and a budget that crosses the
+export-restriction threshold must actually narrow a FULL export down to a summary
+shape rather than merely logging the decision.
+"""
 
 from __future__ import annotations
 
@@ -19,7 +23,7 @@ from tests.conftest import EchoExecutor
 pytestmark = pytest.mark.adversarial
 
 
-# ── M9: register_node ──────────────────────────────────────────────────────────
+# ── register_node ────────────────────────────────────────────────────────────────
 
 def test_register_node_idempotent_preserves_counters():
     # The risk in the fix: register before every record must NOT wipe accumulated
@@ -75,7 +79,7 @@ async def test_session_run_registers_node_no_warning(caplog):
     assert sess._tracker.snapshot()[result.node_id].depth == 0
 
 
-# ── M11: restrict_export enforced ──────────────────────────────────────────────
+# ── restrict_export enforced ───────────────────────────────────────────────────
 
 def test_more_restrictive_export_ordering():
     F, S, FI, R = (ExportMode.FULL, ExportMode.SUMMARY,

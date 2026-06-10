@@ -54,7 +54,7 @@ class BudgetThresholds:
             )
 
 
-# Callback type for threshold events (new in 0.5.0).
+# Callback type for threshold events.
 # Receives (threshold_name, ratio) where threshold_name is one of:
 # "compress", "deny_child", "restrict_export", "hard_stop"
 ThresholdCallback = Callable[[str, float], None]
@@ -71,7 +71,7 @@ class BudgetPolicyEngine:
         on_result_arrived()    — after tool result.
         on_child_requested()   — before child node is created.
 
-    New in 0.5.0:
+    It also exposes:
         on_threshold_crossed() — subscribe to threshold crossing events.
         suggest_tier_shift()   — advisory hint for adaptive routing.
     """
@@ -91,7 +91,7 @@ class BudgetPolicyEngine:
         # Track the last threshold bucket we fired for, to avoid duplicate events.
         self._last_threshold_fired: str = ""
 
-    # ── Threshold subscription API (new in 0.5.0) ─────────────────────────────────
+    # ── Threshold subscription API ───────────────────────────────────────────────
 
     def on_threshold_crossed(
         self,
@@ -118,7 +118,7 @@ class BudgetPolicyEngine:
 
     def suggest_tier_shift(self) -> int:
         """
-        Advisory hint for adaptive routing (new in 0.5.0).
+        Advisory hint for adaptive routing.
 
         Returns:
             -1  shift to a cheaper/lower tier (budget pressure)
@@ -249,8 +249,8 @@ class BudgetPolicyEngine:
         depth: int,
         tier: str | None = None,
     ) -> None:
-        """Register a node's lineage so depth/subtree budget accounting is correct
-        (M9). Delegates to the tracker; idempotent."""
+        """Register a node's lineage so depth/subtree budget accounting is correct.
+        Delegates to the tracker; idempotent."""
         self._tracker.register_node(node_id, parent_id, depth, tier)
 
     def record_child_tokens(

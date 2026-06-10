@@ -1,19 +1,19 @@
-"""Per-value taint ledger (TM2) — content-derivation provenance for an opaque
+"""Per-value taint ledger — content-derivation provenance for an opaque
 LLM-tool loop.
 
-A sound CaMeL-style per-value tracker needs an interpreter of the agent's data
+A fully sound per-value tracker would need an interpreter of the agent's data
 flow. We do not have one (the model emits tool calls directly), so we track
 provenance by **content derivation**: register the content a tainted/sensitive
-read produced, and at a sink decide the driving argument's causal_root by whether
+read produced, and at a sink decide the driving argument's causal root by whether
 it *contains* that content.
 
 This is **sound in the deny direction** (if a registered tainted/sensitive
 fragment appears in a sink argument, that argument really does carry it), so it
-is wired as an *additional* deny layer on top of the session-sticky floor — it
+is wired as an *additional* deny layer on top of the coarse session floor — it
 never loosens the floor. It is **incomplete**: a value the model paraphrases or
-re-encodes will not match (the X1 in-process-LLM over-taint gap). Sound per-value
-enforcement that could *loosen* the session floor needs the interpreter we cede
-to CaMeL; we do not claim it.
+re-encodes will not match. Sound per-value enforcement that could *loosen* the
+session floor would need a sound per-value interpreter backend; we do not claim
+it.
 """
 
 from __future__ import annotations
@@ -33,12 +33,12 @@ _MAX_TOTAL_SEGMENTS = 20000
 class ValueTaintLedger:
     """Maps distinctive content fragments → [CausalRoot, refcount].
 
-    Refcounted (TM2): a fragment shared by two registered values is held until BOTH
-    release it, so endorsing one value cannot under-taint the other (the
-    endorsement-over-release bug). Saturation is fail-closed: when the segment cap
-    is reached the ledger flips to a coarse over-taint mode — derive() returns an
-    untrusted root for everything — so an attacker cannot flood the ledger to evict
-    a real secret's fragment and launder it (the silent-drop bug).
+    Refcounted: a fragment shared by two registered values is held until BOTH
+    release it, so endorsing one value cannot under-taint the other. Saturation is
+    fail-closed: when the segment cap is reached the ledger flips to a coarse
+    over-taint mode — derive() returns an untrusted root for everything — so an
+    attacker cannot flood the ledger to evict a real secret's fragment and launder
+    it.
     """
 
     def __init__(self) -> None:
@@ -76,7 +76,7 @@ class ValueTaintLedger:
                 self._saturated = True
 
     def unregister(self, content: object) -> int:
-        """Release one reference to the fragments of `content` (endorsement / TM4).
+        """Release one reference to the fragments of `content` (endorsement).
         A fragment is removed only when its refcount reaches zero, so a fragment
         shared with another live value survives. The retained joined root keeps the
         other value at least as tainted (safe direction). Returns fragments removed."""
@@ -96,8 +96,8 @@ class ValueTaintLedger:
         a clean argument carries no taint even in a tainted session.
 
         When saturated (ledger flooded past the cap) this fails closed: every value
-        derives as untrusted (cross-process re-mint, TM4.1), so a flood cannot
-        launder a tracked value into looking clean.
+        derives as untrusted (the same maximal taint applied at a process boundary),
+        so a flood cannot launder a tracked value into looking clean.
         """
         if self._saturated:
             return CausalRoot.cross_process_in()

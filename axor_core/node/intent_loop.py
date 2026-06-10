@@ -156,26 +156,26 @@ class IntentLoop:
         self._max_intents_per_session = max_intents_per_session
         self._max_total_spawns = max_total_spawns
         self._value_policies = value_policies or {}
-        # Thm. 0 registration validator (X4 validators step): reject value policies
-        # that try to discharge a fuzz-required (rich-syntax) field with a decidable
+        # Registration validator: reject value policies that try to discharge a
+        # field requiring rich-syntax (fuzz) checking with a simple decidable
         # predicate — false assurance must fail closed, not be silently accepted.
         _vp_errors = validate_value_policies(self._value_policies)
         if _vp_errors:
             raise ValueError(
-                "invalid value_policies (Thm. 0 / T4): " + "; ".join(_vp_errors)
+                "invalid value_policies: " + "; ".join(_vp_errors)
             )
         self._consequence_overrides = consequence_overrides or {}
-        # D_high partition (Corollary: stratified enforcement). Sinks the operator
-        # DECLARES to have an instruction-incomplete codomain — i.e. their legitimate
-        # input cannot encode an instruction, and the trusted side constrains input
-        # to that codomain (constrained decoding, obligation 1). For these sinks,
-        # admission flips from the X1-leaky content-derivation DENY-LIST to a sound
-        # POSITIONAL ALLOW-LIST: admit only if the driving value's carrier is
-        # instruction-incomplete, content-independently (closes O2 vs paraphrase).
-        # Opt-in/empty by default; exec-class sinks can NEVER be declared here
-        # (shell command codomain is instruction-complete by definition).
-        # Advisory adjudicator (TM3.4). Wrap a bare Adjudicator so verdicts are
-        # memoized by π-hash; a MemoizingAdjudicator is used as-is. None = off.
+        # Positional sinks. These are sinks the operator DECLARES to have an
+        # instruction-incomplete input space — i.e. their legitimate input cannot
+        # encode an instruction, and the trusted side constrains input to that space
+        # (e.g. via constrained decoding). For these sinks, admission flips from the
+        # leaky content-derivation DENY-LIST to a sound POSITIONAL ALLOW-LIST: admit
+        # only if the driving value's carrier is instruction-incomplete, independent
+        # of content. Opt-in/empty by default; sinks that execute their argument can
+        # NEVER be declared here (a shell command's input space admits instructions
+        # by definition).
+        # Advisory adjudicator. Wrap a bare Adjudicator so verdicts are memoized by
+        # projection hash; a MemoizingAdjudicator is used as-is. None = off.
         self._canonicalizer = IntentCanonicalizer()
         if adjudicator is None:
             self._adjudicator = None
@@ -187,9 +187,9 @@ class IntentLoop:
         _illegal = {s for s in self._positional_sinks if s.lower() in _INSTRUCTION_COMPLETE_SINKS}
         if _illegal:
             raise ValueError(
-                "instruction-complete sinks cannot be declared positional (D_high): "
+                "instruction-complete sinks cannot be declared positional: "
                 f"{sorted(_illegal)} — their codomain admits instructions by "
-                "definition; they must stay in D_low (content-derivation)."
+                "definition; they must stay on the content-derivation path."
             )
         self._spawn_count = 0
 
@@ -300,7 +300,7 @@ class IntentLoop:
                                 )
                             continue
 
-                        # Per-value carrier/taint gate (NC2) — the capability check
+                        # Per-value carrier/taint gate — the capability check
                         # above only asks "may this node spawn"; it does not inspect
                         # WHAT drives the spawn. A tainted free-text task is prompt
                         # injection reaching an instruction-following sink.
@@ -430,7 +430,7 @@ class IntentLoop:
                 result=denial_resp.to_tool_result(),
             )
 
-        # Normalize early: the consequence gate (X5) needs the operation enum to
+        # Normalize early: the consequence gate needs the operation enum to
         # escalate a generic sink whose command is power-state-changing (e.g.
         # `bash shutdown`). Pure structural transform; reputation enrichment stays
         # telemetry-only and never gates.
@@ -444,19 +444,20 @@ class IntentLoop:
             normalized = self._normalizer.normalize(intent)
         if self._reputation_enricher is not None and normalized is not None:
             normalized = self._reputation_enricher.enrich(normalized, intent)
-            # TM7.1 (opt-in): a reputation threshold-CROSSING fact may tighten
-            # degradation (tightening-only, decidable fact — not the raw score). No-op
-            # unless the degradation engine was given a detection_floor (θ). Detection
-            # never returns an allow decision; it can only tighten.
+            # Opt-in: a reputation threshold-CROSSING fact may tighten degradation
+            # (tightening-only, a decidable fact — not the raw score). No-op unless
+            # the degradation engine was given a detection_floor. Detection never
+            # returns an allow decision; it can only tighten.
             if self._degradation_engine is not None:
                 self._degradation_engine.record_detection(normalized)
                 for ev in self._degradation_engine.drain_events():
                     self._trace_events.append(ev)
 
-        # consequence axis (TM3.1) — content-blind structural gate on the action
-        # class, part of the pure `allow`. Catches consequential-action-under-
-        # trusted-provenance (the OpenClaw class, X5) that the provenance axes
-        # cannot see. Reads only the sink type + operation enum + policy ceiling.
+        # consequence axis — content-blind structural gate on the action class, part
+        # of the pure allow decision. Catches a destructive/irreversible action
+        # issued under trusted provenance that the provenance axes cannot see (e.g.
+        # a host shutdown or disk wipe). Reads only the sink type + operation enum +
+        # policy ceiling.
         consequence_denial = self._check_consequence(
             tool_name, envelope,
             operation=normalized.operation if normalized is not None else None,
@@ -472,10 +473,10 @@ class IntentLoop:
                 result=denial_resp.to_tool_result(),
             )
 
-        # value-policy predicates (TM3.1 predicate layer) — operator-registered
-        # range/enum predicates over an admissible projection of an argument
-        # (e.g. transfer(amount) within bounds). Content-blind: reads the numeric/
-        # enum projection, discharged by the Thm. 0 decision procedures.
+        # value-policy predicates — operator-registered range/enum predicates over
+        # an admissible projection of an argument (e.g. transfer(amount) within
+        # bounds). Content-blind: reads only the numeric/enum projection, discharged
+        # by decidable decision procedures.
         value_denial = check_value_policies(tool_name, tool_args, self._value_policies)
         if value_denial is not None:
             self._record_denial(intent, value_denial, envelope)
@@ -494,7 +495,7 @@ class IntentLoop:
         # degradation-narrowed policy gate. Degradation is driven only by
         # structural facts; no probabilistic detector feeds it (ML/judge removed).
         if self._degradation_engine is not None and normalized is not None:
-            # Per-value (NM3): hand the driving value's causal_root to the check
+            # Per-value: hand the driving value's causal_root to the check
             # path so a value-keyed quarantine ("value:<src>") is matched here, not
             # only on the record_signal path. Without it derive_source_id falls back
             # to provenance/"unknown" and the narrowing silently misses.
@@ -540,22 +541,21 @@ class IntentLoop:
                 result=denial_resp.to_tool_result(),
             )
 
-        # taint enforcement — PER-VALUE (TM2). The refactor from per-session to
-        # per-value: the gate decides on the *driving argument's own* causal_root
-        # (content-derivation ledger), NOT a session-wide flag. A clean-valued
-        # sink passes even when other values in the session are tainted — that is
-        # the per-value win the density experiment (TM3.3) measured.
-        # Named gap (X1): content-derivation misses paraphrased / re-encoded
-        # influence; sound over-taint of opaque-LLM output collapses to
-        # session-sticky and needs an interpreter (ceded to CaMeL).
+        # taint enforcement — PER-VALUE. The gate decides on the *driving
+        # argument's own* causal_root (content-derivation ledger), NOT a
+        # session-wide flag. A clean-valued sink passes even when other values in
+        # the session are tainted.
+        # Known gap: content-derivation misses paraphrased / re-encoded influence;
+        # soundly over-tainting opaque model output would collapse this back to
+        # session-sticky tainting and needs a sound per-value interpreter backend.
         if self._taint_engine is not None and normalized is not None:
             driving_root = self._taint_engine.derive_value(tool_args)
 
-            # Density (TM3.3): record, per high-stakes sink firing, the per-value
-            # taint (both axes) and the session-sticky shadow. The make-or-break
-            # number, measured live and split integrity vs confidentiality so the
-            # taint-explosion asymmetry is visible. Uses the same overrides as the
-            # enforcement gate so density and enforcement agree on which sinks count.
+            # Density telemetry: record, per high-stakes sink firing, the per-value
+            # taint (both axes) and the session-sticky shadow, split integrity vs
+            # confidentiality so the taint-explosion asymmetry is visible. Uses the
+            # same overrides as the enforcement gate so density and enforcement
+            # agree on which sinks count.
             sink_consequence = consequence_class(
                 tool_name, operation=normalized.operation,
                 overrides=self._consequence_overrides,
@@ -577,24 +577,23 @@ class IntentLoop:
                     session_sensitive=session_sensitive,
                 ))
 
-            # D_high POSITIONAL ADMISSION (Corollary: stratified enforcement).
-            # For a sink the operator DECLARED instruction-incomplete, admission
-            # flips from the X1-leaky content-derivation deny-list to a sound
-            # positional allow-list: admit ONLY if the driving value's carrier is
-            # instruction-incomplete (ENDORSED/CLOSED_SCHEMA), else fail-closed.
-            # Crucially this does NOT consult driving_root.is_tainted — that is the
-            # whole point: a paraphrase that launders the content-derivation label
-            # cannot change the value's FORM, and classify_carrier is structural
-            # (T0), so the induction step O2 closes against semantic derivation,
-            # content-independently. classify_carrier takes the WORST carrier over
-            # all argument leaves, so a single non-positional argument path nullifies
-            # admission (O3 / complete mediation, local to this sink). No-upgrade
-            # holds by construction: the carrier is recomputed structurally each
-            # call, there is no stored positional label to launder through D_low.
+            # POSITIONAL ADMISSION. For a sink the operator DECLARED
+            # instruction-incomplete, admission flips from the (leaky)
+            # content-derivation deny-list to a sound positional allow-list: admit
+            # ONLY if the driving value's carrier is instruction-incomplete
+            # (ENDORSED/CLOSED_SCHEMA), else fail-closed. Crucially this does NOT
+            # consult driving_root.is_tainted — that is the whole point: a paraphrase
+            # that launders the content-derivation label cannot change the value's
+            # FORM, and classify_carrier is structural, so admission holds against
+            # semantic derivation, content-independently. classify_carrier takes the
+            # WORST carrier over all argument leaves, so a single non-positional
+            # argument path nullifies admission (complete mediation, local to this
+            # sink). The carrier is recomputed structurally each call, so there is no
+            # stored positional label to launder through later calls.
             if tool_name in self._positional_sinks:
                 if classify_carrier(tool_args) == Carrier.FREE_TEXT:
                     reason = (
-                        f"positional gate (D_high): '{tool_name}' is a declared "
+                        f"positional gate: '{tool_name}' is a declared "
                         f"instruction-incomplete sink; its driving value is FREE_TEXT "
                         f"(non-positional) — admitted only via an instruction-incomplete "
                         f"carrier, independent of content-derivation"
@@ -607,16 +606,16 @@ class IntentLoop:
                         result=denial_resp.to_tool_result(),
                     )
 
-            # Carrier / imperative-channel gate (TM1): a tainted FREE_TEXT value
-            # reaching an instruction-following sink (it would be interpreted as a
-            # directive — spawn a sub-agent, send a message, execute) is the
-            # imperative channel. classify_carrier reads the *form*, deterministic
-            # (T0). Complements per-value: catches free-text-as-directive that the
+            # Carrier / imperative-channel gate: a tainted FREE_TEXT value reaching
+            # an instruction-following sink (it would be interpreted as a directive
+            # — spawn a sub-agent, send a message, execute) is the imperative
+            # channel. classify_carrier reads the *form*, deterministically.
+            # Complements per-value: catches free-text-as-directive that the
             # risky-op list below does not (e.g. spawn_child(task=<free text>)).
             if driving_root.is_tainted and _is_imperative_sink(tool_name, normalized):
                 if classify_carrier(tool_args) == Carrier.FREE_TEXT:
                     reason = (
-                        f"carrier gate (TM1): untrusted FREE_TEXT value into the "
+                        f"carrier gate: untrusted FREE_TEXT value into the "
                         f"instruction-following sink '{tool_name}' (imperative channel)"
                     )
                     self._record_denial(intent, reason, envelope)
@@ -635,12 +634,11 @@ class IntentLoop:
                 or normalized.executes_generated_code
                 or exfil_destination
             )
-            # Confidentiality SOUND FLOOR (TM4, 1.1b). Egress is denied while a
-            # secret read is outstanding — on the FACT of the read, NOT on whether
-            # THIS value's content derives as sensitive. This is the sound floor the
-            # density numbers justified: per-value confidentiality (driving_root.
-            # sensitive) is X1-leaky (a paraphrased secret evades content-matching),
-            # so the floor gates egress coarsely and is lifted only by governance
+            # Confidentiality SOUND FLOOR. Egress is denied while a secret read is
+            # outstanding — on the FACT of the read, NOT on whether THIS value's
+            # content derives as sensitive. Per-value confidentiality (driving_root.
+            # sensitive) is leaky (a paraphrased secret evades content-matching), so
+            # the floor gates egress coarsely and is lifted only by governance
             # endorsement of the secret. Sparse by construction — it fires only
             # after a sensitive read. The per-value sensitive check is subsumed
             # (value sensitive ⟹ a sensitive read happened ⟹ floor active).
@@ -671,17 +669,17 @@ class IntentLoop:
                     result=denial_resp.to_tool_result(),
                 )
 
-        # approved or transformed — but first consult the advisory adjudicator
-        # (TM3.4) on the PROJECTION only. We are on the would-approve path: every
-        # kernel hard gate has already passed, so the adjudicator can only TIGHTEN
-        # (deny), never override a hard deny. Memoized by π-hash: equal projection →
+        # approved or transformed — but first consult the advisory adjudicator on
+        # the PROJECTION only. We are on the would-approve path: every kernel hard
+        # gate has already passed, so the adjudicator can only TIGHTEN (deny), never
+        # override a hard deny. Memoized by projection hash: equal projection →
         # equal verdict.
         if self._adjudicator is not None and normalized is not None:
             projection = self._canonicalizer.canonicalize(normalized, tool_args)
             if not self._adjudicator.apply(projection, kernel_allowed=True):
                 reason = (
-                    f"adjudicator (TM3.4, advisory): denied '{tool_name}' on its "
-                    f"projection (π-hash {projection_hash(projection)})"
+                    f"adjudicator (advisory): denied '{tool_name}' on its "
+                    f"projection (hash {projection_hash(projection)})"
                 )
                 self._record_denial(intent, reason, envelope)
                 denial_resp = _make_denial_response(reason, "adjudicator")
@@ -715,7 +713,7 @@ class IntentLoop:
             result = await self._executor.execute(
                 effective_intent, envelope.capabilities
             )
-            # Register the tool output into the PER-VALUE ledger (TM2) so a later
+            # Register the tool output into the PER-VALUE ledger so a later
             # sink whose argument carries this content is gated at the value level.
             # No session-taint propagation — a read taints its produced *value*,
             # not the whole session.
@@ -1032,11 +1030,11 @@ class IntentLoop:
         )
 
     def _spawn_taint_reason(self, spawn_args: dict) -> str | None:
-        """Carrier/taint gate for spawn_child (NC2). The child's `task` is free text
-        the child interprets as instructions — spawn_child is an instruction-
-        following sink (it is in `_IMPERATIVE_SINKS`). A tainted FREE_TEXT task is
-        the imperative channel (TM1). The regular tool path applies exactly this
-        gate; the spawn branch dispatches before reaching it, so apply it here too.
+        """Carrier/taint gate for spawn_child. The child's `task` is free text the
+        child interprets as instructions — spawn_child is an instruction-following
+        sink (it is in `_IMPERATIVE_SINKS`). A tainted FREE_TEXT task is the
+        imperative channel. The regular tool path applies exactly this gate; the
+        spawn branch dispatches before reaching it, so apply it here too.
 
         Returns a denial reason, or None to allow. (Structured/sensitive values that
         are not the imperative channel stay gated at the child's own sinks: the
@@ -1047,7 +1045,7 @@ class IntentLoop:
         driving_root = self._taint_engine.derive_value(spawn_args)
         if driving_root.is_tainted and classify_carrier(spawn_args) == Carrier.FREE_TEXT:
             return (
-                "carrier gate (TM1): untrusted FREE_TEXT value into spawn_child — "
+                "carrier gate: untrusted FREE_TEXT value into spawn_child — "
                 "the child task is interpreted as instructions (imperative channel)"
             )
         return None
@@ -1075,7 +1073,7 @@ class IntentLoop:
         normalized: NormalizedIntent | None,
     ) -> None:
         """Register a tool's output content in the per-value ledger with the
-        causal_root its read introduces (TM2). Mirrors the session-taint triggers:
+        causal_root its read introduces. Mirrors the session-taint triggers:
         external/web reads → untrusted; secret/system reads → untrusted + sensitive.
         """
         if self._taint_engine is None:
@@ -1101,7 +1099,7 @@ class IntentLoop:
         envelope: ExecutionEnvelope,
         operation: str | None = None,
     ) -> str | None:
-        """Consequence axis gate (TM3.1). Return a denial reason if the sink's
+        """Consequence axis gate. Return a denial reason if the sink's
         action class exceeds the policy's unattended ceiling and no governance
         gate is present, else None. Content-blind: reads only the sink type and
         the operation enum (never argument content).
@@ -1125,7 +1123,7 @@ class IntentLoop:
             f"unattended ceiling {ceiling.name}; a governance/human gate is required"
         )
 
-    # ── Detection layer (TM7) — out-of-band from `allow` ────────────────────────
+    # ── Detection layer — out-of-band from the allow decision ───────────────────
 
     def _record_cancellation(self, envelope: ExecutionEnvelope) -> None:
         token = envelope.cancel_token
@@ -1207,12 +1205,12 @@ _IMPERATIVE_SINKS = frozenset({
     "reply", "email", "slack", "post", "notify",
 })
 
-# Sinks whose codomain is instruction-COMPLETE by definition: they interpret their
-# argument as a program / directive (a shell command, a child-agent task). These
-# can NEVER be lifted into the D_high positional partition — a positional gate would
-# either deny every legitimate call (their legit input IS free text) or, worse,
-# admit a closed-schema string the sink still executes. They stay in D_low with the
-# X1 residual acknowledged. Declaring one positional is a configuration error.
+# Sinks whose input space is instruction-COMPLETE by definition: they interpret
+# their argument as a program / directive (a shell command, a child-agent task).
+# These can NEVER be declared positional — a positional gate would either deny every
+# legitimate call (their legit input IS free text) or, worse, admit a closed-schema
+# string the sink still executes. They stay on the content-derivation path with the
+# paraphrase residual acknowledged. Declaring one positional is a configuration error.
 _INSTRUCTION_COMPLETE_SINKS = frozenset({
     "bash", "shell", "execute", "run", "exec", "execute_generated_code",
     "spawn_child", "eval", "python", "sh", "command", "system",
@@ -1222,8 +1220,8 @@ _INSTRUCTION_COMPLETE_SINKS = frozenset({
 def _is_imperative_sink(tool_name: str, normalized) -> bool:
     """Instruction-following sink: it would interpret its argument as a directive
     (spawn a sub-agent, send a message, execute generated code). The imperative
-    channel (TM1) — distinct from the risky-op list, which misses free-text-as-
-    directive (e.g. spawn_child(task=<free text>))."""
+    channel — distinct from the risky-op list, which misses free-text-as-directive
+    (e.g. spawn_child(task=<free text>))."""
     return (
         tool_name.lower() in _IMPERATIVE_SINKS
         or getattr(normalized, "executes_generated_code", False)

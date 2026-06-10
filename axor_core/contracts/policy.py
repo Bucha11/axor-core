@@ -185,8 +185,8 @@ class ExecutionPolicy:
     # child context — how much of parent context flows to children
     child_context_fraction: float = 0.0   # 0.0 = no inheritance, 1.0 = full
 
-    # consequence axis ceiling (TM3.1) — the most irreversible action class the
-    # operator permits *unattended* (without a governance/human gate). Default
+    # consequence ceiling — the most irreversible action class the operator
+    # permits *unattended* (without a governance/human gate). Default
     # CONSEQUENTIAL: only CATASTROPHIC sinks (shutdown, restart, …) are gated by
     # default. Lower it (e.g. REVERSIBLE) for a fail-closed deployment.
     max_unattended_consequence: ConsequenceClass = ConsequenceClass.CONSEQUENTIAL

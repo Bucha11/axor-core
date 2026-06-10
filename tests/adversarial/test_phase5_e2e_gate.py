@@ -1,9 +1,9 @@
-"""Phase 5 — cross-cutting END-TO-END adversarial gate.
+"""Cross-cutting end-to-end adversarial gate.
 
 These drive the full public stack (GovernedSession.run), not a single component, so
-they prove the WIRING holds end to end — every unit guarantee is reachable through
-the real entry point. Deep per-mechanism coverage lives in the other phase files;
-this is the headline-attack gate.
+they prove the wiring holds end to end — every unit-level guarantee is reachable
+through the real entry point. Deep per-mechanism coverage lives in the other test
+files; this is the headline-attack gate.
 """
 
 from __future__ import annotations
@@ -131,7 +131,7 @@ async def test_e2e_local_write_after_secret_still_allowed():
     assert "taint_enforcement" not in r.output
 
 
-# ── 2. X5 OpenClaw: power-state shell under trusted provenance → denied ───────
+# ── 2. Power-state shell command under trusted provenance → gated ─────────────
 
 @pytest.mark.asyncio
 async def test_e2e_openclaw_shutdown_is_gated():

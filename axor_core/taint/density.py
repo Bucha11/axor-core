@@ -1,13 +1,14 @@
-"""Density meter (TM3.3) — the make-or-break measurement for per-value taint.
+"""Density meter — the make-or-break measurement for per-value taint.
 
 Density = fraction of high-stakes sink firings that receive a *tainted projection*
-when they fire. The spec stakes half of Part II on this number:
+when they fire. This number decides whether per-value tracking is worth its
+complexity:
 
     ~5%  → per-value buys real separation over session-sticky taint.
     ~80% → "session-sticky renamed"; per-value degenerates and the dual-label /
-           causal_root machinery is not earning its place (TM3.3).
+           causal_root machinery is not earning its place.
 
-The meter measures TWO axes independently (the P-T / P-F split, TM2/TM3.1), because
+The meter measures TWO axes independently (integrity and confidentiality), because
 the taint-explosion risk is asymmetric:
 
     integrity      — set by ANY external read; the data-dependent-action workload
@@ -104,7 +105,7 @@ class DensityReport:
             return out
 
         lines = [
-            "=== Density (TM3.3) — per-value vs session-sticky ===",
+            "=== Density — per-value vs session-sticky ===",
             f"high-stakes firings        : {self.high_stakes_firings}",
             "",
             *axis_lines("integrity     ", self.integrity),

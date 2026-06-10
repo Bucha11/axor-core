@@ -52,7 +52,7 @@ class TraceEventKind(str, Enum):
     # cancellation
     CANCELLED = "cancelled"
 
-    # ── Added in 0.5.0: adapter observability ─────────────────────────────────
+    # ── Adapter observability ─────────────────────────────────────────────────
     # Emitted by adapters that support prefix-caching (e.g. axor-openrouter).
     CACHE_HIT = "cache_hit"  # tokens served from cache
     CACHE_MISS = "cache_miss"  # cache miss — full prompt processed
@@ -73,15 +73,15 @@ class TraceEventKind(str, Enum):
     DEGRADATION_TRANSITION = "degradation_transition"
     SOURCE_QUARANTINED = "source_quarantined"
 
-    # ── Density (TM3.3) ────────────────────────────────────────────────────────
+    # ── Density ──────────────────────────────────────────────────────────────
     # Emitted per high-stakes sink firing: did the driving value carry taint?
-    # Aggregated into the per-value density metric (the make-or-break number).
+    # Aggregated into the per-value density metric.
     SINK_DENSITY = "sink_density"
 
-    # ── Detection-register events (TM7) ───────────────────────────────────────
+    # ── Detection-register events ─────────────────────────────────────────────
     # Emitted by the detection layer (reputation / anomaly). Detection NEVER
-    # gates `allow` directly (would break T1); it records telemetry and may feed
-    # degradation as a tightening-only crossing-fact (TM7.1).
+    # gates `allow` directly; it records telemetry and may feed degradation as a
+    # tightening-only threshold-crossing fact.
     DETECTION_SIGNAL = "detection_signal"
 
 
@@ -158,7 +158,7 @@ class SuspiciousIntentEvent(TraceEvent):
     """
     Emitted when an intent scores SUSPICIOUS or CRITICAL.
 
-    SUSPICIOUS: intent was allowed but flagged.ss
+    SUSPICIOUS: intent was allowed but flagged.
     CRITICAL:   intent was denied by the anomaly detector.
     """
 
@@ -192,7 +192,7 @@ class EscalationGrantedEvent(TraceEvent):
     auto_approved: bool = True
 
 
-# ── New in 0.5.0: adapter observability events ─────────────────────────────────
+# ── Adapter observability events ───────────────────────────────────────────────
 
 
 @dataclass(frozen=True)
@@ -293,8 +293,8 @@ class SourceQuarantinedEvent(TraceEvent):
 @dataclass(frozen=True)
 class SinkDensityEvent(TraceEvent):
     """Emitted when a high-stakes sink fires — records, per axis, whether the
-    driving value (per-value model) and the session (session-sticky shadow) were
-    tainted (TM3.3). Aggregated into per-value vs session-sticky density.
+    driving value (tracked per value) and the session (the session-sticky
+    shadow) were tainted. Aggregated into per-value vs session-sticky density.
 
     `tainted` is the per-value INTEGRITY label (kept as the primary field name for
     back-compat); `sensitive` is the per-value CONFIDENTIALITY label. The
@@ -312,10 +312,11 @@ class SinkDensityEvent(TraceEvent):
 class DetectionSignalEvent(TraceEvent):
     """Emitted by the detection layer (reputation / anomaly).
 
-    Detection is out-of-band from `allow` (TM7): it never returns a decision.
-    A "crossing" verdict is a decidable threshold-crossing fact that may feed
-    degradation tightening-only (TM7.1); a "flagged"/"error" verdict is telemetry
-    only. `fed_degradation` records whether this signal tightened degradation.
+    Detection is out-of-band from the allow/deny decision: it never returns a
+    decision itself. A "crossing" verdict is a decidable threshold-crossing fact
+    that may feed degradation in the tightening direction only; a "flagged" or
+    "error" verdict is telemetry only. `fed_degradation` records whether this
+    signal tightened degradation.
     """
     detector: str = ""        # "reputation" | "anomaly"
     verdict: str = ""         # "crossing" | "flagged" | "error"

@@ -1,11 +1,13 @@
-"""Federation (TM4.2) — provenance across authenticated peers.
+"""Federation — provenance across authenticated peers.
+
+Two levels govern a value arriving from another peer:
 
 L1 — any value crossing a process/peer boundary is re-minted untrusted (the safe
      default; no trust in the peer's labels).
-L2 — a value from an AUTHENTICATED peer in a FEDERATED domain running a COMPATIBLE
-     kernel, carrying a VALID provenance RECEIPT, has its provenance RESTORED (we
-     trust the peer's labels instead of re-minting). A forged/tampered receipt is
-     DENIED; an incompatible kernel or non-federated domain DEGRADES to L1.
+L2 — a value from an authenticated peer in a federated domain running a compatible
+     kernel, carrying a valid provenance receipt, has its provenance restored (we
+     trust the peer's labels instead of re-minting). A forged or tampered receipt is
+     denied; an incompatible kernel or non-federated domain degrades to L1.
 """
 
 from axor_core.federation.receipt import (

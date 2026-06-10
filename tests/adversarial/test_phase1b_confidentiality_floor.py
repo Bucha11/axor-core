@@ -1,15 +1,16 @@
-"""Phase 1.1b — confidentiality SOUND FLOOR (TM4).
+"""Confidentiality egress floor.
 
-Per-value confidentiality (content-matching) is X1-leaky: a paraphrased / re-encoded
-secret evades the ledger. The density numbers confirmed it catches under half of
-what a session floor does. So egress rides a SOUND FLOOR: once a sensitive source
-is read, the session is egress-restricted on the FACT of the read — independent of
-the egress value's content — and released only by governance endorsement. Sparse by
-construction (fires only after a sensitive read).
+Matching egress values against the content of a known secret is leaky: a
+paraphrased or re-encoded secret slips past a content ledger. So egress instead
+rides a floor keyed on the fact of the read: once a sensitive source is read, the
+session is egress-restricted regardless of the egress value's content, and the
+restriction lifts only on governance endorsement. The floor is sparse — it fires
+only after a sensitive read.
 
-These pin: the sound win (clean payload still denied after a secret read), sparsity
-(no false floor without a secret read), short-secret soundness (NM1), endorsement
-release, child inheritance, and that non-egress sinks keep the per-value precision.
+These tests check: a clean payload is still denied after a secret read; no floor
+without a secret read; a secret too short to leave a content fragment still trips
+the floor on the read fact; endorsement lifts it; children inherit it; and
+non-egress sinks (local writes) keep their per-value precision.
 """
 
 from __future__ import annotations
@@ -92,8 +93,8 @@ def _read_secret(eng: TaintEngine, secret: str = SECRET):
 
 @pytest.mark.asyncio
 async def test_floor_denies_clean_egress_after_secret_read():
-    # THE sound win: a payload carrying no trace of the secret is still denied,
-    # because a paraphrased secret could — the floor gates on the read, not content.
+    # A payload carrying no trace of the secret is still denied: a paraphrased
+    # secret would look just as clean, so the floor gates on the read, not content.
     eng = TaintEngine()
     _read_secret(eng)
     loop = IntentLoop(capability_executor=_executor(), trace_events=[], taint_engine=eng)
@@ -104,8 +105,8 @@ async def test_floor_denies_clean_egress_after_secret_read():
 
 @pytest.mark.asyncio
 async def test_floor_is_sparse_no_secret_no_restriction():
-    # Sparsity: without a sensitive read, egress of clean data is allowed — the
-    # floor never fires spuriously.
+    # Without a sensitive read, egress of clean data is allowed — the floor never
+    # fires spuriously.
     eng = TaintEngine()
     loop = IntentLoop(capability_executor=_executor(), trace_events=[], taint_engine=eng)
     r = await _resolve(loop, _env(), "fetch", {"url": "http://example.com/clean"})
@@ -114,8 +115,8 @@ async def test_floor_is_sparse_no_secret_no_restriction():
 
 @pytest.mark.asyncio
 async def test_floor_blocks_paraphrased_secret():
-    # X1 case the floor closes: the egress value is a re-encoding the content ledger
-    # does NOT match, yet egress is denied because the floor is read-fact based.
+    # The egress value is a re-encoding the content ledger does NOT match, yet
+    # egress is denied because the floor is based on the read fact.
     eng = TaintEngine()
     _read_secret(eng)
     loop = IntentLoop(capability_executor=_executor(), trace_events=[], taint_engine=eng)
@@ -127,8 +128,8 @@ async def test_floor_blocks_paraphrased_secret():
 
 @pytest.mark.asyncio
 async def test_short_secret_still_activates_floor():
-    # NM1: a secret shorter than the ledger's minimum fragment stores no fragment,
-    # but the floor activates on the READ fact, so egress is still denied.
+    # A secret shorter than the ledger's minimum fragment stores no fragment, but
+    # the floor activates on the READ fact, so egress is still denied.
     eng = TaintEngine()
     _read_secret(eng, secret="x9")          # too short to segment
     assert eng.confidentiality_floor_active() is True
@@ -161,8 +162,8 @@ async def test_endorsing_one_of_two_secrets_keeps_floor():
 
 @pytest.mark.asyncio
 async def test_non_egress_sink_unaffected_by_floor():
-    # The floor is egress-only: a local write after a secret read is still allowed
-    # (per-value integrity precision is preserved; the floor is confidentiality/egress).
+    # The floor is egress-only: a local write after a secret read is still allowed,
+    # preserving per-value integrity precision on non-egress sinks.
     eng = TaintEngine()
     _read_secret(eng)
     loop = IntentLoop(capability_executor=_executor(), trace_events=[], taint_engine=eng)
@@ -175,8 +176,8 @@ def test_child_inherits_confidentiality_floor():
     _read_secret(parent)
     child = TaintEngine(node_id="child")
     child.inherit_value_ledger(parent)
-    # A child of a secret-reading session must be egress-restricted too, else it is
-    # a floor bypass.
+    # A child of a secret-reading session must be egress-restricted too, otherwise
+    # the floor could be bypassed by spawning a child.
     assert child.confidentiality_floor_active() is True
 
 

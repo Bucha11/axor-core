@@ -1,8 +1,8 @@
 """
-Adversarial tests: schema injection — Step 24.
+Adversarial tests: schema injection.
 
 Confirms that IntentCanonicalizer strips all raw content before the
-CanonicalizedIntent reaches the LLMVerifier prompt.
+CanonicalizedIntent reaches the verifier prompt.
 
 Five injection variants:
   1. Newline in path

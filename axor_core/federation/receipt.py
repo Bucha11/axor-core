@@ -1,4 +1,4 @@
-"""Provenance receipts for federation (TM4.2).
+"""Provenance receipts for federation.
 
 A receipt is a peer's signed attestation of a value's causal_root: "I, peer P
 running kernel version V, assert that this value (by content hash) has provenance
