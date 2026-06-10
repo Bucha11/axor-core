@@ -14,24 +14,26 @@ axor-core governs.
 1. Agent emits tool call or privileged intent
 2. Provider adapter accumulates full raw tool call (if streamed)
 3. ProviderNormalizer     →  NormalizedIntent
-4. IntentCanonicalizer    →  CanonicalizedIntent  (Layer 3 only)
+4. IntentCanonicalizer    →  CanonicalizedIntent (the content-free projection an
+                             advisory adjudicator / detection layer sees)
 5. DegradationEngine.apply_to_policy()  →  effective policy for this call
-   (narrows ExecutionPolicy if session level is RESTRICTED/LOCKED/TERMINAL)
-6. ToolInterceptor (IntentLoop) evaluates:
-     Layer 1: rule-based policy  →  DENY | APPROVE | ASK_HUMAN
-     Layer 2: ML anomaly detect  →  NORMAL | SUSPICIOUS | CRITICAL
-     Layer 3: LLM verifier       →  gray-zone verification
+   (narrows ExecutionPolicy if the session level is RESTRICTED/LOCKED/TERMINAL)
+6. IntentLoop runs the structural gates, in order — a deny at any gate is final:
+     capability → consequence → value policies → degradation → positional →
+     carrier → per-value taint (integrity) + confidentiality floor → adjudicator
 7. DegradationEngine.record_signal(denial_or_none) → state updated for next intent
    (emits DegradationTransitionEvent / SourceQuarantinedEvent if level changed)
-8. If allowed → executor runs underlying tool
-9. If denied  → executor receives coarse DenialResponse
+8. If allowed → executor runs the underlying tool; its output's provenance is
+   registered (federation ingress decides the provenance of a peer-returned value)
+9. If denied  → executor receives a coarse DenialResponse
 10. DecisionTrace written out-of-band (operator channel only)
 ```
 
-Layers 2 and 3 run only if Layer 1 returns APPROVE.
-No ML or LLM output can override a Layer 1 hard deny.
-Step 5 (degradation pre-check) runs before Layer 1 — a quarantined or locked session
-denies the tool before the policy cascade starts.
+A deny at any gate is final; nothing downstream loosens it. The optional advisory
+adjudicator is consulted only on the would-approve path, so it can add a deny but
+never override one. Detection (reputation, drift) is observe-only and is not on this
+path; it may, opt-in, only tighten degradation. Step 5 (degradation pre-check) runs
+first — a quarantined or locked session denies the tool before the gates start.
 
 ---
 
@@ -43,8 +45,7 @@ denies the tool before the policy cascade starts.
 AnthropicClient.stream()
   → StreamNormalizer.process(sdk_event)    # accumulate partial chunks
   → ClaudeNormalizer.normalize()           # ToolUseBlock → NormalizedIntent
-  → IntentLoop._evaluate_tool_intent()     # Layer 1 policy
-  → anomaly_detector.score()              # Layer 2 ML (if configured)
+  → IntentLoop._resolve_tool_intent()      # the structural gate sequence
   → CapabilityExecutor.execute()          # if approved
   → ToolResultBus.push(result)            # tool result back to executor
 ```
@@ -100,7 +101,7 @@ User types tool invocation
 
 - Accept `ExecutorEvent(TOOL_USE)` from the executor stream
 - Convert to `Intent` via `IntentNormalizer`
-- Evaluate against `ExecutionPolicy` (Layer 1)
+- Evaluate against `ExecutionPolicy` (the structural gates)
 - Run anomaly detection (Layer 2) if configured
 - Run LLM verifier (Layer 3) if anomaly score is in gray zone
 - Apply per-value taint rules (`TaintEngine.register_value()` on external reads; `derive_value()` at sinks)
