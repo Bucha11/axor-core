@@ -1,8 +1,8 @@
 """
-Fail-closed tests — Step 28 (§5.3).
+Fail-closed tests.
 
-Verifies that execution is denied or session is terminated for all
-§5.3 required failure scenarios:
+Verifies that execution is denied or the session is terminated for each
+failure scenario:
 
   1. Interceptor exception → deny
   2. Normalizer exception → deny
@@ -117,8 +117,8 @@ def test_fail_closed_budget_tracker_subscriber_exception_does_not_break():
     """
     A subscriber that raises during record() must not break the record() call.
 
-    BudgetTracker is fail-open for subscriber errors (per-spec: telemetry
-    failure does not bypass execution), but record() itself must succeed.
+    BudgetTracker is fail-open for subscriber errors (a telemetry failure
+    must not bypass execution), but record() itself must succeed.
     """
     from axor_core.budget.tracker import BudgetTracker
 

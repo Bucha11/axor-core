@@ -1,4 +1,4 @@
-"""TM2 constructor semantics for the per-value CausalRoot shadow model."""
+"""Constructor semantics for the per-value CausalRoot provenance model."""
 
 from __future__ import annotations
 
@@ -50,7 +50,8 @@ def test_parse_is_passthrough():
 
 
 def test_cross_process_in_remints_untrusted_nonsensitive():
-    # TM4.1: re-mint to maximal integrity taint, explicitly non-sensitive.
+    # A value crossing a process boundary is re-minted to maximal integrity
+    # taint, explicitly non-sensitive.
     r = CausalRoot.cross_process_in()
     assert r.is_tainted
     assert r.sensitive is False
@@ -58,6 +59,7 @@ def test_cross_process_in_remints_untrusted_nonsensitive():
 
 
 def test_causal_root_is_hashable_and_frozen():
-    # K3.5 wants projections finite/hashable (TM3.4 memoization).
+    # Roots must be finite and hashable so they can be used as dict/set keys
+    # (e.g. for memoization).
     r = CausalRoot.external_read(TaintSource.WEB)
     assert len({r, r}) == 1

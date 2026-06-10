@@ -1,11 +1,6 @@
-"""The four previously-unconnected in-process features:
-carrier/imperative gate (TM1), endorsement (TM4), live density (TM3.3),
-value-policy predicates (TM3.1).
-
-NOTE: committed as a checkpoint on the 7a5ab03 base after an environment reset
-lost the later cleanup commits (drop-ML, session-taint removal, ValueProvenance,
-profiles, children). These features are correct and independent; they will be
-re-based onto the cleaned architecture during recovery.
+"""Four in-process governance features exercised end to end:
+the carrier/imperative gate, per-value endorsement, the live density metric,
+and value-policy predicates.
 """
 
 from __future__ import annotations
@@ -18,7 +13,7 @@ from axor_core.taint.causal_root import CausalRoot
 from axor_core.taint.engine import TaintEngine
 
 
-# ── value-policy predicates (TM3.1) ──────────────────────────────────────────
+# ── value-policy predicates ──────────────────────────────────────────────────
 
 def test_value_policy_numeric_range_and_enum():
     from axor_core.policy.value_policy import numeric_range, enum, check_value_policies
@@ -36,7 +31,7 @@ def test_value_policy_numeric_range_and_enum():
     assert check_value_policies("other", {"amount": 9}, pols) is None
 
 
-# ── endorsement (TM4) — governed per-value release ───────────────────────────
+# ── endorsement — governed per-value release ─────────────────────────────────
 
 SECRET = "SECRET_TOKEN_abcdef123456"
 
@@ -69,7 +64,7 @@ def test_endorse_is_per_value_not_whole_ledger():
     assert eng.derive_value(other).is_tainted is True     # untouched
 
 
-# ── live density metric (TM3.3) ──────────────────────────────────────────────
+# ── live density metric ──────────────────────────────────────────────────────
 
 def test_density_metric_from_sink_events():
     from axor_core.contracts.trace import SinkDensityEvent, TraceEventKind

@@ -1,18 +1,15 @@
 """
-Adversarial tests: federation lateral movement — Step 25.
+Adversarial tests for federation lateral movement.
 
 A multi-agent federation must preserve taint and policy ceilings across
-parent→child boundaries.  An adversary cannot use a child to escape taint
+parent->child boundaries.  An adversary cannot use a child to escape taint
 that was present in the parent, or to claim capabilities the parent lacks.
 
-Four variants:
-  1. Tainted parent → child inherits taint (cannot escape via spawning)
-  2. Clean parent → tainted child is not gifted extra capabilities
+Covered scenarios:
+  1. Tainted parent -> child inherits taint (cannot escape via spawning)
+  2. Clean parent -> tainted child is not gifted extra capabilities
   3. Isolated child cannot clear inherited taint via worker path
   4. Child export back to parent is bounded by parent's export_mode ceiling
-
-Reverse-verify: removing per-value ledger inheritance (inherit_value_ledger)
-breaks variant 1 and 3; removing _validate_child_policy breaks variant 4.
 """
 from __future__ import annotations
 

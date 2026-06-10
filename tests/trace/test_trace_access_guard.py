@@ -1,5 +1,5 @@
 """
-Tests for DecisionTrace access guard — Step 21.
+Tests for the DecisionTrace access guard.
 
 (1) collector.read_all() without token raises PermissionError
 (2) collector.operator_read(valid_token) returns full trace

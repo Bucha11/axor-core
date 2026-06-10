@@ -1,5 +1,5 @@
 """
-Adversarial tests: miscellaneous adversarial scenarios — Step 27.
+Miscellaneous adversarial scenarios.
 
 Six adversarial scenarios not covered by the dedicated test files:
   1. Worker self-taint-clear → TaintClearanceError

@@ -1,16 +1,13 @@
 """
-Adversarial tests: lease ceiling — Step 26.
+Adversarial tests for the capability-lease ceiling.
 
-CapabilityLease cannot grant capabilities that exceed the parent policy ceiling,
-and cannot bypass TTL or max-use limits.
+A CapabilityLease cannot grant capabilities that exceed the parent policy
+ceiling, and cannot bypass TTL or max-use limits.
 
-Three variants:
+Covered scenarios:
   1. Tool expansion — lease claiming tools outside parent policy is rejected
   2. Path expansion — lease cannot authorize paths the parent restricts
   3. TTL/max-use bypass — expired or exhausted lease is treated as no-lease
-
-Reverse-verify: removing LeaseValidator.validate_against_policy_ceiling breaks
-variant 1; removing is_valid check breaks variants 2 and 3.
 """
 from __future__ import annotations
 

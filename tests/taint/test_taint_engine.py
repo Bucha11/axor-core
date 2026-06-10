@@ -1,8 +1,8 @@
-"""TaintEngine — per-value provenance (TM2 / ValueProvenance) + governance release.
+"""TaintEngine — per-value provenance plus governance release.
 
-Session-taint state was removed (dead in enforcement); the engine is per-value:
-register a value's causal_root, derive it at a sink, release by governance
-(endorse one value, or clear all).
+The engine is purely per-value: register a value's causal_root, derive it at a
+sink, and release it by governance (endorse a single value, or clear all). There
+is no session-wide taint flag.
 """
 from __future__ import annotations
 

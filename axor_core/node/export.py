@@ -45,7 +45,7 @@ class ExportFilter:
                 }
                 # The output string only leaves the node when "output" is an
                 # explicitly allowed field — otherwise it is suppressed. Falling
-                # back to raw_output here would leak unfiltered content (M-4).
+                # back to raw_output here would leak unfiltered content.
                 if "output" in contract.allowed_fields:
                     output = export_payload.get("output", raw_output)
                     if contract.max_export_tokens:

@@ -1,4 +1,4 @@
-"""probe behavioral-drift observer — v4.12: probe is a WATCHER (non-enforcing)."""
+"""Behavioral-drift observer: it is a passive WATCHER (non-enforcing)."""
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock

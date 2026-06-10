@@ -1,5 +1,5 @@
 """
-Tests for ExecutionMode STRICT enforcement — Step 29.
+Tests for ExecutionMode STRICT enforcement.
 
 STRICT mode is a superset of PRODUCTION mode.  These tests confirm that each
 STRICT-only restriction is active and that PRODUCTION mode does NOT apply them.

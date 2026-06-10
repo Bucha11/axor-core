@@ -1,7 +1,7 @@
 """
-Tests for DenialResponse — Step 20.
+Tests for DenialResponse.
 
-Worker receives only: status, coarse_category, opaque_decision_id.
+A worker receives only: status, coarse_category, opaque_decision_id.
 No raw reason, layer scores, thresholds, trigger features, or taint history.
 """
 from __future__ import annotations

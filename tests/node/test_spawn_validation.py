@@ -1,5 +1,5 @@
 """
-Tests for ChildSpawner spawn validation hardening — Step 18.
+Tests for ChildSpawner spawn validation hardening.
 
 Each validation failure must raise SpawnValidationError (not AssertionError).
 Validation must work even with python -O (no assert removal).

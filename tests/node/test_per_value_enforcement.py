@@ -1,10 +1,10 @@
-"""End-to-end per-value taint enforcement (TM2).
+"""End-to-end per-value taint enforcement.
 
-The session-sticky gate is the sound floor: once a session is tainted it denies
-all risky ops coarsely. The per-value gate adds *precision* where the floor does
-NOT fire — a clean / governance-cleared session in which a specific value still
-carries registered tainted/sensitive content. That is the per-value contribution
-session-sticky cannot make, realised soundly (deny-direction only).
+A session-sticky gate is the coarse floor: once a session is tainted it denies
+all risky ops. The per-value gate adds *precision* where that floor does NOT
+fire — a clean (or governance-cleared) session in which a specific value still
+carries registered tainted/sensitive content. That is the contribution a
+session-wide flag cannot make, and it only ever adds denials (never allows more).
 """
 
 from __future__ import annotations

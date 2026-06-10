@@ -1,9 +1,7 @@
-"""Phase 5 building blocks: carrier lattice (TM1, T0) + dual labels (TM2).
+"""Trust-model building blocks: the carrier lattice and the dual taint labels.
 
-These are the replaceable trust-model pieces the spec's X4 lists. Per-value
-*enforcement* (threading causal_root/carrier through the executor's data flow)
-is the remaining work and is deferred; here we add and test the deterministic
-classifier and the confidentiality label.
+Covers the deterministic carrier classifier and the per-value
+confidentiality label.
 """
 
 from __future__ import annotations
@@ -14,7 +12,7 @@ from axor_core.taint.causal_root import CausalRoot
 from axor_core.taint.engine import TaintEngine
 
 
-# ── carrier classifier (T0 — deterministic / structural, never a model) ──────────
+# ── carrier classifier (deterministic / structural, never a model) ───────────────
 
 def test_scalars_are_endorsed():
     for v in [1, 3.14, True, None, 0]:
@@ -32,8 +30,8 @@ def test_closed_schema_of_identifiers():
 
 
 def test_schema_with_freetext_value_is_freetext():
-    # The string-subfield-still-injectable class (Firewalls / Invariant Labs):
-    # a closed schema whose string value is free text is FREE_TEXT, not safe.
+    # A closed schema whose string value is free text is itself FREE_TEXT, not
+    # safe: structural framing does not sanitize an injectable string subfield.
     assert classify_carrier({"cmd": "rm -rf / # do it now"}) == Carrier.FREE_TEXT
 
 
@@ -47,8 +45,8 @@ def test_unknown_type_fails_closed():
     assert classify_carrier(object()) == Carrier.FREE_TEXT
 
 
-def test_classifier_is_deterministic_T0():
-    # T0: same input -> same output, every time; no model, no randomness.
+def test_classifier_is_deterministic():
+    # Same input -> same output, every time; no model, no randomness.
     samples = [1, "free text here", {"a": "id"}, {"a": "free text"}, '{"x": 1}', None, [1, 2, "x"]]
     first = [classify_carrier(s) for s in samples]
     for _ in range(20):
@@ -61,7 +59,7 @@ def test_carrier_join_is_lub():
     assert carrier_join(Carrier.CLOSED_SCHEMA, Carrier.CLOSED_SCHEMA) == Carrier.CLOSED_SCHEMA
 
 
-# ── dual labels: sensitivity (confidentiality) is PER-VALUE on CausalRoot (TM2) ──
+# ── dual labels: sensitivity (confidentiality) is PER-VALUE on CausalRoot ────────
 
 def test_causal_root_sensitivity_label():
     assert CausalRoot.external_read(TaintSource.WEB).sensitive is False

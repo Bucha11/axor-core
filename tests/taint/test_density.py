@@ -1,4 +1,4 @@
-"""DensityMeter math, per-axis split, and honest (non-masking) recording (TM3.3)."""
+"""DensityMeter math, per-axis split, and honest (non-masking) recording."""
 
 from __future__ import annotations
 
@@ -45,8 +45,8 @@ def test_confidentiality_axis_is_independent():
 
 
 def test_violation_is_counted_not_masked():
-    # value tainted but session not — a measurement/shadow bug. The meter must
-    # record it as a violation, NOT silently rewrite session to True (NM8).
+    # value tainted but session not — a measurement bug. The meter must record
+    # it as a violation, NOT silently rewrite session to True.
     m = DensityMeter()
     m.record("execute_generated_code", session_tainted=False, value_tainted=True)
     r = m.report()

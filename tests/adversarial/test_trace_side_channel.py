@@ -1,16 +1,11 @@
 """
-Adversarial tests: trace side channel — Step 26.
+Adversarial tests for trace side channels.
 
 Worker code must never be able to recover sensitive trace details:
   1. Direct: read_all() always raises PermissionError
   2. Indirect: ExecutionEnvelope contains no TraceCollector reference
   3. Denial-reason probing: DenialResponse exposes only coarse_category — no
      raw reasons, scores, or taint history
-
-Reverse-verify:
-  - Removing TraceAccessGuard (read_all always allowed) breaks variant 1.
-  - Adding a TraceCollector reference to ExecutionEnvelope breaks variant 2.
-  - Exposing raw reason in DenialResponse breaks variant 3.
 """
 from __future__ import annotations
 

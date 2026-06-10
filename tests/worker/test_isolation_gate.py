@@ -1,4 +1,4 @@
-"""Phase 1: process-isolation gate for untrusted agents in PRODUCTION/STRICT."""
+"""Process-isolation gate for untrusted agents in PRODUCTION/STRICT modes."""
 
 from __future__ import annotations
 

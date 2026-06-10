@@ -1,5 +1,5 @@
-"""Per-value provenance crosses the parent→child spawn boundary (v4.12):
-the value-ledger is inherited, the session-taint flag is NOT."""
+"""Per-value provenance crosses the parent->child spawn boundary: the
+value-ledger is inherited, while any session-wide taint flag is NOT."""
 
 from __future__ import annotations
 

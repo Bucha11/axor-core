@@ -1,4 +1,4 @@
-"""ValueTaintLedger — content-derivation per-value provenance (TM2)."""
+"""ValueTaintLedger — per-value provenance derived from content matching."""
 
 from __future__ import annotations
 
