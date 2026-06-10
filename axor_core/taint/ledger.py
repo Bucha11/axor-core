@@ -25,6 +25,9 @@ from axor_core.taint.causal_root import CausalRoot
 # Minimum length of a distinctive fragment to track. Shorter → catches more
 # (safe direction: over-deny) but more coincidental matches; this is a heuristic.
 _MIN_SEGMENT = 12
+# Punctuation stripped from the ENDS of a whitespace token (never the middle) so a
+# source-side "x@y.z." or "'x@y.z'" still matches the clean "x@y.z" a sink extracts.
+_EDGE_PUNCT = ".,;:!?'\"`()[]{}<>«»…|*"
 # Bounds so a huge read cannot blow up memory / match cost.
 _MAX_SEGMENTS_PER_REGISTER = 256
 _MAX_TOTAL_SEGMENTS = 20000
@@ -123,6 +126,15 @@ class ValueTaintLedger:
         for tok in re.split(r"\s+", s):
             if len(tok) >= _MIN_SEGMENT:
                 segs.add(tok)
+            # Also emit the token with surrounding punctuation stripped. A source
+            # writes an attacker identifier adjacent to punctuation ("Relay: x@y.z."
+            # or "'x@y.z'"), but the model extracts the clean token into the sink
+            # argument ("x@y.z"). Whitespace-only tokenisation would keep the
+            # trailing "." / quote and miss the substring match. Stripping only the
+            # ENDS preserves internal punctuation (an email's dots, an IBAN, a URL).
+            stripped = tok.strip(_EDGE_PUNCT)
+            if stripped != tok and len(stripped) >= _MIN_SEGMENT:
+                segs.add(stripped)
         return list(segs)
 
     @staticmethod
