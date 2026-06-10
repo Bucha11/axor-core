@@ -1,12 +1,11 @@
-"""Per-value causal_root — shadow model for the v4.12 density experiment (Phase 0).
+"""Per-value causal_root — the per-value provenance object the kernel decides on.
 
-This is the *per-value* provenance object the spec's TM2 defines, kept deliberately
-separate from the session-scoped ``TaintEngine`` (``taint/engine.py``). It is
-**observe-only**: nothing here is wired into ``allow`` / ``IntentLoop``, so it
-cannot change a single governance decision. Its only purpose in Phase 0 is to let
-us *measure* what density (TM3.3) would be under per-value tracking, so we can
-compare it against the current session-sticky behaviour and decide whether
-per-value buys anything (the make-or-break number, §0.0 / TM3.3).
+This is the *per-value* provenance object the spec's TM2 defines. It is now the
+ENFORCEMENT object: ``ValueProvenance.derive_value`` returns a ``CausalRoot`` for a
+sink's driving argument, and the per-value gate (``IntentLoop``) denies on its
+labels (integrity ``is_tainted`` / confidentiality ``sensitive``). The density
+meter (TM3.3) still reads the same object observe-only to measure per-value vs
+session-sticky separation, but the object itself is load-bearing in ``allow``.
 
 Semantics follow TM2 exactly:
 

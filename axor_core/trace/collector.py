@@ -336,9 +336,16 @@ class TraceCollector:
         if not self._config.training_opt_in:
             return None
 
-        trace = self.get_trace(node_id)
-        if not trace:
-            return None
+        # Snapshot the trace state under the lock — get_trace returns the LIVE
+        # DecisionTrace, and iterating its events outside the lock races with a
+        # concurrent record(). Read self._traces directly here (get_trace also
+        # acquires self._lock, which is non-reentrant) and copy what we need.
+        with self._lock:
+            trace = self._traces.get(node_id)
+            if not trace:
+                return None
+            events = list(trace.events)
+            policy_adjusted = trace.had_policy_adjustment
 
         return AnonymizedTraceRecord(
             input_embedding=input_embedding,
@@ -348,10 +355,10 @@ class TraceCollector:
             confidence=confidence,
             tokens_spent=sum(
                 (e.input_tokens + e.output_tokens)
-                for e in trace.events
+                for e in events
                 if isinstance(e, TokensSpentEvent)
             ),
-            policy_adjusted=trace.had_policy_adjustment,
+            policy_adjusted=policy_adjusted,
         )
 
 

@@ -1,5 +1,51 @@
 # Changelog
 
+## 0.8.0 — 2026-06-10
+
+The v4.12 governance pass — per-value provenance becomes the enforcement spine, with
+a stratified soundness story across the integrity and confidentiality axes.
+
+### Added
+
+- **Per-value enforcement (TM2).** Sinks decide on the driving argument's own
+  `CausalRoot` via the `ValueProvenance` contract, not a session-wide flag. The
+  content-derivation `ValueTaintLedger` is refcounted (no endorsement over-release)
+  and fails closed on flood saturation (no silent fragment drop).
+- **Confidentiality sound floor (TM4, 1.1b).** Egress is gated on the *fact* of a
+  sensitive read, independent of the egress value's content (paraphrase-proof);
+  released only by governance endorsement.
+- **D_high positional admission (Corollary / 1.1c).** Operator-declared
+  instruction-incomplete sinks admit only via a positional carrier check
+  (content-independent), closing the O2/paraphrase gap on that partition. Exec-class
+  sinks cannot be lifted (lift ban).
+- **Consequence axis (TM3.1) wired through the gate**, incl. power-state shell
+  command detection (X5 OpenClaw).
+- **Thm. 0 decidability classifier** (`kernel/decidability.py`) wired into value-policy
+  registration; K5/T4 fuzz-floor for the path and carrier classifiers.
+- **Persistence / cross-process re-mint (TM3.2 / TM4.1):** memory read-back and a
+  child's returned output are re-minted untrusted.
+- **Advisory adjudicator (TM3.4):** projection-only, memoized by π-hash,
+  tightening-only.
+- **Opt-in detection→degradation (TM7.1):** a decidable reputation
+  threshold-crossing may tighten degradation; per-tenant isolated.
+- **Federation L1/L2 (TM4.2):** authenticated peers with HMAC provenance receipts;
+  L2 restores provenance, incompatible kernels/domains degrade to L1, forged
+  receipts are denied.
+
+### Fixed
+
+- SSRF host classification across all obfuscated notations; extension-override and
+  deployment-overlay escalations; spawn taint gate; degradation clearance now resets
+  quarantine; budget `register_node` wiring and `restrict_export` enforcement;
+  carrier classifier no longer admits paths/URLs/`Infinity`/`NaN`; null-byte paths
+  fail closed; sanitizer reserved-prefix match is case-insensitive; symbol
+  deprecation match is whole-word.
+
+### Known gaps
+
+- **X1** in-process-LLM implicit flow on the D_low integrity partition remains open
+  (documented as strict `xfail`); closed only by a CaMeL trust-model backend.
+
 ## 0.5.0 — 2026-05-25
 
 ### Added

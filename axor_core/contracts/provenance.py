@@ -28,3 +28,10 @@ class ValueProvenance(Protocol):
     def derive_value(self, value: object) -> CausalRoot:
         """Per-value causal_root of `value` (constant/clean if untainted)."""
         ...
+
+    def inherit_value_ledger(self, parent: "ValueProvenance") -> None:
+        """Fold a parent's per-value provenance into this (child) backend so the
+        child's gate sees values the parent marked tainted/sensitive (the spawn
+        boundary). A trust-model backend must support child inheritance; how it
+        folds the state is the backend's business."""
+        ...

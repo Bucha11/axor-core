@@ -27,6 +27,7 @@ class _FakeTrustModel:
     def derive_value(self, value):
         return (CausalRoot.external_read(TaintSource.WEB)
                 if any(f in str(value) for f in self._flagged) else CausalRoot.constant())
+    def inherit_value_ledger(self, parent): pass   # contract: backends support inheritance
 
 
 def test_custom_trust_model_satisfies_contract():

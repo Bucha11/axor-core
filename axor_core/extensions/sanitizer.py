@@ -69,7 +69,10 @@ class ExtensionSanitizer:
     ) -> list[ExtensionTool]:
         result = []
         for tool in tools:
-            if any(tool.name.startswith(p) for p in _ALWAYS_DENIED_PREFIXES):
+            # Case-insensitive: a reserved prefix must not be bypassed by casing
+            # (e.g. "AXOR_INTERNAL_x"). Prefixes are declared lower-case.
+            name = tool.name.lower()
+            if any(name.startswith(p) for p in _ALWAYS_DENIED_PREFIXES):
                 continue   # silently drop reserved names
             result.append(tool)
         return result
