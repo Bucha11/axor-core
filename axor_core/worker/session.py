@@ -103,12 +103,14 @@ class GovernedSession:
         danger: "dict | None" = None,
         positional_sinks: "set[str] | frozenset[str] | None" = None,
         value_policies: "dict | None" = None,
+        detection_floor: float | None = None,
     ) -> None:
         # Profile = a named bundle of existing knobs (no new mechanism); it
         # pre-fills mode / isolation / escalation / consequence-ceiling / watcher.
         self._consequence_overrides = dict(danger or {})
         self._positional_sinks = frozenset(positional_sinks or ())
         self._value_policies = dict(value_policies or {})
+        self._detection_floor = detection_floor  # TM7.1 opt-in (None = detection observe-only)
         _overlay_ceiling = None
         _overlay_escalation = None
         if profile is not None:
@@ -241,7 +243,10 @@ class GovernedSession:
         # degradation engine — persists across turns; level is monotonically increasing
         from axor_core.degradation.engine import DegradationEngine
         from axor_core.contracts.degradation import DegradationPolicy
-        self._degradation_engine = DegradationEngine(DegradationPolicy(), node_id=self._session_id)
+        self._degradation_engine = DegradationEngine(
+            DegradationPolicy(), node_id=self._session_id,
+            detection_floor=self._detection_floor,
+        )
 
     @staticmethod
     def _enforce_isolation_policy(

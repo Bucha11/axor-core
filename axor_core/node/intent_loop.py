@@ -428,6 +428,14 @@ class IntentLoop:
             normalized = self._normalizer.normalize(intent)
         if self._reputation_enricher is not None and normalized is not None:
             normalized = self._reputation_enricher.enrich(normalized, intent)
+            # TM7.1 (opt-in): a reputation threshold-CROSSING fact may tighten
+            # degradation (tightening-only, decidable fact — not the raw score). No-op
+            # unless the degradation engine was given a detection_floor (θ). Detection
+            # never returns an allow decision; it can only tighten.
+            if self._degradation_engine is not None:
+                self._degradation_engine.record_detection(normalized)
+                for ev in self._degradation_engine.drain_events():
+                    self._trace_events.append(ev)
 
         # consequence axis (TM3.1) — content-blind structural gate on the action
         # class, part of the pure `allow`. Catches consequential-action-under-

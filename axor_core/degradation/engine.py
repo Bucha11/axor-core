@@ -15,6 +15,7 @@ from axor_core.contracts.degradation import (
 from axor_core.contracts.policy import ExecutionPolicy, ExportMode, ToolPolicy
 from axor_core.contracts.trace import (
     DegradationTransitionEvent,
+    DetectionSignalEvent,
     SourceQuarantinedEvent,
     TraceEventKind,
 )
@@ -78,6 +79,7 @@ class DegradationEngine:
         policy: DegradationPolicy | None = None,
         node_id: str = "",
         observe: bool = False,
+        detection_floor: float | None = None,
     ) -> None:
         self._policy = policy or DegradationPolicy()
         self._state = DegradationState()
@@ -86,6 +88,14 @@ class DegradationEngine:
         self._node_id = node_id
         self._observe = observe
         self._shadow_level: DegradationLevel = DegradationLevel.NORMAL
+        # TM7.1: OPT-IN detection->degradation. detection_floor is θ, a registered
+        # reputation threshold. None = off (detection stays observe-only, X2). When
+        # set, a reputation reading in (0, θ] is a DECIDABLE threshold-crossing FACT
+        # (bounded-numeric comparison, T4-decidable) — NOT a probabilistic score —
+        # so it may feed degradation TIGHTENING-only. Per-tenant isolation is
+        # structural: each session/tenant has its own engine, so a poisoned
+        # reputation for one tenant cannot tighten another.
+        self._detection_floor = detection_floor
 
     @classmethod
     def from_mode(
@@ -93,9 +103,56 @@ class DegradationEngine:
         mode: ExecutionMode,
         policy: DegradationPolicy | None = None,
         node_id: str = "",
+        detection_floor: float | None = None,
     ) -> "DegradationEngine":
         """Construct a DegradationEngine with observe=True when mode is OBSERVE."""
-        return cls(policy=policy, node_id=node_id, observe=(mode == ExecutionMode.OBSERVE))
+        return cls(
+            policy=policy, node_id=node_id,
+            observe=(mode == ExecutionMode.OBSERVE),
+            detection_floor=detection_floor,
+        )
+
+    def record_detection(
+        self,
+        normalized: "NormalizedIntent",
+    ) -> DegradationTransition | None:
+        """TM7.1 (opt-in): feed a reputation threshold-CROSSING fact to degradation,
+        tightening-only. No-op unless a detection_floor (θ) is configured.
+
+        The reputation reading is the worst (lowest positive) of the resource and
+        container reputations. A reading in (0, θ] is the decidable crossing — a 0.0
+        'unknown' reading never crosses. On a crossing we emit a DetectionSignalEvent
+        and tighten to RESTRICTED (monotone, never loosens). Detection never returns
+        an allow decision and never loosens — it can only tighten."""
+        if self._detection_floor is None:
+            return None
+        reps = [r for r in (
+            getattr(normalized, "target_resource_reputation", 0.0),
+            getattr(normalized, "target_container_reputation", 0.0),
+        ) if r > 0.0]
+        rep = min(reps) if reps else 0.0
+        crossing = 0.0 < rep <= self._detection_floor
+        self._pending_events.append(DetectionSignalEvent(
+            kind=TraceEventKind.DETECTION_SIGNAL,
+            node_id=self._node_id,
+            sequence=len(self._pending_events),
+            detector="reputation",
+            verdict="crossing" if crossing else "flagged",
+            score=rep,
+            tool=getattr(normalized, "tool", ""),
+            fed_degradation=crossing,
+            reason=f"reputation {rep:.3f} {'≤' if crossing else '>'} θ={self._detection_floor}",
+        ))
+        if not crossing:
+            return None
+        # Tightening-only: quarantine the low-reputation source so apply_to_policy
+        # narrows the surface, and transition to RESTRICTED. _transition_to is
+        # monotone, so this never loosens.
+        source_id = f"reputation:{getattr(normalized, 'tool', '')}"
+        source = self._get_or_create_source(source_id)
+        return self._quarantine_and_restrict(
+            source, source_id, getattr(normalized, "tool", "")
+        )
 
     # ── Public properties ──────────────────────────────────────────────────────
 
