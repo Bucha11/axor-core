@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 import urllib.request
 import urllib.error
 from collections.abc import Sequence
@@ -221,11 +222,28 @@ class OpenRouterLLM(BasePipelineElement):
             },
             method="POST",
         )
-        try:
-            with urllib.request.urlopen(req, timeout=120) as resp:
-                return json.load(resp)
-        except urllib.error.HTTPError as exc:
-            raise RuntimeError(f"OpenRouter {exc.code}: {exc.read().decode(errors='replace')}") from exc
+        # Retry transient upstream throttling/5xx with exponential backoff —
+        # OpenRouter's free Qwen pool is frequently rate-limited (429).
+        delay = 4.0
+        last = ""
+        for attempt in range(7):
+            try:
+                with urllib.request.urlopen(req, timeout=120) as resp:
+                    return json.load(resp)
+            except urllib.error.HTTPError as exc:
+                last = exc.read().decode(errors="replace")
+                if exc.code in (429, 500, 502, 503, 529) and attempt < 6:
+                    time.sleep(delay)
+                    delay = min(delay * 2, 60.0)
+                    continue
+                raise RuntimeError(f"OpenRouter {exc.code}: {last}") from exc
+            except (urllib.error.URLError, TimeoutError) as exc:
+                if attempt < 6:
+                    time.sleep(delay)
+                    delay = min(delay * 2, 60.0)
+                    continue
+                raise RuntimeError(f"OpenRouter transport: {exc}") from exc
+        raise RuntimeError(f"OpenRouter: exhausted retries: {last}")
 
     def query(self, query, runtime, env=EmptyEnv(), messages=[], extra_args={}):
         tools = [
