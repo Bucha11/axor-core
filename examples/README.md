@@ -40,3 +40,24 @@ plus the `get_bus()` result-bus hook the node wrapper uses to hand governed tool
 results back to the model. The API call is a raw `urllib` POST run in a worker
 thread — no SDK — which keeps the example aligned with the core's zero-dependency
 design. Reuse it as the starting point for your own provider adapter.
+
+## `run_agentdojo.py` + `agentdojo_adapter.py` — the AgentDojo benchmark
+
+Runs the [AgentDojo](https://github.com/ethz-spylab/agentdojo) prompt-injection
+benchmark against a real Claude model, comparing an undefended pipeline to one
+where every tool call passes an axor `ToolCallGovernor` first
+(`GovernedToolsExecutor`). `agentdojo_adapter.py` also provides `RawAnthropicLLM`,
+a raw-urllib AgentDojo LLM element (the SDK cannot connect from this sandbox).
+
+```
+pip install agentdojo
+export ANTHROPIC_API_KEY=sk-ant-...
+python -m examples.run_agentdojo
+```
+
+See **`agentdojo_results.md`** for a real run and an honest read of what it does
+and does not show — including that `claude-haiku-4-5` already resists these
+injections (no ASR headroom) and that naive content-taint over-blocks legitimate
+transfers when a valid recipient co-occurs with the injection channel. The
+governor itself is a first-class kernel API (`axor_core.governor.ToolCallGovernor`)
+usable by any tool-wrapping framework, not just AgentDojo.

@@ -16,6 +16,10 @@ from axor_core.policy.consequence import consequence_class
 from axor_core.policy.value_policy import check_value_policies
 from axor_core.kernel.registration import validate_value_policies
 from axor_core.security.carrier import classify_carrier
+from axor_core.policy.sinks import (
+    INSTRUCTION_COMPLETE_SINKS,
+    is_imperative_sink,
+)
 from axor_core.contracts.result import ExecutorEvent, ExecutorEventKind
 from axor_core.contracts.trace import (
     CancelledEvent,
@@ -190,7 +194,7 @@ class IntentLoop:
         # arrives wrapped as a FederatedValue. None = federation off.
         self._federation_gateway = federation_gateway
         self._positional_sinks = frozenset(positional_sinks or ())
-        _illegal = {s for s in self._positional_sinks if s.lower() in _INSTRUCTION_COMPLETE_SINKS}
+        _illegal = {s for s in self._positional_sinks if s.lower() in INSTRUCTION_COMPLETE_SINKS}
         if _illegal:
             raise ValueError(
                 "instruction-complete sinks cannot be declared positional: "
@@ -1061,7 +1065,7 @@ class IntentLoop:
     def _spawn_taint_reason(self, spawn_args: dict) -> str | None:
         """Carrier/taint gate for spawn_child. The child's `task` is free text the
         child interprets as instructions — spawn_child is an instruction-following
-        sink (it is in `_IMPERATIVE_SINKS`). A tainted FREE_TEXT task is the
+        sink (it is in `IMPERATIVE_SINKS`). A tainted FREE_TEXT task is the
         imperative channel. The regular tool path applies exactly this gate; the
         spawn branch dispatches before reaching it, so apply it here too.
 
@@ -1237,33 +1241,7 @@ class IntentLoop:
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
 
-_IMPERATIVE_SINKS = frozenset({
-    "spawn_child", "send", "message", "prompt", "ask", "delegate",
-    "reply", "email", "slack", "post", "notify",
-})
-
-# Sinks whose input space is instruction-COMPLETE by definition: they interpret
-# their argument as a program / directive (a shell command, a child-agent task).
-# These can NEVER be declared positional — a positional gate would either deny every
-# legitimate call (their legit input IS free text) or, worse, admit a closed-schema
-# string the sink still executes. They stay on the content-derivation path with the
-# paraphrase residual acknowledged. Declaring one positional is a configuration error.
-_INSTRUCTION_COMPLETE_SINKS = frozenset({
-    "bash", "shell", "execute", "run", "exec", "execute_generated_code",
-    "spawn_child", "eval", "python", "sh", "command", "system",
-})
-
-
-def _is_imperative_sink(tool_name: str, normalized) -> bool:
-    """Instruction-following sink: it would interpret its argument as a directive
-    (spawn a sub-agent, send a message, execute generated code). The imperative
-    channel — distinct from the risky-op list, which misses free-text-as-directive
-    (e.g. spawn_child(task=<free text>))."""
-    return (
-        tool_name.lower() in _IMPERATIVE_SINKS
-        or getattr(normalized, "executes_generated_code", False)
-        or getattr(normalized, "operation", "") == "execute_generated_code"
-    )
+_is_imperative_sink = is_imperative_sink
 
 
 def _denial_result(tool_name: str, reason: str) -> dict:

@@ -80,6 +80,9 @@ from axor_core.contracts.memory import (
 # Capability
 from axor_core.capability.executor import CapabilityExecutor, ToolHandler
 
+# Synchronous per-tool-call governor — for frameworks that own their agent loop
+from axor_core.governor import ToolCallGovernor, GovernanceDecision
+
 # Policy presets — for override_policy usage
 from axor_core.policy import presets
 
@@ -112,6 +115,8 @@ __all__ = [
     "NullMemoryProvider",
     # capability
     "CapabilityExecutor", "ToolHandler",
+    # governor
+    "ToolCallGovernor", "GovernanceDecision",
     # budget
     "TokenCostRates",
     # policy
