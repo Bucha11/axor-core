@@ -124,11 +124,13 @@ def classify(kind: CodomainKind, mode: ConsumptionMode) -> DecidabilityResult:
     if is_decidable(kind, mode):
         return DecidabilityResult(
             DecidabilityVerdict.DECIDABLE_PASS,
-            f"T4 decidable by construction for ({kind.value}, {mode.value}); "
-            "discharge with verify_enum / verify_bounded_numeric (given K2).",
+            f"faithfulness is decidable by construction for ({kind.value}, {mode.value}); "
+            "discharge with verify_enum / verify_bounded_numeric (given a surveyable "
+            "consumption mode).",
         )
     return DecidabilityResult(
         DecidabilityVerdict.FUZZ_REQUIRED,
-        f"T4 is a fuzzing obligation for ({kind.value}, {mode.value}): the consumer "
-        "is a rich-syntax interpreter; effective may exceed nominal (K5/T4).",
+        f"faithfulness is a fuzzing obligation for ({kind.value}, {mode.value}): the "
+        "consumer is a rich-syntax interpreter; the effective codomain may exceed the "
+        "nominal one.",
     )
