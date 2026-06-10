@@ -94,6 +94,17 @@ def mint_receipt(
     )
 
 
+def mint_output_receipt(engine, value: object, identity: LocalIdentity) -> FederationReceipt:
+    """Convenience for the outbound side: derive `value`'s provenance from a
+    ValueProvenance engine (our own per-value ledger) and sign a receipt for it.
+
+    This is what a node does before sending a value to a peer: it attests the
+    value's CURRENT provenance (clean if the engine has nothing on it, tainted /
+    sensitive if it carries a tracked read) so the receiving peer can restore it.
+    """
+    return mint_receipt(value, engine.derive_value(value), identity)
+
+
 def verify_receipt(
     value: object, receipt: FederationReceipt, peer: FederationPeer,
 ) -> bool:

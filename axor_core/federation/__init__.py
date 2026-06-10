@@ -23,8 +23,18 @@ from axor_core.federation.receipt import (
     FederationPeer,
     FederationReceipt,
     mint_receipt,
+    mint_output_receipt,
     verify_receipt,
     restore_root,
+)
+from axor_core.federation.transport import (
+    PeerTransport,
+    InMemoryPeerNetwork,
+    peer_tool,
+    receipt_to_dict,
+    receipt_from_dict,
+    to_wire,
+    from_wire,
 )
 from axor_core.federation.gateway import (
     FederationError,
@@ -37,7 +47,9 @@ __all__ = [
     "Signer", "Verifier", "HmacSigner", "Ed25519Signer", "Ed25519Verifier",
     "generate_ed25519_keypair",
     "LocalIdentity", "FederationPeer", "FederationReceipt",
-    "mint_receipt", "verify_receipt", "restore_root",
+    "mint_receipt", "mint_output_receipt", "verify_receipt", "restore_root",
     "FederationGateway", "FederationError", "FederationLevel",
     "FederatedValue",
+    "PeerTransport", "InMemoryPeerNetwork", "peer_tool",
+    "receipt_to_dict", "receipt_from_dict", "to_wire", "from_wire",
 ]
