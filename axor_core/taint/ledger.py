@@ -31,52 +31,83 @@ _MAX_TOTAL_SEGMENTS = 20000
 
 
 class ValueTaintLedger:
-    """Maps distinctive content fragments → the CausalRoot that produced them."""
+    """Maps distinctive content fragments → [CausalRoot, refcount].
+
+    Refcounted (TM2): a fragment shared by two registered values is held until BOTH
+    release it, so endorsing one value cannot under-taint the other (the
+    endorsement-over-release bug). Saturation is fail-closed: when the segment cap
+    is reached the ledger flips to a coarse over-taint mode — derive() returns an
+    untrusted root for everything — so an attacker cannot flood the ledger to evict
+    a real secret's fragment and launder it (the silent-drop bug).
+    """
 
     def __init__(self) -> None:
-        self._segments: dict[str, CausalRoot] = {}
+        # seg -> [joined CausalRoot, refcount]
+        self._segments: dict[str, list] = {}
+        self._saturated = False
 
     def register(self, content: object, root: CausalRoot) -> None:
         """Record that `content` came from a value with the given causal_root."""
         if not root.is_tainted and not root.sensitive:
             return
-        if len(self._segments) >= _MAX_TOTAL_SEGMENTS:
-            return
         for seg in self._segmentize(content)[:_MAX_SEGMENTS_PER_REGISTER]:
-            existing = self._segments.get(seg)
-            self._segments[seg] = CausalRoot.mint(existing, root) if existing else root
+            entry = self._segments.get(seg)
+            if entry is not None:
+                entry[0] = CausalRoot.mint(entry[0], root)
+                entry[1] += 1
+            elif len(self._segments) < _MAX_TOTAL_SEGMENTS:
+                self._segments[seg] = [root, 1]
+            else:
+                self._saturated = True  # fail-closed, not silent drop
 
     def merge(self, other: "ValueTaintLedger") -> None:
         """Fold another ledger's fragments into this one (parent → child spawn) —
-        the per-value analog of taint-source inheritance."""
-        for seg, root in other._segments.items():
-            if len(self._segments) >= _MAX_TOTAL_SEGMENTS:
-                break
+        the per-value analog of taint-source inheritance. Deterministic order so a
+        near-cap merge drops the same fragments regardless of dict/hash seed."""
+        self._saturated = self._saturated or other._saturated
+        for seg, entry in sorted(other._segments.items()):
             existing = self._segments.get(seg)
-            self._segments[seg] = CausalRoot.mint(existing, root) if existing else root
+            if existing is not None:
+                existing[0] = CausalRoot.mint(existing[0], entry[0])
+                existing[1] += entry[1]
+            elif len(self._segments) < _MAX_TOTAL_SEGMENTS:
+                self._segments[seg] = [entry[0], entry[1]]
+            else:
+                self._saturated = True
 
     def unregister(self, content: object) -> int:
-        """Remove the fragments of `content` from the ledger (endorsement / release).
-        Returns the number of fragments removed."""
+        """Release one reference to the fragments of `content` (endorsement / TM4).
+        A fragment is removed only when its refcount reaches zero, so a fragment
+        shared with another live value survives. The retained joined root keeps the
+        other value at least as tainted (safe direction). Returns fragments removed."""
         removed = 0
         for seg in self._segmentize(content):
-            if seg in self._segments:
-                del self._segments[seg]
-                removed += 1
+            entry = self._segments.get(seg)
+            if entry is not None:
+                entry[1] -= 1
+                if entry[1] <= 0:
+                    del self._segments[seg]
+                    removed += 1
         return removed
 
     def derive(self, value: object) -> CausalRoot:
         """Return the joined causal_root of every registered fragment that the
         given value contains. Constant (clean) if none — the per-value win:
         a clean argument carries no taint even in a tainted session.
+
+        When saturated (ledger flooded past the cap) this fails closed: every value
+        derives as untrusted (cross-process re-mint, TM4.1), so a flood cannot
+        launder a tracked value into looking clean.
         """
+        if self._saturated:
+            return CausalRoot.cross_process_in()
         text = self._flatten(value)
         if not text or not self._segments:
             return CausalRoot.constant()
         root = CausalRoot.constant()
-        for seg, seg_root in self._segments.items():
+        for seg, entry in self._segments.items():
             if seg in text:
-                root = CausalRoot.mint(root, seg_root)
+                root = CausalRoot.mint(root, entry[0])
         return root
 
     # ── internals ────────────────────────────────────────────────────────────
