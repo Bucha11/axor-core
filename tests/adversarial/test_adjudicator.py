@@ -157,3 +157,19 @@ async def test_adjudicator_abstain_leaves_intent_approved():
                       taint_engine=TaintEngine(), adjudicator=adj)
     r = await _resolve(loop, _env(), "write", {"path": "/work/x", "content": "hi"})
     assert r.approved is True
+
+
+def test_adjudicator_reaches_through_governed_session():
+    # The advisory layer must be reachable from the public entry point, not only
+    # when constructing an IntentLoop by hand.
+    from unittest.mock import MagicMock
+    from axor_core.worker.session import GovernedSession
+
+    adj = _CountingAdjudicator(deny_when=lambda p: True)
+    sess = GovernedSession(
+        executor=MagicMock(), capability_executor=CapabilityExecutor(),
+        adjudicator=adj,
+    )
+    assert sess._adjudicator is adj
+    node = sess._make_node(sess._context_manager)
+    assert node._adjudicator is adj

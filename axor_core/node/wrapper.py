@@ -110,6 +110,7 @@ class GovernedNode:
         consequence_overrides: "dict | None" = None,
         value_policies: "dict | None" = None,
         positional_sinks: "frozenset[str] | set[str] | None" = None,
+        adjudicator=None,
     ) -> None:
         self._executor = executor
         self._child_executor = child_executor  # None → reuse parent executor
@@ -129,6 +130,7 @@ class GovernedNode:
         self._max_total_spawns = max_total_spawns
         self._consequence_overrides = consequence_overrides or {}
         self._positional_sinks = frozenset(positional_sinks or ())
+        self._adjudicator = adjudicator
         self._value_policies = value_policies or {}
 
         self._envelope_builder = EnvelopeBuilder()
@@ -303,6 +305,7 @@ class GovernedNode:
             consequence_overrides=self._consequence_overrides,
             value_policies=self._value_policies,
             positional_sinks=self._positional_sinks,
+            adjudicator=self._adjudicator,
         )
 
         raw_output, raw_payload, budget_export_mode = await self._collect_stream(
@@ -491,6 +494,7 @@ class GovernedNode:
             consequence_overrides=self._consequence_overrides,
             value_policies=self._value_policies,
             positional_sinks=self._positional_sinks,
+            adjudicator=self._adjudicator,
         )
 
         child_cancel = envelope.cancel_token.child_token()
