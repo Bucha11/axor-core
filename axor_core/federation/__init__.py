@@ -31,6 +31,7 @@ from axor_core.federation.gateway import (
     FederationGateway,
     FederationLevel,
 )
+from axor_core.federation.value import FederatedValue
 
 __all__ = [
     "Signer", "Verifier", "HmacSigner", "Ed25519Signer", "Ed25519Verifier",
@@ -38,4 +39,5 @@ __all__ = [
     "LocalIdentity", "FederationPeer", "FederationReceipt",
     "mint_receipt", "verify_receipt", "restore_root",
     "FederationGateway", "FederationError", "FederationLevel",
+    "FederatedValue",
 ]

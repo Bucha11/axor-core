@@ -106,6 +106,7 @@ class GovernedSession:
         value_policies: "dict | None" = None,
         detection_floor: float | None = None,
         adjudicator=None,
+        federation_gateway=None,
     ) -> None:
         # Profile = a named bundle of existing knobs (no new mechanism); it
         # pre-fills mode / isolation / escalation / consequence-ceiling / watcher.
@@ -114,6 +115,7 @@ class GovernedSession:
         self._value_policies = dict(value_policies or {})
         self._detection_floor = detection_floor  # opt-in; None = detection observe-only
         self._adjudicator = adjudicator          # opt-in advisory layer; None = off
+        self._federation_gateway = federation_gateway  # opt-in A2A trust; None = off
         _overlay_ceiling = None
         _overlay_escalation = None
         if profile is not None:
@@ -557,6 +559,7 @@ class GovernedSession:
             positional_sinks=self._positional_sinks,
             value_policies=self._value_policies,
             adjudicator=self._adjudicator,
+            federation_gateway=self._federation_gateway,
         )
 
     async def _handle_command(self, raw: str) -> ExecutionResult:

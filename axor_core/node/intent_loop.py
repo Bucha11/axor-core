@@ -48,6 +48,8 @@ from axor_core.kernel.adjudicator import (
     MemoizingAdjudicator,
     projection_hash,
 )
+from axor_core.federation.value import FederatedValue
+from axor_core.federation.gateway import FederationError
 from axor_core.taint.causal_root import CausalRoot
 
 if TYPE_CHECKING:
@@ -134,6 +136,7 @@ class IntentLoop:
         consequence_overrides: "dict | None" = None,
         positional_sinks: "frozenset[str] | set[str] | None" = None,
         adjudicator: "Adjudicator | MemoizingAdjudicator | None" = None,
+        federation_gateway=None,
     ) -> None:
         self._executor = capability_executor
         self._trace_events = trace_events
@@ -183,6 +186,9 @@ class IntentLoop:
             self._adjudicator = adjudicator
         else:
             self._adjudicator = MemoizingAdjudicator(adjudicator)
+        # Federation gateway (opt-in): decides the provenance of a peer value that
+        # arrives wrapped as a FederatedValue. None = federation off.
+        self._federation_gateway = federation_gateway
         self._positional_sinks = frozenset(positional_sinks or ())
         _illegal = {s for s in self._positional_sinks if s.lower() in _INSTRUCTION_COMPLETE_SINKS}
         if _illegal:
@@ -713,11 +719,34 @@ class IntentLoop:
             result = await self._executor.execute(
                 effective_intent, envelope.capabilities
             )
+            # Federation ingress: a tool that delegated to a peer agent returns the
+            # result wrapped with the peer's provenance receipt. Decide its trust
+            # via the gateway BEFORE it is used or registered. A forged / tampered /
+            # unknown-peer receipt is an attack — reject the value outright; an
+            # authentic receipt either restores the peer's provenance (trusted) or
+            # degrades to untrusted. Then unwrap so the agent sees the plain value.
+            fed_root = None
+            if self._federation_gateway is not None and isinstance(result, FederatedValue):
+                try:
+                    fed_root, _level = self._federation_gateway.receive(
+                        result.value, result.receipt, result.peer_id
+                    )
+                except FederationError as exc:
+                    reason = f"federation: rejected peer value — {exc}"
+                    self._record_denial(intent, reason, envelope)
+                    denial_resp = _make_denial_response(reason, "federation_gate")
+                    return ResolvedIntent(
+                        intent=intent, approved=False, reason=reason,
+                        result=denial_resp.to_tool_result(),
+                    )
+                result = result.value
             # Register the tool output into the PER-VALUE ledger so a later
             # sink whose argument carries this content is gated at the value level.
             # No session-taint propagation — a read taints its produced *value*,
             # not the whole session.
-            self._register_value_taint(effective_intent, result, normalized)
+            self._register_value_taint(
+                effective_intent, result, normalized, override_root=fed_root
+            )
             self._record_degradation_signal(intent, None)
             return ResolvedIntent(
                 intent=intent,
@@ -1071,12 +1100,20 @@ class IntentLoop:
         effective_intent: Intent,
         result: Any,
         normalized: NormalizedIntent | None,
+        override_root: "CausalRoot | None" = None,
     ) -> None:
         """Register a tool's output content in the per-value ledger with the
         causal_root its read introduces. Mirrors the session-taint triggers:
         external/web reads → untrusted; secret/system reads → untrusted + sensitive.
+
+        `override_root` short-circuits the structural derivation — used when the
+        federation gateway has already decided the value's provenance (a peer value
+        whose receipt was restored or re-minted untrusted).
         """
         if self._taint_engine is None:
+            return
+        if override_root is not None:
+            self._taint_engine.register_value(result, override_root)
             return
         ni = normalized or self._normalizer.normalize(effective_intent)
         if ni.target_kind in ("external_url", "cloud_metadata", "docker_socket") or \

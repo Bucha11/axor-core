@@ -111,6 +111,7 @@ class GovernedNode:
         value_policies: "dict | None" = None,
         positional_sinks: "frozenset[str] | set[str] | None" = None,
         adjudicator=None,
+        federation_gateway=None,
     ) -> None:
         self._executor = executor
         self._child_executor = child_executor  # None → reuse parent executor
@@ -131,6 +132,7 @@ class GovernedNode:
         self._consequence_overrides = consequence_overrides or {}
         self._positional_sinks = frozenset(positional_sinks or ())
         self._adjudicator = adjudicator
+        self._federation_gateway = federation_gateway
         self._value_policies = value_policies or {}
 
         self._envelope_builder = EnvelopeBuilder()
@@ -306,6 +308,7 @@ class GovernedNode:
             value_policies=self._value_policies,
             positional_sinks=self._positional_sinks,
             adjudicator=self._adjudicator,
+            federation_gateway=self._federation_gateway,
         )
 
         raw_output, raw_payload, budget_export_mode = await self._collect_stream(
@@ -495,6 +498,7 @@ class GovernedNode:
             value_policies=self._value_policies,
             positional_sinks=self._positional_sinks,
             adjudicator=self._adjudicator,
+            federation_gateway=self._federation_gateway,
         )
 
         child_cancel = envelope.cancel_token.child_token()
