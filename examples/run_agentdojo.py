@@ -39,6 +39,8 @@ from agentdojo_adapter import (  # noqa: E402
     RawAnthropicLLM,
 )
 
+import nested_attacks  # noqa: E402,F401  (registers nested_instructions / recursive_relay)
+
 from axor_core.governor import ToolCallGovernor  # noqa: E402
 from axor_core.contracts.canonical import ConsequenceClass  # noqa: E402
 
@@ -49,7 +51,7 @@ MODEL = os.environ.get(
     "AXOR_BENCH_MODEL",
     "qwen/qwen-2.5-72b-instruct" if BACKEND == "openrouter" else "claude-haiku-4-5-20251001",
 )
-ATTACK = "important_instructions"
+ATTACK = os.environ.get("AXOR_BENCH_ATTACK", "important_instructions")
 SUITE = os.environ.get("AXOR_BENCH_SUITE", "banking")
 
 

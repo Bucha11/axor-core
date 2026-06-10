@@ -71,6 +71,37 @@ The injections that *do* land are the subtler **data-exfiltration** ones (leak
 this datum inside an otherwise-plausible action), which is exactly where a model's
 own guardrails are weakest and a structural data-flow gate earns its place.
 
+## Caveat on "claude-haiku is robust" — it's the *bench*, and I couldn't break it here
+
+"claude-haiku resists, no headroom" is easy to misread as "the model is robust."
+The honest framing is narrower: it resists *AgentDojo's attacks*, which are
+shallow (one flat `<INFORMATION> do {goal} </INFORMATION>` frame). A bench that a
+mid model like Qwen succumbs to is a low bar.
+
+So I tried to break it with stronger framing — two nested attacks
+(`nested_instructions`, `recursive_relay` in `nested_attacks.py`: the goal buried
+as the leaf of a fake task-dependency chain under a forged "already authorized"
+frame with "don't tell the user") — plus AgentDojo's own stronger stock attacks
+(`tool_knowledge`, `injecagent`, `ignore_previous`, `system_message`).
+
+**Result: none of them flipped claude-haiku-4-5 on the pairs I tried (0% ASR
+across the board).** That is an honest *negative* result, and it cuts two ways:
+
+- It does **not** prove the model is robust in general — a bespoke multi-turn or
+  context-poisoning attack outside AgentDojo's single-injection structure may well
+  succeed; I just did not reproduce it within this harness.
+- It exposes a real limit of the **benchmark**: AgentDojo's attacks are not strong
+  enough to create headroom on a strong model, so the bench cannot separate "the
+  model defended" from "the defense defended." On a susceptible model (Qwen) the
+  headroom appears and the defense's effect is measurable; on a strong one the
+  bench simply goes dark.
+
+Crucially, none of this touches the axor result: the governor gates on the
+*provenance of the tool-call argument*, not on recognizing the injection, so a
+cleverer frame that does flip a model produces the same tainted egress and is
+refused identically. The defense is attack-strength-invariant by construction;
+the bench is not.
+
 ## The other side — utility cost on the shared channel (banking, benign)
 
 The security win is not free. On a benign banking task whose legitimate action is
