@@ -1,7 +1,12 @@
 """Advisory adjudicator — projection-only, memoized by projection hash, tightening.
 
-An adjudicator is a pluggable advisory layer (e.g. an LLM judge / external policy
-oracle). The kernel keeps three hard guarantees over it:
+An adjudicator is an OPTIONAL, pluggable second-opinion hook. The kernel ships only
+the protocol and the wrapper — it contains no adjudicator implementation and makes
+no model/network calls. A deployment that wants one supplies it (a rule engine, an
+external policy service, or any other oracle); if none is supplied, this layer is
+simply off.
+
+Whatever is plugged in, the kernel keeps three hard guarantees over it:
 
   • PROJECTION-ONLY: it sees only the CanonicalizedIntent (the projection) —
     enums, ints, bucketed lengths, hashed paths — never raw content. It cannot be
