@@ -24,6 +24,11 @@ classifiers = [
 dependencies = []
 
 [project.optional-dependencies]
+# Asymmetric (ed25519) federation receipt signing. Core stays dependency-free; the
+# symmetric HMAC signer needs nothing. Install this only for asymmetric A2A trust.
+federation = [
+    "cryptography>=42.0",
+]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",

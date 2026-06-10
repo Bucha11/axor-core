@@ -10,11 +10,21 @@ L2 — a value from an authenticated peer in a federated domain running a compat
      denied; an incompatible kernel or non-federated domain degrades to L1.
 """
 
+from axor_core.federation.signing import (
+    Signer,
+    Verifier,
+    HmacSigner,
+    Ed25519Signer,
+    Ed25519Verifier,
+    generate_ed25519_keypair,
+)
 from axor_core.federation.receipt import (
+    LocalIdentity,
     FederationPeer,
     FederationReceipt,
     mint_receipt,
     verify_receipt,
+    restore_root,
 )
 from axor_core.federation.gateway import (
     FederationError,
@@ -23,6 +33,9 @@ from axor_core.federation.gateway import (
 )
 
 __all__ = [
-    "FederationPeer", "FederationReceipt", "mint_receipt", "verify_receipt",
+    "Signer", "Verifier", "HmacSigner", "Ed25519Signer", "Ed25519Verifier",
+    "generate_ed25519_keypair",
+    "LocalIdentity", "FederationPeer", "FederationReceipt",
+    "mint_receipt", "verify_receipt", "restore_root",
     "FederationGateway", "FederationError", "FederationLevel",
 ]
