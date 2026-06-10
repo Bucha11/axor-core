@@ -509,16 +509,26 @@ class GovernedNode:
             cancel_token=child_cancel,
         )
 
-        # Cross-process re-mint: the child's returned output crosses a trust
-        # boundary the parent cannot see through (the parent has no visibility into
-        # the child's internal reads). Re-mint it as untrusted in the parent's
-        # per-value ledger, so a parent sink later carrying child output is gated —
-        # a child cannot launder a secret/web value it read by returning it through
-        # its output. Forward inheritance is per-value; this closes the reverse path.
+        # Provenance of the child's returned output, registered into the parent's
+        # per-value ledger so a parent sink later carrying it is gated.
         if self._taint_engine is not None and child_result.output:
-            self._taint_engine.register_value(
-                child_result.output, CausalRoot.cross_process_in()
-            )
+            if self._federation_gateway is not None:
+                # Federation on: an in-process child is a same-process, same-kernel
+                # peer — trivially compatible — so restore its ACTUAL per-value
+                # provenance for the output (read from the child engine) instead of a
+                # blanket untrusted re-mint. A clean child output stays clean; an
+                # output carrying a secret / web value the child read is registered
+                # tainted (and a sensitive one re-arms the parent's egress floor).
+                child_root = child_taint.derive_value(child_result.output)
+                self._taint_engine.register_value(child_result.output, child_root)
+            else:
+                # Federation off (conservative default): the child output crosses a
+                # trust boundary we do not audit, so re-mint it untrusted. This
+                # over-taints a clean child output, but guarantees a child cannot
+                # launder a secret / web value it read by returning it.
+                self._taint_engine.register_value(
+                    child_result.output, CausalRoot.cross_process_in()
+                )
 
         # emit child_completed into parent trace
         from axor_core.contracts.trace import TraceEvent
