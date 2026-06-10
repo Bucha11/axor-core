@@ -42,6 +42,12 @@ from axor_core.contracts.degradation import DegradationLevel
 from axor_core.contracts.taint import Carrier, TaintSource
 from axor_core.degradation.engine import _LOCKED_ALLOWED_TOOLS
 from axor_core.node.normalizer import IntentNormalizer
+from axor_core.node.canonicalizer import IntentCanonicalizer
+from axor_core.kernel.adjudicator import (
+    Adjudicator,
+    MemoizingAdjudicator,
+    projection_hash,
+)
 from axor_core.taint.causal_root import CausalRoot
 
 if TYPE_CHECKING:
@@ -127,6 +133,7 @@ class IntentLoop:
         value_policies: "dict | None" = None,
         consequence_overrides: "dict | None" = None,
         positional_sinks: "frozenset[str] | set[str] | None" = None,
+        adjudicator: "Adjudicator | MemoizingAdjudicator | None" = None,
     ) -> None:
         self._executor = capability_executor
         self._trace_events = trace_events
@@ -167,6 +174,15 @@ class IntentLoop:
         # instruction-incomplete, content-independently (closes O2 vs paraphrase).
         # Opt-in/empty by default; exec-class sinks can NEVER be declared here
         # (shell command codomain is instruction-complete by definition).
+        # Advisory adjudicator (TM3.4). Wrap a bare Adjudicator so verdicts are
+        # memoized by π-hash; a MemoizingAdjudicator is used as-is. None = off.
+        self._canonicalizer = IntentCanonicalizer()
+        if adjudicator is None:
+            self._adjudicator = None
+        elif isinstance(adjudicator, MemoizingAdjudicator):
+            self._adjudicator = adjudicator
+        else:
+            self._adjudicator = MemoizingAdjudicator(adjudicator)
         self._positional_sinks = frozenset(positional_sinks or ())
         _illegal = {s for s in self._positional_sinks if s.lower() in _INSTRUCTION_COMPLETE_SINKS}
         if _illegal:
@@ -652,6 +668,26 @@ class IntentLoop:
                     intent=intent,
                     approved=False,
                     reason=reason,
+                    result=denial_resp.to_tool_result(),
+                )
+
+        # approved or transformed — but first consult the advisory adjudicator
+        # (TM3.4) on the PROJECTION only. We are on the would-approve path: every
+        # kernel hard gate has already passed, so the adjudicator can only TIGHTEN
+        # (deny), never override a hard deny. Memoized by π-hash: equal projection →
+        # equal verdict.
+        if self._adjudicator is not None and normalized is not None:
+            projection = self._canonicalizer.canonicalize(normalized, tool_args)
+            if not self._adjudicator.apply(projection, kernel_allowed=True):
+                reason = (
+                    f"adjudicator (TM3.4, advisory): denied '{tool_name}' on its "
+                    f"projection (π-hash {projection_hash(projection)})"
+                )
+                self._record_denial(intent, reason, envelope)
+                denial_resp = _make_denial_response(reason, "adjudicator")
+                self._record_degradation_signal(intent, denial_resp, normalized)
+                return ResolvedIntent(
+                    intent=intent, approved=False, reason=reason,
                     result=denial_resp.to_tool_result(),
                 )
 
