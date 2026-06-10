@@ -3,7 +3,7 @@ order X4 — the "validators" step).
 
 A sink declares, per argument, the admissible projection it consumes (a codomain
 kind + a consumption mode). The kernel then decides the T4 obligation via
-``kernel.t4.classify``:
+``kernel.decidability.classify``:
 
   • DECIDABLE  — the argument may be guarded by a value-policy PREDICATE, discharged
                  by a decision procedure (verify_enum / verify_bounded_numeric).
@@ -19,7 +19,7 @@ configuration that tries to guard a fuzz-required field with a decidable predica
 
 from __future__ import annotations
 
-from axor_core.kernel.t4 import (
+from axor_core.kernel.decidability import (
     CodomainKind,
     ConsumptionMode,
     T4Verdict,

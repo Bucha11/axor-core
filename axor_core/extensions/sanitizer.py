@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from axor_core.tokens import estimate_tokens
+
 from axor_core.contracts.extension import (
     ExtensionBundle,
     ExtensionFragment,
@@ -48,7 +50,7 @@ class ExtensionSanitizer:
     ) -> list[ExtensionFragment]:
         result = []
         for fragment in fragments:
-            token_estimate = len(fragment.context_fragment) // 4
+            token_estimate = estimate_tokens(fragment.context_fragment)
             if token_estimate > _MAX_FRAGMENT_TOKENS:
                 # truncate rather than reject — partial context is better than none
                 truncated = fragment.context_fragment[: _MAX_FRAGMENT_TOKENS * 4]

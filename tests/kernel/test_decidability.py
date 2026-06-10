@@ -8,7 +8,7 @@ normalizer — the fuzzing region the split predicts bugs must live in.
 
 from __future__ import annotations
 
-from axor_core.kernel.t4 import (
+from axor_core.kernel.decidability import (
     CodomainKind,
     ConsumptionMode,
     T4Verdict,

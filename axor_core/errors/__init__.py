@@ -11,6 +11,16 @@ from axor_core.errors.exceptions import (
     ContextError,
     ExportDeniedError,
     ExtensionSanitizationError,
+    NormalizerError,
+    UnknownProviderFormatError,
+    GovernanceBypassError,
+    IsolationRequiredError,
+    TaintClearanceError,
+    SpawnValidationError,
+    DaemonUnavailableError,
+    DaemonRejectedError,
+    SessionTerminatedError,
+    DegradationClearanceError,
 )
 
 __all__ = [
@@ -26,4 +36,14 @@ __all__ = [
     "ContextError",
     "ExportDeniedError",
     "ExtensionSanitizationError",
+    "NormalizerError",
+    "UnknownProviderFormatError",
+    "GovernanceBypassError",
+    "IsolationRequiredError",
+    "TaintClearanceError",
+    "SpawnValidationError",
+    "DaemonUnavailableError",
+    "DaemonRejectedError",
+    "SessionTerminatedError",
+    "DegradationClearanceError",
 ]

@@ -46,6 +46,7 @@ from axor_core.contracts.trace import TraceConfig, TraceEventKind
 from axor_core.capability.locked import governance_context
 from axor_core.taint.engine import TaintEngine
 from axor_core.taint.causal_root import CausalRoot
+from axor_core.tokens import estimate_tokens
 from axor_core.degradation.engine import DegradationEngine
 from axor_core.node.envelope import EnvelopeBuilder
 from axor_core.node.export import ExportFilter
@@ -370,7 +371,7 @@ class GovernedNode:
                         tool_result = event.payload.get("tool_result")
 
                         if tool_result and self._budget_engine:
-                            estimate = len(str(tool_result)) // 4
+                            estimate = estimate_tokens(tool_result)
                             result_decision = self._budget_engine.on_result_arrived(
                                 node_id=envelope.node_id,
                                 result_token_estimate=estimate,
@@ -583,7 +584,7 @@ class GovernedNode:
             ContextFragment(
                 kind="fact",
                 content=raw_state.task,
-                token_estimate=len(raw_state.task) // 4,
+                token_estimate=estimate_tokens(raw_state.task),
                 source="raw_task",
             )
         ]
@@ -592,7 +593,7 @@ class GovernedNode:
                 ContextFragment(
                     kind="parent_export",
                     content=raw_state.parent_export,
-                    token_estimate=len(raw_state.parent_export) // 4,
+                    token_estimate=estimate_tokens(raw_state.parent_export),
                     source="parent_node",
                 )
             )

@@ -18,6 +18,8 @@ They are injected at GovernedSession construction time.
 
 from __future__ import annotations
 
+from axor_core.tokens import estimate_tokens
+
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -74,7 +76,7 @@ class MemoryFragment:
         return {
             "kind":           "memory",
             "content":        self.content,
-            "token_estimate": self.token_count or len(self.content) // 4,
+            "token_estimate": self.token_count or estimate_tokens(self.content),
             "source":         f"memory:{self.namespace}:{self.key}",
             "relevance":      1.0,
             "value":          self.value.value,

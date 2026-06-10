@@ -11,7 +11,7 @@ from axor_core.kernel.registration import (
     predicate_is_decidable,
     validate_value_policies,
 )
-from axor_core.kernel.t4 import CodomainKind, ConsumptionMode
+from axor_core.kernel.decidability import CodomainKind, ConsumptionMode
 from axor_core.policy.value_policy import ValuePredicate, enum, numeric_range
 from axor_core.node.intent_loop import IntentLoop
 from axor_core.security.paths import path_matches_allowlist, path_within

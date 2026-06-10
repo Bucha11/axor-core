@@ -38,6 +38,7 @@ from axor_core.extensions.registry import ExtensionRegistry
 from axor_core.extensions.sanitizer import ExtensionSanitizer
 from axor_core.worker.commands import SlashCommandRouter
 from axor_core.taint.engine import TaintEngine
+from axor_core.tokens import estimate_tokens
 
 _log = logging.getLogger("axor.session")
 
@@ -359,7 +360,7 @@ class GovernedSession:
                 self._context_manager.pin_fragment(ContextFragment(
                     kind="skill",
                     content=self._agent_def.personality,
-                    token_estimate=len(self._agent_def.personality) // 4,
+                    token_estimate=estimate_tokens(self._agent_def.personality),
                     source=f"agent:{self._agent_def.name}:personality",
                     relevance=1.0,
                     value="pinned",

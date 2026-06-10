@@ -16,7 +16,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from numbers import Real
 
-from axor_core.kernel.t4 import verify_bounded_numeric, verify_enum
+from axor_core.kernel.decidability import verify_bounded_numeric, verify_enum
 
 
 @dataclass(frozen=True)
