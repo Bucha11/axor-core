@@ -405,11 +405,29 @@ class IntentLoop:
                 result=denial_resp.to_tool_result(),
             )
 
+        # Normalize early: the consequence gate (X5) needs the operation enum to
+        # escalate a generic sink whose command is power-state-changing (e.g.
+        # `bash shutdown`). Pure structural transform; reputation enrichment stays
+        # telemetry-only and never gates.
+        needs_normalized = (
+            self._taint_engine is not None
+            or self._degradation_engine is not None
+            or self._reputation_enricher is not None
+        )
+        normalized: NormalizedIntent | None = None
+        if needs_normalized:
+            normalized = self._normalizer.normalize(intent)
+        if self._reputation_enricher is not None and normalized is not None:
+            normalized = self._reputation_enricher.enrich(normalized, intent)
+
         # consequence axis (TM3.1) — content-blind structural gate on the action
         # class, part of the pure `allow`. Catches consequential-action-under-
         # trusted-provenance (the OpenClaw class, X5) that the provenance axes
-        # cannot see. Reads only the sink type + policy ceiling.
-        consequence_denial = self._check_consequence(tool_name, envelope)
+        # cannot see. Reads only the sink type + operation enum + policy ceiling.
+        consequence_denial = self._check_consequence(
+            tool_name, envelope,
+            operation=normalized.operation if normalized is not None else None,
+        )
         if consequence_denial is not None:
             self._record_denial(intent, consequence_denial, envelope)
             denial_resp = _make_denial_response(consequence_denial, "consequence_gate")
@@ -438,19 +456,6 @@ class IntentLoop:
             )
 
         # normalize intent once — shared by taint, degradation, and reputation
-        needs_normalized = (
-            self._taint_engine is not None
-            or self._degradation_engine is not None
-            or self._reputation_enricher is not None
-        )
-        normalized: NormalizedIntent | None = None
-        if needs_normalized:
-            normalized = self._normalizer.normalize(intent)
-
-        # reputation enrichment (sentinel as a WATCHER) — telemetry only; reputation
-        # never gates `allow` and never feeds degradation (detection, not enforcement).
-        if self._reputation_enricher is not None and normalized is not None:
-            normalized = self._reputation_enricher.enrich(normalized, intent)
 
         # ── allow gate (pure) — capability already checked above; here the
         # degradation-narrowed policy gate. Degradation is driven only by
@@ -519,7 +524,8 @@ class IntentLoop:
             # taint-explosion asymmetry is visible. Uses the same overrides as the
             # enforcement gate so density and enforcement agree on which sinks count.
             sink_consequence = consequence_class(
-                tool_name, overrides=self._consequence_overrides
+                tool_name, operation=normalized.operation,
+                overrides=self._consequence_overrides,
             )
             if sink_consequence >= ConsequenceClass.REVERSIBLE:
                 session_tainted, session_sensitive = (
@@ -1040,15 +1046,19 @@ class IntentLoop:
         self,
         tool_name: str,
         envelope: ExecutionEnvelope,
+        operation: str | None = None,
     ) -> str | None:
         """Consequence axis gate (TM3.1). Return a denial reason if the sink's
         action class exceeds the policy's unattended ceiling and no governance
-        gate is present, else None. Content-blind: reads only the sink type.
+        gate is present, else None. Content-blind: reads only the sink type and
+        the operation enum (never argument content).
 
         The governance gate is satisfied by an active escalation grant or
         capability lease for the tool (a human/operator-authorised path).
         """
-        cls = consequence_class(tool_name, overrides=self._consequence_overrides)
+        cls = consequence_class(
+            tool_name, operation=operation, overrides=self._consequence_overrides
+        )
         ceiling = getattr(
             envelope.policy, "max_unattended_consequence", ConsequenceClass.CONSEQUENTIAL
         )

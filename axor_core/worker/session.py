@@ -102,11 +102,13 @@ class GovernedSession:
         workspace: str | None = None,
         danger: "dict | None" = None,
         positional_sinks: "set[str] | frozenset[str] | None" = None,
+        value_policies: "dict | None" = None,
     ) -> None:
         # Profile = a named bundle of existing knobs (no new mechanism); it
         # pre-fills mode / isolation / escalation / consequence-ceiling / watcher.
         self._consequence_overrides = dict(danger or {})
         self._positional_sinks = frozenset(positional_sinks or ())
+        self._value_policies = dict(value_policies or {})
         _overlay_ceiling = None
         _overlay_escalation = None
         if profile is not None:
@@ -543,6 +545,7 @@ class GovernedSession:
             degradation_engine=self._degradation_engine,
             consequence_overrides=self._consequence_overrides,
             positional_sinks=self._positional_sinks,
+            value_policies=self._value_policies,
         )
 
     async def _handle_command(self, raw: str) -> ExecutionResult:
