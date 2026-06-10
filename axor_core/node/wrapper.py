@@ -17,7 +17,26 @@ from axor_core.contracts.envelope import ExecutionEnvelope
 from axor_core.contracts.extension import ExtensionBundle
 from axor_core.contracts.intent import Intent, IntentKind
 from axor_core.contracts.invokable import Invokable
-from axor_core.contracts.policy import ExecutionPolicy
+from axor_core.contracts.policy import ExecutionPolicy, ExportMode
+
+# Export restrictiveness ordering (least → most leakage-restrictive). Used to narrow
+# the export contract toward less leakage without ever widening it (M11).
+_EXPORT_RANK = {
+    ExportMode.FULL: 0,
+    ExportMode.SUMMARY: 1,
+    ExportMode.FILTERED: 2,
+    ExportMode.RESTRICTED: 3,
+}
+
+
+def _more_restrictive_export(a: "ExportMode | None", b: "ExportMode | None") -> "ExportMode | None":
+    """Return whichever export mode leaks less (higher rank). None is treated as
+    'no constraint'."""
+    if a is None:
+        return b
+    if b is None:
+        return a
+    return a if _EXPORT_RANK[a] >= _EXPORT_RANK[b] else b
 from axor_core.contracts.result import (
     ExecutionResult,
     ExecutorEventKind,
@@ -284,7 +303,7 @@ class GovernedNode:
             positional_sinks=self._positional_sinks,
         )
 
-        raw_output, raw_payload = await self._collect_stream(
+        raw_output, raw_payload, budget_export_mode = await self._collect_stream(
             intent_loop=intent_loop,
             envelope=envelope,
             extension_bundle=extension_bundle,
@@ -293,11 +312,26 @@ class GovernedNode:
         )
 
         # ── 7. Export filter ───────────────────────────────────────────────────
+        # M11: apply any budget-imposed export narrowing to the contract before the
+        # filter runs, so a crossed restrict_export threshold actually narrows what
+        # leaves the node (it was previously only logged).
+        export_envelope = envelope
+        if budget_export_mode is not None:
+            effective_mode = _more_restrictive_export(
+                envelope.export_contract.mode, budget_export_mode
+            )
+            if effective_mode != envelope.export_contract.mode:
+                narrowed_contract = dataclasses.replace(
+                    envelope.export_contract, mode=effective_mode
+                )
+                export_envelope = dataclasses.replace(
+                    envelope, export_contract=narrowed_contract
+                )
         token_usage = self._extract_token_usage(trace_events, context)
         result = self._export_filter.apply(
             raw_output=raw_output,
             raw_payload=raw_payload,
-            envelope=envelope,
+            envelope=export_envelope,
             token_usage=token_usage,
         )
 
@@ -320,9 +354,10 @@ class GovernedNode:
         extension_bundle: ExtensionBundle | None,
         parent_policy: ExecutionPolicy,
         cancel_token: CancelToken,
-    ) -> tuple[str, dict]:
+    ) -> tuple[str, dict, "ExportMode | None"]:
         output_parts: list[str] = []
         payload: dict = {}
+        budget_export_mode: "ExportMode | None" = None  # M11: budget-imposed narrowing
 
         with governance_context():
             raw_stream = self._executor.stream(envelope)
@@ -348,6 +383,13 @@ class GovernedNode:
                                     "budget: %s recommended after result (node=%s, reason=%s)",
                                     result_decision.action.value, envelope.node_id, result_decision.reason,
                                 )
+                            # M11: actually ENFORCE the export restriction — narrow
+                            # the export mode to the more restrictive of the contract
+                            # and the budget's suggestion (never widens).
+                            if result_decision.action == OptimizationAction.RESTRICT_EXPORT:
+                                budget_export_mode = _more_restrictive_export(
+                                    budget_export_mode, result_decision.suggested_export
+                                )
 
                         # record file reads into context manager
                         if tool_result and self._context_manager:
@@ -364,7 +406,7 @@ class GovernedNode:
                     case ExecutorEventKind.STOP:
                         payload = event.payload
 
-        return "".join(output_parts), payload
+        return "".join(output_parts), payload, budget_export_mode
 
     # ── Spawn child ────────────────────────────────────────────────────────────
 
@@ -477,10 +519,16 @@ class GovernedNode:
 
         # record child tokens in parent budget tracker so total_tokens_spent() is accurate
         if self._budget_engine:
+            child_lineage = child_raw_state.lineage
+            child_node_id = child_lineage.node_id if child_lineage else "child"
+            # M9: register the child's lineage (parent + depth) before recording, so
+            # depth_tokens()/subtree accounting see the real tree, not depth=0/parent=None.
+            if child_lineage:
+                self._budget_engine.register_node(
+                    child_node_id, child_lineage.parent_id, child_lineage.depth
+                )
             self._budget_engine.record_child_tokens(
-                node_id=child_raw_state.lineage.node_id
-                if child_raw_state.lineage
-                else "child",
+                node_id=child_node_id,
                 input_tokens=child_result.token_usage.input_tokens,
                 output_tokens=child_result.token_usage.output_tokens,
                 tool_tokens=child_result.token_usage.tool_tokens,

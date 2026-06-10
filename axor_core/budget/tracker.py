@@ -183,13 +183,24 @@ class BudgetTracker:
         depth: int,
         tier: str | None = None,
     ) -> None:
+        """Register a node's lineage metadata (depth / parent) for depth- and
+        subtree-aware accounting. Idempotent: re-registering an existing node
+        updates its metadata but PRESERVES accumulated token counters (so it is
+        safe to call before every record())."""
         with self._lock:
-            self._nodes[node_id] = NodeBudget(
-                node_id=node_id,
-                parent_id=parent_id,
-                depth=depth,
-                tier=tier,
-            )
+            existing = self._nodes.get(node_id)
+            if existing is None:
+                self._nodes[node_id] = NodeBudget(
+                    node_id=node_id,
+                    parent_id=parent_id,
+                    depth=depth,
+                    tier=tier,
+                )
+            else:
+                existing.parent_id = parent_id
+                existing.depth = depth
+                if tier is not None:
+                    existing.tier = tier
 
     def record(
         self,

@@ -406,7 +406,10 @@ class GovernedSession:
         )
         self._active_token = None
 
-        # record tokens in session-level tracker
+        # record tokens in session-level tracker. Register lineage first (M9) so
+        # depth-/subtree-aware accounting is correct rather than warn-and-default to
+        # depth=0/parent=None. The top-level node is depth 0, no parent. Idempotent.
+        self._tracker.register_node(result.node_id, None, 0)
         self._tracker.record(
             node_id=result.node_id,
             input_tokens=result.token_usage.input_tokens,

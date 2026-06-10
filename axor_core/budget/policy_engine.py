@@ -242,6 +242,17 @@ class BudgetPolicyEngine:
 
         return _proceed(f"child approved — spent {ratio:.0%}, slice sufficient")
 
+    def register_node(
+        self,
+        node_id: str,
+        parent_id: str | None,
+        depth: int,
+        tier: str | None = None,
+    ) -> None:
+        """Register a node's lineage so depth/subtree budget accounting is correct
+        (M9). Delegates to the tracker; idempotent."""
+        self._tracker.register_node(node_id, parent_id, depth, tier)
+
     def record_child_tokens(
         self,
         node_id: str,
