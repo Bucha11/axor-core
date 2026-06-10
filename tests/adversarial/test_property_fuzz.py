@@ -26,13 +26,18 @@ from hypothesis import given, settings, strategies as st  # noqa: E402
 from axor_core.capability.lease_validator import path_matches_allowlist
 from axor_core.node.normalizer import IntentNormalizer
 from axor_core.security.net import parse_host_to_ip as _parse_host_to_ip
+from axor_core.security.carrier import classify_carrier
+from axor_core.contracts.taint import Carrier
 
 
 # ── 1. path allowlist soundness (no false-accept) ────────────────────────────
 
-# Path segments including traversal, hidden dirs, and odd-but-legal names.
+# Path segments including traversal, hidden dirs, newline/unicode injection, and
+# odd-but-legal names — the fuzz-required codomain (K5/T4) where the two real bugs
+# (newline, ../) live.
 _segment = st.sampled_from(
-    ["..", ".", "a", "b", "etc", "repo", "sub", "x.txt", "..%2f", " ", "f"]
+    ["..", ".", "a", "b", "etc", "repo", "sub", "x.txt", "..%2f", " ", "f",
+     "a\nb", "‮", "café", "x\x00y", "..\\", "%2e%2e"]
 )
 _paths = st.lists(_segment, min_size=1, max_size=8).map(lambda parts: "/".join(parts))
 _roots = st.sampled_from(["/repo", "/repo/sub", "/srv/data", "/home/u/proj"])
@@ -107,3 +112,36 @@ def test_public_ips_classified_external(octets: list[int]):
         return
     kind = IntentNormalizer()._classify_url_target(f"http://{ip}/")
     assert kind == "external_url"
+
+
+# ── 3. carrier classifier soundness floor (K5/T4 — carrier over free text) ────
+#
+# The carrier classifier backs the D_high positional gate. Its FUZZ_REQUIRED
+# obligation: it must NEVER admit an instruction-bearing string as
+# instruction-incomplete. Soundness floor: a BARE string (not a JSON structure)
+# that carries whitespace or any interpreter metacharacter must be FREE_TEXT.
+
+_META = set(" \t\n\r/:;|&$`(){}<>\"'\\=*?!@#%^+,~")
+
+
+@given(s=st.text(min_size=1, max_size=80))
+@settings(max_examples=600)
+def test_carrier_never_admits_dangerous_bare_string(s: str):
+    stripped = s.strip()
+    # Structured JSON ({...}/[...]) is a separate, legitimately-closed path; this
+    # floor governs bare (non-structured) strings.
+    if stripped[:1] in ("{", "["):
+        return
+    if any(ch in _META for ch in stripped) and stripped:
+        assert classify_carrier(s) == Carrier.FREE_TEXT, (
+            f"carrier false-admit: {s!r} -> {classify_carrier(s).name}"
+        )
+
+
+@given(s=st.from_regex(r"[A-Za-z_][A-Za-z0-9_.\-]{0,63}", fullmatch=True))
+@settings(max_examples=200)
+def test_carrier_admits_bounded_identifier(s: str):
+    # The converse: a genuine bounded identifier (leading letter/underscore, so it
+    # is not a numeric literal that could overflow to inf/nan) is never spuriously
+    # FREE_TEXT — no over-restriction that would break legitimate D_high inputs.
+    assert classify_carrier(s) != Carrier.FREE_TEXT

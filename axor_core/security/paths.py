@@ -28,9 +28,16 @@ def lexical_normalize(path: str) -> str:
 
 
 def path_within(path: str, root: str) -> bool:
-    """True when `path` equals or is contained by `root` after resolution."""
-    candidate = resolve_path(path)
-    base = resolve_path(root)
+    """True when `path` equals or is contained by `root` after resolution.
+
+    Fails CLOSED on any resolution error (e.g. an embedded null byte, which makes
+    Path.resolve raise): an unresolvable path is never inside the allowlist, and a
+    governance check must deny it, not crash."""
+    try:
+        candidate = resolve_path(path)
+        base = resolve_path(root)
+    except (ValueError, OSError):
+        return False
     if candidate == base:
         return True
     try:

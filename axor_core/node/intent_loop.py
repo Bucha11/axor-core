@@ -14,6 +14,7 @@ from axor_core.contracts.canonical import ConsequenceClass
 from axor_core.contracts.policy import PolicyDecision, PolicyDecisionKind
 from axor_core.policy.consequence import consequence_class
 from axor_core.policy.value_policy import check_value_policies
+from axor_core.kernel.registration import validate_value_policies
 from axor_core.security.carrier import classify_carrier
 from axor_core.contracts.result import ExecutorEvent, ExecutorEventKind
 from axor_core.contracts.trace import (
@@ -148,6 +149,14 @@ class IntentLoop:
         self._max_intents_per_session = max_intents_per_session
         self._max_total_spawns = max_total_spawns
         self._value_policies = value_policies or {}
+        # Thm. 0 registration validator (X4 validators step): reject value policies
+        # that try to discharge a fuzz-required (rich-syntax) field with a decidable
+        # predicate — false assurance must fail closed, not be silently accepted.
+        _vp_errors = validate_value_policies(self._value_policies)
+        if _vp_errors:
+            raise ValueError(
+                "invalid value_policies (Thm. 0 / T4): " + "; ".join(_vp_errors)
+            )
         self._consequence_overrides = consequence_overrides or {}
         # D_high partition (Corollary: stratified enforcement). Sinks the operator
         # DECLARES to have an instruction-incomplete codomain — i.e. their legitimate
