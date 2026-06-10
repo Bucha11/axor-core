@@ -102,12 +102,11 @@ User types tool invocation
 - Accept `ExecutorEvent(TOOL_USE)` from the executor stream
 - Convert to `Intent` via `IntentNormalizer`
 - Evaluate against `ExecutionPolicy` (the structural gates)
-- Run anomaly detection (Layer 2) if configured
-- Run LLM verifier (Layer 3) if anomaly score is in gray zone
+- Consult an advisory adjudicator if configured (projection only; can only add a deny)
 - Apply per-value taint rules (`TaintEngine.register_value()` on external reads; `derive_value()` at sinks)
 - Apply lease rules (`LeaseValidator.check_tool_allowed()`)
-- Apply degradation pre-check (`DegradationEngine.apply_to_policy()` before Layer 1)
-- Record `DegradationEngine.record_signal()` after every cascade outcome (pass or deny)
+- Apply the degradation pre-check (`DegradationEngine.apply_to_policy()`) before the gates
+- Record `DegradationEngine.record_signal()` after every outcome (pass or deny)
 - Emit `DegradationTransitionEvent` / `SourceQuarantinedEvent` when level changes
 - Fail closed: any exception → `DenialResponse`
 - Record `IntentDeniedEvent` / `SuspiciousIntentEvent` in `DecisionTrace`

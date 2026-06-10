@@ -94,7 +94,7 @@ do not carry that value remain unconstrained (the per-value win).
 
 This separation means that even if a malicious file enters `ContextView`, the
 resulting execution is still governed.  The agent may be instructed to do
-something harmful by the content, but the `ToolInterceptor` (Layer 1 policy)
+something harmful by the content, but the the capability gate
 will evaluate the resulting tool calls independently of the content.
 
 ---
