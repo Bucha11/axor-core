@@ -61,23 +61,23 @@ _DECIDABLE_KINDS = frozenset({
 _DECIDABLE_MODES = frozenset({ConsumptionMode.CASE_SPLIT, ConsumptionMode.NUMERIC})
 
 
-class T4Verdict(str, Enum):
+class DecidabilityVerdict(str, Enum):
     DECIDABLE_PASS = "decidable_pass"
     DECIDABLE_FAIL = "decidable_fail"
     FUZZ_REQUIRED = "fuzz_required"
 
 
 @dataclass(frozen=True)
-class T4Result:
-    verdict: T4Verdict
+class DecidabilityResult:
+    verdict: DecidabilityVerdict
     reason: str
 
     @property
     def is_pass(self) -> bool:
-        return self.verdict == T4Verdict.DECIDABLE_PASS
+        return self.verdict == DecidabilityVerdict.DECIDABLE_PASS
 
 
-def is_t4_decidable(kind: CodomainKind, mode: ConsumptionMode) -> bool:
+def is_decidable(kind: CodomainKind, mode: ConsumptionMode) -> bool:
     """Thm. 0 classifier: is T4 decidable for this (codomain, consumption) pair?
 
     Decidable iff the codomain is low-capacity AND the consumer treats it as a
@@ -88,7 +88,7 @@ def is_t4_decidable(kind: CodomainKind, mode: ConsumptionMode) -> bool:
     return kind in _DECIDABLE_KINDS and mode in _DECIDABLE_MODES
 
 
-def verify_enum(value: object, admissible: Iterable[object]) -> T4Result:
+def verify_enum(value: object, admissible: Iterable[object]) -> DecidabilityResult:
     """Decision procedure for an enum codomain consumed as a case-split.
 
     Decidable: membership in a finite admissible set. effective ⊆ nominal iff the
@@ -97,13 +97,13 @@ def verify_enum(value: object, admissible: Iterable[object]) -> T4Result:
     """
     admissible_set = set(admissible)
     if value in admissible_set:
-        return T4Result(T4Verdict.DECIDABLE_PASS, f"{value!r} ∈ admissible enum")
-    return T4Result(
-        T4Verdict.DECIDABLE_FAIL, f"{value!r} ∉ admissible enum {sorted(map(repr, admissible_set))}"
+        return DecidabilityResult(DecidabilityVerdict.DECIDABLE_PASS, f"{value!r} ∈ admissible enum")
+    return DecidabilityResult(
+        DecidabilityVerdict.DECIDABLE_FAIL, f"{value!r} ∉ admissible enum {sorted(map(repr, admissible_set))}"
     )
 
 
-def verify_bounded_numeric(value: object, lo: Real, hi: Real) -> T4Result:
+def verify_bounded_numeric(value: object, lo: Real, hi: Real) -> DecidabilityResult:
     """Decision procedure for a bounded-numeric codomain consumed numerically.
 
     Decidable: a real in [lo, hi]. Numeric consumption (compare/arithmetic/range)
@@ -111,24 +111,24 @@ def verify_bounded_numeric(value: object, lo: Real, hi: Real) -> T4Result:
     construction — provided the value is genuinely numeric and in range.
     """
     if isinstance(value, bool) or not isinstance(value, Real):
-        return T4Result(T4Verdict.DECIDABLE_FAIL, f"{value!r} is not a real number")
+        return DecidabilityResult(DecidabilityVerdict.DECIDABLE_FAIL, f"{value!r} is not a real number")
     if lo <= value <= hi:
-        return T4Result(T4Verdict.DECIDABLE_PASS, f"{value!r} ∈ [{lo}, {hi}]")
-    return T4Result(T4Verdict.DECIDABLE_FAIL, f"{value!r} ∉ [{lo}, {hi}]")
+        return DecidabilityResult(DecidabilityVerdict.DECIDABLE_PASS, f"{value!r} ∈ [{lo}, {hi}]")
+    return DecidabilityResult(DecidabilityVerdict.DECIDABLE_FAIL, f"{value!r} ∉ [{lo}, {hi}]")
 
 
-def classify(kind: CodomainKind, mode: ConsumptionMode) -> T4Result:
+def classify(kind: CodomainKind, mode: ConsumptionMode) -> DecidabilityResult:
     """Return the obligation a projection must discharge for T4 under Thm. 0:
     a decision procedure (decidable branch) or a fuzz obligation (rich-syntax).
     """
-    if is_t4_decidable(kind, mode):
-        return T4Result(
-            T4Verdict.DECIDABLE_PASS,
+    if is_decidable(kind, mode):
+        return DecidabilityResult(
+            DecidabilityVerdict.DECIDABLE_PASS,
             f"T4 decidable by construction for ({kind.value}, {mode.value}); "
             "discharge with verify_enum / verify_bounded_numeric (given K2).",
         )
-    return T4Result(
-        T4Verdict.FUZZ_REQUIRED,
+    return DecidabilityResult(
+        DecidabilityVerdict.FUZZ_REQUIRED,
         f"T4 is a fuzzing obligation for ({kind.value}, {mode.value}): the consumer "
         "is a rich-syntax interpreter; effective may exceed nominal (K5/T4).",
     )

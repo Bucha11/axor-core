@@ -43,7 +43,7 @@ pytestmark = pytest.mark.adversarial
     "2130706433",          # single-int loopback
     "::ffff:127.0.0.1",    # ipv4-mapped loopback
 ])
-def test_c1_loopback_notations_not_external(host):
+def test_loopback_notations_not_external(host):
     assert classify_host(host) == "localhost"
 
 
@@ -56,18 +56,18 @@ def test_c1_loopback_notations_not_external(host):
     "::ffff:169.254.169.254",  # ipv4-mapped metadata
     "0.0.0.0",                 # unspecified — routes to local services
 ])
-def test_c1_metadata_and_internal_never_external(host):
+def test_metadata_and_internal_never_external(host):
     assert classify_host(host) == "private_network"
 
 
-def test_c1_genuine_external_still_external():
+def test_genuine_external_still_external():
     assert classify_host("example.com") == "external_url"
     assert classify_host("8.8.8.8") == "external_url"
 
 
 # ── C2: extra_allowed_tools cannot introduce a tool base never granted ─────────
 
-def test_c2_extra_allowed_cannot_exceed_base():
+def test_extra_allowed_cannot_exceed_base():
     base = ExecutionPolicy(
         name="base", tool_policy=ToolPolicy(extra_allowed=("safe_tool",))
     )
@@ -82,7 +82,7 @@ def test_c2_extra_allowed_cannot_exceed_base():
     assert "rce_tool" not in granted        # base never did — no escalation
 
 
-def test_c2_extra_allowed_empty_base_grants_nothing():
+def test_extra_allowed_empty_base_grants_nothing():
     base = ExecutionPolicy(name="base", tool_policy=ToolPolicy(extra_allowed=()))
     fragment = ExtensionFragment(
         name="ext", context_fragment="", required_tools=(),
@@ -95,7 +95,7 @@ def test_c2_extra_allowed_empty_base_grants_nothing():
 
 # ── NC4: deployment overlay intersects (a broad overlay never widens) ──────────
 
-def test_nc4_overlay_escalation_cannot_widen():
+def test_overlay_escalation_cannot_widen():
     # Per-task policy: no escalation. Overlay: permissive. Result must stay closed.
     tight = ExecutionPolicy(
         name="task",
@@ -111,7 +111,7 @@ def test_nc4_overlay_escalation_cannot_widen():
     assert result.escalation_policy.grantable_tools == ()
 
 
-def test_nc4_overlay_escalation_takes_min_bounds():
+def test_overlay_escalation_takes_min_bounds():
     task = ExecutionPolicy(
         name="task", tool_policy=ToolPolicy(),
         escalation_policy=EscalationPolicy(
@@ -131,7 +131,7 @@ def test_nc4_overlay_escalation_takes_min_bounds():
     assert e.require_human is True              # OR — more restrictive wins
 
 
-def test_nc4_overlay_root_workspace_does_not_widen_paths():
+def test_overlay_root_workspace_does_not_widen_paths():
     # Per-task policy confined to a project dir; overlay workspace is root.
     # Intersection must keep the project dir, not widen to root.
     task = ExecutionPolicy(
@@ -143,7 +143,7 @@ def test_nc4_overlay_root_workspace_does_not_widen_paths():
     assert result.allowed_paths == ("/home/user/project",)
 
 
-def test_nc4_overlay_workspace_confines_a_path_outside_it():
+def test_overlay_workspace_confines_a_path_outside_it():
     # A per-task path outside the operator workspace must be dropped (fail closed).
     task = ExecutionPolicy(
         name="task", tool_policy=ToolPolicy(),
@@ -172,7 +172,7 @@ def _authority():
     )
 
 
-def test_nc3_clearance_resets_quarantine():
+def test_clearance_resets_quarantine():
     engine = DegradationEngine()
     engine.quarantine_source("evil", "test")
     assert engine.state.level == DegradationLevel.RESTRICTED
@@ -187,7 +187,7 @@ def test_nc3_clearance_resets_quarantine():
     assert engine.state.session_deny_count == 0
 
 
-def test_nc3_can_return_to_clean_then_requarantine_fresh():
+def test_can_return_to_clean_then_requarantine_fresh():
     engine = DegradationEngine()
     engine.quarantine_source("evil", "test")
     engine.clear_by_governance(_authority(), "reviewed", DegradationLevel.NORMAL)
@@ -209,7 +209,7 @@ def _ni(provenance="user", tool="bash"):
     )
 
 
-def test_nm3_value_keyed_source_id_matches_with_driving_root():
+def test_value_keyed_source_id_matches_with_driving_root():
     engine = DegradationEngine()
     root = CausalRoot(sources=frozenset({TaintSource.WEB}))
     # record path derives "value:web" because provenance is user (not web).
@@ -282,7 +282,7 @@ async def _drive_spawn(loop: IntentLoop, env, task: str) -> list[dict]:
 
 
 @pytest.mark.asyncio
-async def test_nc2_tainted_spawn_task_is_denied():
+async def test_tainted_spawn_task_is_denied():
     spawned: list[str] = []
 
     async def _spawn_cb(tool_use_id: str, task: str, context_hint: str) -> str:
@@ -301,7 +301,7 @@ async def test_nc2_tainted_spawn_task_is_denied():
 
 
 @pytest.mark.asyncio
-async def test_nc2_clean_spawn_task_still_allowed():
+async def test_clean_spawn_task_still_allowed():
     spawned: list[str] = []
 
     async def _spawn_cb(tool_use_id: str, task: str, context_hint: str) -> str:

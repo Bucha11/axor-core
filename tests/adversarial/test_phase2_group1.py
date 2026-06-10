@@ -34,14 +34,14 @@ pytestmark = pytest.mark.adversarial
     "https://x.y/z", "localhost:8080", "a b c", math.inf, math.nan,
     {"x": math.inf}, {"path": "/etc/shadow"}, "{\"x\": Infinity}",
 ])
-def test_nm6_dangerous_forms_are_free_text(value):
+def test_dangerous_forms_are_free_text(value):
     assert classify_carrier(value) == Carrier.FREE_TEXT
 
 
 @pytest.mark.parametrize("value", [
     42, True, None, "svc-1_abc", "1.2.3", {"action": "deploy", "v": "1.0"},
 ])
-def test_nm6_closed_forms_unchanged(value):
+def test_closed_forms_unchanged(value):
     assert classify_carrier(value) != Carrier.FREE_TEXT
 
 
@@ -94,7 +94,7 @@ def _loop() -> IntentLoop:
 
 
 @pytest.mark.asyncio
-async def test_nm5_power_state_bash_is_gated():
+async def test_power_state_bash_is_gated():
     # `bash shutdown` is invisible to the provenance axes but CATASTROPHIC by action
     # class — the operation enum escalates it past the unattended ceiling (X5).
     r = await _resolve(_loop(), _env(), "bash", {"cmd": "shutdown -h now"})
@@ -103,7 +103,7 @@ async def test_nm5_power_state_bash_is_gated():
 
 
 @pytest.mark.asyncio
-async def test_nm5_ordinary_bash_still_passes():
+async def test_ordinary_bash_still_passes():
     r = await _resolve(_loop(), _env(), "bash", {"cmd": "ls -la"})
     assert r.approved
 
@@ -113,14 +113,14 @@ async def test_nm5_ordinary_bash_still_passes():
     "dd if=/dev/zero of=/dev/sda",
 ])
 @pytest.mark.asyncio
-async def test_nm5_power_state_variants_gated(cmd):
+async def test_power_state_variants_gated(cmd):
     r = await _resolve(_loop(), _env(), "bash", {"cmd": cmd})
     assert not r.approved
 
 
 # ── NM2: value_policies wired through GovernedSession ──────────────────────────
 
-def test_nm2_session_forwards_value_policies_to_node():
+def test_session_forwards_value_policies_to_node():
     from axor_core.worker.session import GovernedSession
     from axor_core.policy.value_policy import enum
 

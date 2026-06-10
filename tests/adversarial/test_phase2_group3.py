@@ -21,7 +21,7 @@ pytestmark = pytest.mark.adversarial
 
 # ── M9: register_node ──────────────────────────────────────────────────────────
 
-def test_m9_register_node_idempotent_preserves_counters():
+def test_register_node_idempotent_preserves_counters():
     # The risk in the fix: register before every record must NOT wipe accumulated
     # tokens. Re-registering updates metadata only.
     tr = BudgetTracker()
@@ -32,7 +32,7 @@ def test_m9_register_node_idempotent_preserves_counters():
     assert snap.input_tokens == 100 and snap.output_tokens == 50
 
 
-def test_m9_depth_and_subtree_accounting_correct():
+def test_depth_and_subtree_accounting_correct():
     tr = BudgetTracker()
     tr.register_node("root", parent_id=None, depth=0)
     tr.record("root", input_tokens=10, output_tokens=0)
@@ -59,7 +59,7 @@ def _cap() -> CapabilityExecutor:
 
 
 @pytest.mark.asyncio
-async def test_m9_session_run_registers_node_no_warning(caplog):
+async def test_session_run_registers_node_no_warning(caplog):
     # Wiring: the session path must register the node before recording, so the
     # tracker never falls back to its 'unregistered node' warn-and-default.
     ex = EchoExecutor(tool_calls=[("read", {"path": "auth.py"})])
@@ -77,7 +77,7 @@ async def test_m9_session_run_registers_node_no_warning(caplog):
 
 # ── M11: restrict_export enforced ──────────────────────────────────────────────
 
-def test_m11_more_restrictive_export_ordering():
+def test_more_restrictive_export_ordering():
     F, S, FI, R = (ExportMode.FULL, ExportMode.SUMMARY,
                    ExportMode.FILTERED, ExportMode.RESTRICTED)
     assert _more_restrictive_export(F, S) == S        # narrow full -> summary
@@ -88,7 +88,7 @@ def test_m11_more_restrictive_export_ordering():
 
 
 @pytest.mark.asyncio
-async def test_m11_budget_restrict_export_narrows_full_export():
+async def test_budget_restrict_export_narrows_full_export():
     # A FULL-export policy whose budget crosses restrict_export must actually narrow
     # to SUMMARY — previously the decision was only logged.
     async def _run(limit):

@@ -126,7 +126,7 @@ async def test_floor_blocks_paraphrased_secret():
 
 
 @pytest.mark.asyncio
-async def test_short_secret_still_activates_floor_nm1():
+async def test_short_secret_still_activates_floor():
     # NM1: a secret shorter than the ledger's minimum fragment stores no fragment,
     # but the floor activates on the READ fact, so egress is still denied.
     eng = TaintEngine()

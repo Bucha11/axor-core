@@ -79,7 +79,7 @@ async def _resolve(env):
 
 
 @pytest.mark.asyncio
-async def test_nm4_unknown_sink_gated_under_strict_ceiling():
+async def test_unknown_sink_gated_under_strict_ceiling():
     # strict posture: ceiling REVERSIBLE -> an unknown CONSEQUENTIAL sink exceeds it
     # and is gated unattended (fail-closed) without an explicit table entry.
     r = await _resolve(_env(ConsequenceClass.REVERSIBLE))
@@ -88,7 +88,7 @@ async def test_nm4_unknown_sink_gated_under_strict_ceiling():
 
 
 @pytest.mark.asyncio
-async def test_nm4_unknown_sink_allowed_under_default_ceiling():
+async def test_unknown_sink_allowed_under_default_ceiling():
     # default posture: ceiling CONSEQUENTIAL -> unknown sink passes unattended (the
     # deliberate usability default; operators tighten via `danger` or strict mode).
     r = await _resolve(_env(ConsequenceClass.CONSEQUENTIAL))

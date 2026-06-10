@@ -11,9 +11,9 @@ from __future__ import annotations
 from axor_core.kernel.decidability import (
     CodomainKind,
     ConsumptionMode,
-    T4Verdict,
+    DecidabilityVerdict,
     classify,
-    is_t4_decidable,
+    is_decidable,
     verify_bounded_numeric,
     verify_enum,
 )
@@ -22,22 +22,22 @@ from axor_core.kernel.decidability import (
 # ── classifier ──────────────────────────────────────────────────────────────────
 
 def test_enum_and_numeric_are_decidable():
-    assert is_t4_decidable(CodomainKind.ENUM, ConsumptionMode.CASE_SPLIT)
-    assert is_t4_decidable(CodomainKind.BOUNDED_NUMERIC, ConsumptionMode.NUMERIC)
-    assert is_t4_decidable(CodomainKind.PROVENANCE_LABEL, ConsumptionMode.CASE_SPLIT)
+    assert is_decidable(CodomainKind.ENUM, ConsumptionMode.CASE_SPLIT)
+    assert is_decidable(CodomainKind.BOUNDED_NUMERIC, ConsumptionMode.NUMERIC)
+    assert is_decidable(CodomainKind.PROVENANCE_LABEL, ConsumptionMode.CASE_SPLIT)
 
 
 def test_rich_syntax_is_fuzz_required():
-    assert not is_t4_decidable(CodomainKind.PATH_CLASS, ConsumptionMode.PATH_RESOLVE)
-    assert not is_t4_decidable(CodomainKind.STRING_SUBFIELD, ConsumptionMode.INTERPRET)
-    assert classify(CodomainKind.PATH_CLASS, ConsumptionMode.PATH_RESOLVE).verdict == T4Verdict.FUZZ_REQUIRED
+    assert not is_decidable(CodomainKind.PATH_CLASS, ConsumptionMode.PATH_RESOLVE)
+    assert not is_decidable(CodomainKind.STRING_SUBFIELD, ConsumptionMode.INTERPRET)
+    assert classify(CodomainKind.PATH_CLASS, ConsumptionMode.PATH_RESOLVE).verdict == DecidabilityVerdict.FUZZ_REQUIRED
 
 
 def test_enum_consumed_by_an_interpreter_falls_to_fuzzing():
     # A low-capacity codomain handed to a rich-syntax consumer is NOT decidable:
     # decidability is a property of (codomain, consumer), per Thm. 0 (and why
     # FIDES's string-typed field is fuzzing, not a clean pass).
-    assert not is_t4_decidable(CodomainKind.ENUM, ConsumptionMode.INTERPRET)
+    assert not is_decidable(CodomainKind.ENUM, ConsumptionMode.INTERPRET)
 
 
 # ── decision procedures ───────────────────────────────────────────────────────

@@ -22,9 +22,9 @@ from __future__ import annotations
 from axor_core.kernel.decidability import (
     CodomainKind,
     ConsumptionMode,
-    T4Verdict,
+    DecidabilityVerdict,
     classify,
-    is_t4_decidable,
+    is_decidable,
 )
 from axor_core.policy.value_policy import ValuePredicate
 
@@ -43,7 +43,7 @@ def predicate_is_decidable(pred: ValuePredicate) -> bool:
     proj = _PREDICATE_PROJECTION.get(pred.kind)
     if proj is None:
         return False  # unknown predicate kind → not provably decidable
-    return is_t4_decidable(*proj)
+    return is_decidable(*proj)
 
 
 def validate_value_policies(
@@ -69,7 +69,7 @@ def validate_value_policies(
                 )
                 continue
             result = classify(*proj)
-            if result.verdict != T4Verdict.DECIDABLE_PASS:
+            if result.verdict != DecidabilityVerdict.DECIDABLE_PASS:
                 errors.append(
                     f"sink {sink!r} arg {pred.arg!r}: projection "
                     f"{proj[0].value}/{proj[1].value} is {result.verdict.value} — "
@@ -81,4 +81,4 @@ def validate_value_policies(
 def field_obligation(kind: CodomainKind, mode: ConsumptionMode) -> str:
     """Operator-facing helper: 'predicate' if a sink field can be guarded by a
     decidable value predicate, else 'fuzz' (must ride the fuzz/positional path)."""
-    return "predicate" if is_t4_decidable(kind, mode) else "fuzz"
+    return "predicate" if is_decidable(kind, mode) else "fuzz"
