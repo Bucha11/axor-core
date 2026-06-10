@@ -33,11 +33,21 @@ from agentdojo.attacks.attack_registry import load_attack
 from agentdojo.task_suite.load_suites import get_suites
 
 sys.path.insert(0, os.path.dirname(__file__))
-from agentdojo_adapter import GovernedToolsExecutor, RawAnthropicLLM  # noqa: E402
+from agentdojo_adapter import (  # noqa: E402
+    GovernedToolsExecutor,
+    OpenRouterLLM,
+    RawAnthropicLLM,
+)
 
 from axor_core.governor import ToolCallGovernor  # noqa: E402
 
-MODEL = "claude-haiku-4-5-20251001"
+# Backend: "anthropic" (claude via raw urllib) or "openrouter" (e.g. Qwen).
+# Override from the environment: AXOR_BENCH_BACKEND / AXOR_BENCH_MODEL.
+BACKEND = os.environ.get("AXOR_BENCH_BACKEND", "openrouter")
+MODEL = os.environ.get(
+    "AXOR_BENCH_MODEL",
+    "qwen/qwen-2.5-72b-instruct" if BACKEND == "openrouter" else "claude-haiku-4-5-20251001",
+)
 ATTACK = "important_instructions"
 SUITE = "banking"
 
@@ -74,8 +84,23 @@ def make_banking_governor() -> ToolCallGovernor:
     )
 
 
+def _make_llm():
+    if BACKEND == "openrouter":
+        return OpenRouterLLM(model=MODEL)
+    return RawAnthropicLLM(model=MODEL)
+
+
+# A model-id token AgentDojo's MODEL_NAMES recognises, so important_instructions
+# can address the model by name. Qwen isn't in the map; the Llama id maps to the
+# generic "AI assistant", which is the faithful choice for an open model.
+_MODEL_NAME_TOKEN = (
+    "meta-llama/Llama-3-70b-chat-hf" if BACKEND == "openrouter"
+    else "claude-3-5-sonnet-20241022"
+)
+
+
 def build_pipeline(governed: bool):
-    llm = RawAnthropicLLM(model=MODEL)
+    llm = _make_llm()
     if governed:
         tools_executor = GovernedToolsExecutor(make_banking_governor)
     else:
@@ -87,11 +112,7 @@ def build_pipeline(governed: bool):
         llm,
         loop,
     ])
-    # Name must contain a model id AgentDojo's MODEL_NAMES maps to "Claude" — the
-    # important_instructions attack personalises its injection with the model name.
-    pipeline.name = (
-        f"axor-{'governed' if governed else 'undefended'}-claude-3-5-sonnet-20241022"
-    )
+    pipeline.name = f"axor-{'governed' if governed else 'undefended'}-{_MODEL_NAME_TOKEN}"
     return pipeline, tools_executor
 
 

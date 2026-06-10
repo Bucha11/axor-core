@@ -154,6 +154,122 @@ class RawAnthropicLLM(BasePipelineElement):
         return query, runtime, env, [*messages, assistant], extra_args
 
 
+# ── OpenRouter (OpenAI chat-completions) LLM element ────────────────────────────
+
+_OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+
+
+def _messages_to_openai(messages: Sequence[ChatMessage]) -> list[dict]:
+    """Convert AgentDojo chat messages to OpenAI chat-completions messages."""
+    out: list[dict] = []
+    for msg in messages:
+        role = msg["role"]
+        if role == "system":
+            out.append({"role": "system", "content": msg["content"][0]["content"]})
+        elif role == "user":
+            out.append({
+                "role": "user",
+                "content": "\n".join(b["content"] for b in msg["content"] if b.get("content")),
+            })
+        elif role == "assistant":
+            text = "\n".join(
+                b["content"] for b in (msg["content"] or []) if b.get("content")
+            )
+            tool_calls = [
+                {
+                    "id": tc.id,
+                    "type": "function",
+                    "function": {"name": tc.function, "arguments": json.dumps(dict(tc.args))},
+                }
+                for tc in (msg["tool_calls"] or [])
+            ]
+            m: dict = {"role": "assistant", "content": text or None}
+            if tool_calls:
+                m["tool_calls"] = tool_calls
+            out.append(m)
+        elif role == "tool":
+            is_error = msg["error"] is not None
+            content = msg["error"] if is_error else (
+                msg["content"][0]["content"] if msg["content"] else ""
+            )
+            out.append({
+                "role": "tool",
+                "tool_call_id": msg["tool_call_id"],
+                "content": content or "",
+            })
+    return out
+
+
+class OpenRouterLLM(BasePipelineElement):
+    """An AgentDojo LLM element backed by OpenRouter (OpenAI-compatible API),
+    over raw urllib. Use to drive injection-susceptible open models (e.g. Qwen)
+    that AgentDojo was designed to stress."""
+
+    def __init__(self, model: str, max_tokens: int = 1024) -> None:
+        self.model = model
+        self.max_tokens = max_tokens
+        self.name = f"openrouter-{model}"
+        self._key = os.environ.get("OPEN_ROUTER_API_KEY", "").strip()
+
+    def _post(self, body: dict) -> dict:
+        req = urllib.request.Request(
+            _OPENROUTER_URL,
+            data=json.dumps(body).encode(),
+            headers={
+                "content-type": "application/json",
+                "authorization": f"Bearer {self._key}",
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                return json.load(resp)
+        except urllib.error.HTTPError as exc:
+            raise RuntimeError(f"OpenRouter {exc.code}: {exc.read().decode(errors='replace')}") from exc
+
+    def query(self, query, runtime, env=EmptyEnv(), messages=[], extra_args={}):
+        tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": f.name,
+                    "description": f.description,
+                    "parameters": f.parameters.model_json_schema(),
+                },
+            }
+            for f in runtime.functions.values()
+        ]
+        body = {
+            "model": self.model,
+            "max_tokens": self.max_tokens,
+            "messages": _messages_to_openai(messages),
+            "temperature": 0.0,
+        }
+        if tools:
+            body["tools"] = tools
+            body["tool_choice"] = "auto"
+        resp = self._post(body)
+
+        choice = resp["choices"][0]
+        msg = choice["message"]
+        text = msg.get("content") or ""
+        raw_tool_calls = msg.get("tool_calls") or []
+        tool_calls = []
+        for tc in raw_tool_calls:
+            fn = tc["function"]
+            try:
+                args = json.loads(fn["arguments"]) if fn.get("arguments") else {}
+            except json.JSONDecodeError:
+                args = {}
+            tool_calls.append(FunctionCall(id=tc.get("id"), function=fn["name"], args=args))
+        assistant = ChatAssistantMessage(
+            role="assistant",
+            content=[text_content_block_from_string(text)] if text else [],
+            tool_calls=tool_calls or None,
+        )
+        return query, runtime, env, [*messages, assistant], extra_args
+
+
 # ── Governed tool executor ──────────────────────────────────────────────────────
 
 class GovernedToolsExecutor(BasePipelineElement):

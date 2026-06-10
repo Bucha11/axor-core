@@ -44,20 +44,26 @@ design. Reuse it as the starting point for your own provider adapter.
 ## `run_agentdojo.py` + `agentdojo_adapter.py` — the AgentDojo benchmark
 
 Runs the [AgentDojo](https://github.com/ethz-spylab/agentdojo) prompt-injection
-benchmark against a real Claude model, comparing an undefended pipeline to one
-where every tool call passes an axor `ToolCallGovernor` first
-(`GovernedToolsExecutor`). `agentdojo_adapter.py` also provides `RawAnthropicLLM`,
-a raw-urllib AgentDojo LLM element (the SDK cannot connect from this sandbox).
+benchmark against a real model, comparing an undefended pipeline to one where
+every tool call passes an axor `ToolCallGovernor` first (`GovernedToolsExecutor`).
+`agentdojo_adapter.py` provides two raw-urllib LLM elements: `OpenRouterLLM` (e.g.
+Qwen) and `RawAnthropicLLM` (Claude), since neither provider SDK connects from
+this sandbox.
 
 ```
 pip install agentdojo
+# Qwen via OpenRouter (injection-susceptible — the headline run):
+export OPEN_ROUTER_API_KEY=sk-or-...
+AXOR_BENCH_BACKEND=openrouter python -m examples.run_agentdojo
+# Claude via Anthropic (injection-robust — the contrast):
 export ANTHROPIC_API_KEY=sk-ant-...
-python -m examples.run_agentdojo
+AXOR_BENCH_BACKEND=anthropic python -m examples.run_agentdojo
 ```
 
-See **`agentdojo_results.md`** for a real run and an honest read of what it does
-and does not show — including that `claude-haiku-4-5` already resists these
-injections (no ASR headroom) and that naive content-taint over-blocks legitimate
-transfers when a valid recipient co-occurs with the injection channel. The
-governor itself is a first-class kernel API (`axor_core.governor.ToolCallGovernor`)
-usable by any tool-wrapping framework, not just AgentDojo.
+See **`agentdojo_results.md`** for the real numbers and an honest read. On
+**Qwen-2.5-72b** axor drives attack success from **66.7% to 0%**, at a measurable,
+explained utility cost on tasks whose legitimate action flows through the same
+untrusted-read channel as the attack. On **claude-haiku-4-5** the model already
+resists the attack (0% ASR undefended), so there is no headroom. The governor
+itself is a first-class kernel API (`axor_core.governor.ToolCallGovernor`) usable
+by any tool-wrapping framework, not just AgentDojo.
