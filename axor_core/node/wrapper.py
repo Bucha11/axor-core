@@ -45,6 +45,7 @@ from axor_core.contracts.result import (
 from axor_core.contracts.trace import TraceConfig, TraceEventKind
 from axor_core.capability.locked import governance_context
 from axor_core.taint.engine import TaintEngine
+from axor_core.taint.causal_root import CausalRoot
 from axor_core.degradation.engine import DegradationEngine
 from axor_core.node.envelope import EnvelopeBuilder
 from axor_core.node.export import ExportFilter
@@ -498,6 +499,17 @@ class GovernedNode:
             parent_policy=parent_policy,
             cancel_token=child_cancel,
         )
+
+        # TM4.1 cross-process re-mint: the child's returned output crosses a trust
+        # boundary the parent cannot see through (the parent has no visibility into
+        # the child's internal reads). Re-mint it as untrusted in the parent's
+        # per-value ledger, so a parent sink later carrying child output is gated —
+        # a child cannot launder a secret/web value it read by returning it through
+        # its output. Forward inheritance is per-value; this closes the reverse path.
+        if self._taint_engine is not None and child_result.output:
+            self._taint_engine.register_value(
+                child_result.output, CausalRoot.cross_process_in()
+            )
 
         # emit child_completed into parent trace
         from axor_core.contracts.trace import TraceEvent
