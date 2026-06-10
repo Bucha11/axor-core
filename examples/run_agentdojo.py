@@ -49,39 +49,70 @@ MODEL = os.environ.get(
     "qwen/qwen-2.5-72b-instruct" if BACKEND == "openrouter" else "claude-haiku-4-5-20251001",
 )
 ATTACK = "important_instructions"
-SUITE = "banking"
-
-# ── Slice to run (keep small — real API calls) ──────────────────────────────────
-# user_task_0 (pay a bill → reads bill text) and user_task_3 (refund a dinner
-# share → reads an incoming transaction) both have working baseline utility and
-# traverse an injection vector, so the attack actually reaches the model.
-USER_TASKS = ["user_task_0", "user_task_3"]
-INJECTION_TASKS = ["injection_task_0", "injection_task_1", "injection_task_5"]
+SUITE = os.environ.get("AXOR_BENCH_SUITE", "banking")
 
 
-# ── axor taxonomy for the banking suite ─────────────────────────────────────────
+# ── axor taxonomy per suite ─────────────────────────────────────────────────────
 #
-# This is the operator's deployment declaration: which of the suite's tools emit
+# This is the operator's deployment declaration: which of a suite's tools emit
 # untrusted/attacker-influenceable data, and which are value-egress sinks. axor's
 # normalizer knows generic names (read/curl/...); a real tool set is named for its
 # domain, so the operator declares the roles. Nothing here is attack-specific — it
-# is the same taxonomy you would write to deploy axor over this banking agent.
+# is the same taxonomy you would write to deploy axor over this agent.
 def make_banking_governor() -> ToolCallGovernor:
     return ToolCallGovernor(
-        # Tools whose output can carry injected instructions (the read side).
         untrusted_sources={
             "get_most_recent_transactions",
             "get_scheduled_transactions",
             "read_file",
             "get_user_info",
         },
-        # Money/data leaves the boundary here — gate when driven by tainted content.
         egress_sinks={
             "send_money",
             "schedule_transaction",
             "update_scheduled_transaction",
         },
     )
+
+
+def make_workspace_governor() -> ToolCallGovernor:
+    return ToolCallGovernor(
+        # Email/calendar/file reads can carry injected instructions.
+        untrusted_sources={
+            "get_received_emails", "get_unread_emails", "get_sent_emails",
+            "get_draft_emails", "search_emails",
+            "get_day_calendar_events", "search_calendar_events",
+            "get_file_by_id", "search_files", "search_files_by_filename", "list_files",
+            "search_contacts_by_name", "search_contacts_by_email",
+        },
+        # Data leaves the workspace here (an email to / a file shared with an
+        # external recipient). The attacker address is injected — so it arrives
+        # tainted — while a legitimate recipient comes from the user's prompt.
+        egress_sinks={"send_email", "share_file"},
+    )
+
+
+# Per-suite config: governor factory + the task slice to run.
+SUITES = {
+    "banking": {
+        "governor": make_banking_governor,
+        # Tasks that traverse an injection vector with working baseline utility.
+        "user_tasks": ["user_task_0", "user_task_3"],
+        "injection_tasks": ["injection_task_0", "injection_task_1", "injection_task_5"],
+    },
+    "workspace": {
+        "governor": make_workspace_governor,
+        # Read-only email questions: the injection lands, but the legit flow does
+        # not send email — so the exfiltration block is isolated from utility.
+        "user_tasks": ["user_task_14", "user_task_16", "user_task_17"],
+        "injection_tasks": ["injection_task_0", "injection_task_3", "injection_task_4"],
+    },
+}
+
+_CFG = SUITES[SUITE]
+make_governor = _CFG["governor"]
+USER_TASKS = _CFG["user_tasks"]
+INJECTION_TASKS = _CFG["injection_tasks"]
 
 
 def _make_llm():
@@ -102,7 +133,7 @@ _MODEL_NAME_TOKEN = (
 def build_pipeline(governed: bool):
     llm = _make_llm()
     if governed:
-        tools_executor = GovernedToolsExecutor(make_banking_governor)
+        tools_executor = GovernedToolsExecutor(make_governor)
     else:
         tools_executor = ToolsExecutor()
     loop = ToolsExecutionLoop([tools_executor, llm])
