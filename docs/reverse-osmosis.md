@@ -56,7 +56,7 @@ vector that reached the worker cannot trivially reach the verifier.
 
 The defense cascade never sees raw content. It operates on two derived schemas.
 
-**`NormalizedIntent`** — used by Layer 1 and Layer 2. Structural shape of the intent, no values:
+**`NormalizedIntent`** — the structural shape of an intent that the gates read, no values:
 
 ```python
 @dataclass(frozen=True)
@@ -84,14 +84,14 @@ class NormalizedIntent:
 inspecting content: the agent read something external, and now it wants to act.
 That pattern is the attack surface.
 
-**`CanonicalizedIntent`** — used by Layer 3 only. All raw strings stripped by `IntentCanonicalizer`:
+**`CanonicalizedIntent`** — the content-free projection the adjudicator and detection see. All raw strings stripped by `IntentCanonicalizer`:
 
 ```python
 CanonicalizedIntent(
     tool_name="read",
     path_extension=".py",         # extension only — never the full path
     arg_count=1,
-    taint_state=TaintState(sources={WEB}, sticky=True, intent_age=3),
+    taint_state_summary="tainted:web",   # per-value provenance summary
     escalation_count=2,
     # raw task text:  gone
     # raw file path:  gone
@@ -101,192 +101,83 @@ CanonicalizedIntent(
 
 **The isolation boundary between the two schemas is intentional:**
 
-`NormalizedIntent` is evaluated within the trusted runtime — Layers 1 and 2 operate inside the governance boundary and have full structural access.
+`NormalizedIntent` is evaluated within the trusted runtime — the structural gates operate inside the governance boundary and have full structural access.
 
-`CanonicalizedIntent` is the schema passed *across* the isolation boundary to Layer 3. The verifier operates in a separate context with no shared conversation state. The current architecture is designed to prevent raw strings from crossing this boundary — a prompt injection embedded in a file path, tool argument, or task text is intended not to reach the verifier.
+`CanonicalizedIntent` is the projection passed to any advisory adjudicator or detection layer. It carries no raw strings — a prompt injection embedded in a file path, tool argument, or task text cannot reach a layer that only sees the projection, so it cannot steer the decision.
 
 ---
 
-## Defense Cascade
+## The Gate Sequence
 
-Three defense layers plus a session-level behavioral state machine (`DegradationEngine`).
-Each layer is independently packaged and optional (except Layer 1 and the degradation engine,
-which always run). A deny at any layer is final — the current implementation is designed so
-that later layers do not override an earlier deny.
+Every tool call is converted into an intent and run through a fixed sequence of
+structural gates plus a session-level degradation state machine. A deny at any gate
+is final — nothing downstream turns it back into an allow.
 
 ```
 Intent arrives
       │
       ▼
-┌─────────────────────────────────────────────┐
-│  DegradationEngine pre-check                │
-│  (apply_to_policy — runs before Layer 1)    │
-│                                             │
-│  TERMINAL           → SessionTerminatedError│
-│  LOCKED             → tools frozen;         │
-│                       only read/escalate    │
-│  quarantined source → write/bash/export off │
-└──────────────────────┬──────────────────────┘
-                       │ effective policy
-                       ▼
-┌─────────────────────────────────────────────┐
-│  Layer 1: Rules  (axor-core, always)        │
-│                                             │
-│  Hard denies. Zero cost. Zero deps.         │
-│  Synchronous, unconditional, first.         │
-│  • write to path outside allowed set        │
-│  • bash after external read without grant   │
-│  • export when export_mode=RESTRICTED       │
-│  • spawn_child when child_mode=DENIED       │
-│  • spawn depth ≥ max_child_depth            │
-│  • tool not in capabilities.allowed_tools   │
-│  • lease expired, exhausted, or path OOB    │
-└──────────────────────┬──────────────────────┘
-                       │ passed rules
-                       ▼
-┌─────────────────────────────────────────────┐
-│  Layer 2: ML Scorer  (axor-classifier-simple│
-│           optional)                         │
-│                                             │
-│  GradientBoosting on NormalizedIntent       │
-│  feature window. Scores 0.0–1.0.            │
-│  Trained on synthetic + anonymized traces.  │
-│                                             │
-│  score < low_threshold  → allow             │
-│  score > high_threshold → deny              │
-│  gray zone              → Layer 3           │
-└──────────────────────┬──────────────────────┘
-                       │ gray zone only
-                       ▼
-┌─────────────────────────────────────────────┐
-│  Layer 3: LLM Verifier  (axor-classifier-llm│
-│           optional)                         │
-│                                             │
-│  Separate API call, clean context.          │
-│  Receives CanonicalizedIntent only —        │
-│  no raw args, no conversation history.      │
-│  Static system prompt, not user-modifiable. │
-│                                             │
-│  Returns: allow | deny | ask_human          │
-└──────────────────────┬──────────────────────┘
-                       │ final outcome (allow or deny)
-                       ▼
-┌─────────────────────────────────────────────┐
-│  DegradationEngine.record_signal()          │
-│  (post-cascade — runs after every outcome)  │
-│                                             │
-│  Updates session degradation state.         │
-│  Emits DegradationTransitionEvent /         │
-│  SourceQuarantinedEvent on level change.    │
-└─────────────────────────────────────────────┘
+  Degradation pre-check  ── narrows the effective policy for a degraded session
+      │                     (locked → read/escalate only; quarantined source → no write/bash/export)
+      ▼
+  1. Capability          ── is the tool allowed by the active policy at all?
+  2. Consequence         ── how irreversible is the ACTION class? (content-blind;
+                            a shutdown/wipe exceeds the unattended ceiling)
+  3. Value policies      ── decidable predicates on arguments (amount in range, enum)
+  4. Degradation         ── refuse a call a quarantined source would drive
+  5. Positional          ── declared sinks: admit only instruction-incomplete FORMS
+  6. Carrier             ── untrusted free text into an instruction-following sink?
+  7. Per-value taint     ── integrity (untrusted → high-risk op) + confidentiality floor
+  8. Adjudicator         ── optional advisory second opinion (tightening-only)
+      │
+      ▼
+  Execute, then register the output's provenance for later calls
 ```
 
-### Layer 1 — Rules
+Gates 1–4 read the call and the policy; 5–6 read the *form* of the value (never its
+content); 7 reads the value's own provenance. Detection (reputation, anomaly, drift)
+is **not** on this path — it is observe-only and may, opt-in, only *tighten*
+degradation. See [governance-model.md](governance-model.md) for the full statement.
 
-Always present. Implemented in `axor_core/node/intent_loop.py` and `axor_core/capability/`.
+### Why structure beats content at gates 5–6
 
-The rules are hard constraints derived from `ExecutionPolicy`. They fire before any ML inference. A Layer 1 deny is not heuristic — it is structural.
+Content tracking is sound but incomplete: an in-process model can paraphrase an
+untrusted value so a content match misses it. The carrier and positional gates read
+the value's **form** instead — a closed schema / enum / number cannot encode an
+instruction, regardless of its content — so paraphrase is irrelevant. A sink whose
+legitimate input genuinely needs free text (a shell command) is instruction-complete
+by definition and **cannot** be declared positional; it stays on content tracking
+with the acknowledged residual below.
 
-| Signal | Deny condition |
-|--------|---------------|
-| `write` | path outside `allowed_paths` after `normpath()` |
-| `bash` | `preceded_by_external_read=True` and no escalation grant |
-| `export` | `export_mode=RESTRICTED` |
-| `spawn_child` | `child_mode=DENIED` or depth ≥ `max_child_depth` |
-| any tool | tool not in `capabilities.allowed_tools` |
-| any tool | lease expired, `max_uses` exhausted, or path outside `allowed_paths` |
+### Degradation — a one-way tightening
 
-On deny: `DenialResponse(status, coarse_category, opaque_decision_id)` — no policy state, no trace internals, no raw capability details exposed to the executor.
-
-### Layer 2 — ML Scorer
-
-Package: [`axor-classifier-simple`](https://github.com/Bucha11/axor-classifier-simple). No LLM dependency. Inference target: **< 1ms**.
-
-**Features** (all from `NormalizedIntent`, no content):
-
-```
-tool_is_write, tool_is_bash, tool_is_export, tool_is_spawn
-preceded_by_external_read
-executes_generated_code
-cross_origin_export
-depth
-escalation_active
-intents_since_last_external
-sequence_position
-```
-
-**Output**: anomaly score `0.0–1.0`. Default thresholds:
-
-| Score | Action |
-|-------|--------|
-| `< 0.3` | allow |
-| `> 0.7` | deny |
-| `0.3–0.7` | escalate to Layer 3 if available, else deny |
-
-Thresholds are configurable per deployment. In `ExecutionMode.STRICT`, `deny_on_ambiguity=True` — the gray zone auto-denies without reaching Layer 3.
-
-### Layer 3 — LLM Verifier
-
-Package: [`axor-classifier-llm`](https://github.com/Bucha11/axor-classifier-llm). Requires LLM API access.
-
-**Isolation properties (current implementation):**
-- Separate API call, separate context window
-- Receives only `CanonicalizedIntent` — no raw args, no conversation history
-- System prompt is static and not user-modifiable
-- Intended not to share context with the worker agent — worker conversation content is not forwarded to the verifier
-- `IntentCanonicalizer` is designed to strip control characters from path extensions before canonicalization
-
-**Output**: structured verdict:
-
-```json
-{
-  "score": 0.82,
-  "class": "critical",
-  "reasons": ["external read followed by immediate file write", "taint propagated to write target"]
-}
-```
-
-`ask_human` surfaces via the `escalation_callback` mechanism, same path as `EscalationPolicy.require_human=True`.
-
-### DegradationEngine — Session-Level Behavioral State Machine
-
-`DegradationEngine` is not a layer in the cascade — it is a parallel state machine that
-observes cascade outcomes and progressively narrows the capability surface as adverse signals
-accumulate. It runs before the cascade (to apply the current level) and after it (to record
-the outcome).
-
-Unlike a simple "N denials → restrict" global counter, degradation is **source-aware**: a
-malicious document quarantines its origin; clean sources in the same session continue at
-reduced but functional capability until session-level thresholds are crossed.
+A session-level state machine that narrows the surface as adverse *facts* accumulate.
+It applies the current level before the gates and records the outcome after.
 
 | Level | Effect |
 |-------|--------|
 | `NORMAL` | Baseline — full policy in effect |
-| `CAUTIOUS` | Triggering document soft-blocked from context |
-| `RESTRICTED` | Quarantined source blocked; write/bash/export removed for tainted calls |
+| `CAUTIOUS` | Triggering source soft-blocked from context |
+| `RESTRICTED` | Quarantined source blocked; write/bash/export removed for its calls |
 | `LOCKED` | All tools frozen; only `read` + `escalate` permitted; export forced `RESTRICTED` |
 | `TERMINAL` | Session stopped; `SessionTerminatedError` raised on next intent |
 
-**Transition rules:**
+Transitions are driven by **decidable structural facts**, not counters or scores: a
+cross-origin export of an untrusted-rooted value goes straight to `LOCKED`; a denied
+dangerous call quarantines its source and moves to `RESTRICTED`; a further dangerous
+untrusted-rooted fact while `LOCKED` goes `TERMINAL`. Pressure counters are kept as
+telemetry only — they no longer drive a transition.
 
-| Trigger | New level |
-|---------|-----------|
-| Cross-origin export denied (`destination_kind=external_domain/private_network`) | `LOCKED` immediately |
-| `source.tool_pressure_count ≥ 2` | quarantine source + `RESTRICTED` |
-| `source.instruction_pressure_count ≥ 1` | quarantine source + `RESTRICTED` |
-| `session_deny_count ≥ 5` | `LOCKED` |
-| `LOCKED` for `LOCKED_TTL` seconds (default 300 s) without governance clearance | `TERMINAL` |
+Degradation is **monotone** — it never decreases without a `GovernanceAuthority`
+passed to `clear_by_governance`; a worker-path clear raises `DegradationClearanceError`.
+Clearing below `RESTRICTED` releases the quarantine and resets the pressure, so the
+session truly returns to a clean state. Child nodes share the parent's degradation
+state and cannot start below the parent's current level.
 
-Degradation level is **monotonically increasing** — it never decreases without a
-`GovernanceAuthority` object passed to `clear_by_governance`. Worker-path clear raises
-`DegradationClearanceError` (invariant D-1).
-
-Child nodes share the parent's `DegradationEngine` instance — a child cannot start below
-the parent's current `DegradationLevel` (invariant D-6).
 
 ---
 
-## Taint: Per-Value Provenance (TM2)
+## Taint: Per-Value Provenance
 
 When a session processes external content — a web fetch, an MCP result, an untrusted file read — the **value** it produced is registered with its causal root. Enforcement is **per-value**: a sink decides on the causal root of its driving argument (by content derivation), not on a session-wide flag. A value's provenance does not decay on its own; only a governance boundary can release it.
 
@@ -340,7 +231,7 @@ Child agents inherit the parent's per-value ledger (`inherit_value_ledger`). The
 | `PRODUCTION` | `LockedExecutor` — bypass raises `GovernanceBypassError` | Enabled | Escalate |
 | `STRICT` | `LockedExecutor` + audit-required trace | Task classifier disabled for policy selection | Deny |
 
-`STRICT` is a superset of `PRODUCTION`. In `STRICT`, there are no content-based policy decisions — policy is set by the operator, not derived from task text. Gray-zone intents are denied without reaching Layer 3 (`deny_on_ambiguity=True`).
+`STRICT` is a superset of `PRODUCTION`. In `STRICT`, there are no content-based policy decisions — policy is set by the operator, not derived from task text. Ambiguous policy selection fails closed rather than escalating (`deny_on_ambiguity=True`).
 
 ---
 
@@ -390,7 +281,7 @@ The cascade is not only a pre-execution filter. Intent sequences are recorded in
 - **Why was this denied?** — full intent chain with scores at each layer
 - **Pattern analysis** — which intent sequences correlate with injection attempts
 - **Threshold tuning** — adjust ML thresholds based on false positive/negative rates
-- **Dataset curation** — confirmed traces may be curated into future training datasets for Layer 2
+- **Dataset curation** — confirmed traces may be curated into future detection-training datasets
 
 The trace is the primary debugging surface. When the system gets something wrong, the postmortem is in the trace.
 
@@ -399,10 +290,10 @@ for trace in session.all_traces():
     for event in trace.events:
         print(f"{event.kind.value}: {event.payload}")
 
-# intent_approved          {tool: "read", layer1: "pass", layer2: 0.12}
-# intent_denied            {tool: "bash", layer1: "deny", reason: "preceded_by_external_read"}
-# taint_propagated         {source: "WEB", scope: "SESSION"}
-# source_quarantined       {source_id: "web-abc123", reason: "tool_pressure_count >= 2"}
+# intent_approved          {tool: "read"}
+# intent_denied            {tool: "bash", reason: "consequence gate: catastrophic action class"}
+# sink_density             {operation: "curl", tainted: true, sensitive: true}
+# source_quarantined       {source_id: "web-abc123", reason: "tool_pressure_threshold:curl"}
 # degradation_transition   {previous_level: "NORMAL", new_level: "RESTRICTED",
 #                           trigger_source_id: "web-abc123", reason: "source_quarantined"}
 # degradation_transition   {previous_level: "RESTRICTED", new_level: "LOCKED",
@@ -424,8 +315,8 @@ Security properties are tested by a structured regression suite in `tests/advers
 | Federation lateral | 4 | Tainted parent → child inherits; child cannot exceed parent ceiling; export bounded by parent |
 | Trace side-channel | 3 | Direct trace read blocked; denial response has no sensitive fields; coarse categories only |
 | Lease ceiling | 6 | Tool expansion rejected; path restriction enforced; `../` traversal blocked; expired/exhausted leases rejected |
-| Layer override | 2 | ML approve + Layer 1 deny = deny; LLM approve + Layer 1 deny = deny |
-| Degradation | 14 | Monotonicity (level never decreases without governance), source isolation (clean source unaffected by quarantined peer), cross-origin export → LOCKED, LOCKED_TTL auto-TERMINAL, child floor inheritance (D-1..D-7) |
+| Advisory override | 2 | an adjudicator ALLOW never overrides a structural deny; it can only add a deny |
+| Degradation | 14 | Monotonicity (level never decreases without governance), source isolation (clean source unaffected by quarantined peer), cross-origin export → LOCKED, LOCKED_TTL auto-TERMINAL, child floor inheritance |
 
 ### Bypass patterns found by this suite
 
@@ -441,57 +332,53 @@ Two bypass patterns were discovered during development and fixed before release.
 |-----------|---------------------------------------|
 | Taint is sticky — worker-path clearing is blocked | `TaintClearanceError` raised on worker-path clear attempt |
 | Child policy ceiling bounded by parent | `SpawnValidationError` in `_validate_child_policy()` |
-| Layer 1 runs first and is not bypassed by later layers | `_evaluate_tool_intent()` is synchronous; scorer not called on Layer 1 deny |
+| A structural deny is final and not bypassed by an advisory layer | the adjudicator is consulted only on the would-approve path; it can only add a deny |
 | `CanonicalizedIntent` is designed to contain no raw strings | Verified by schema-injection adversarial tests |
 | Denial response is designed to expose only coarse fields | `DenialResponse`: `status`, `coarse_category`, `opaque_decision_id` |
 | Trace access uses constant-time token comparison | `TraceAccessGuard` implementation |
 | Executor requires active governance context in PRODUCTION/STRICT | `LockedExecutor` → `GovernanceBypassError` |
 | STRICT disables task classifier for policy selection | Enforced at `GovernedSession.__init__()` |
-| **D-1** Degradation level is monotonically increasing — worker-path clear blocked | `DegradationClearanceError` raised on worker-path clear attempt |
-| **D-2** TERMINAL session raises before any intent is evaluated | `GovernedSession.run()` checks `TERMINAL` at the top; `SessionTerminatedError` raised |
-| **D-3** Cross-origin export denial → LOCKED immediately | `DegradationEngine.record_signal()` detects `destination_kind ∈ {external_domain, private_network}` |
-| **D-4** Quarantined source loses write/bash/export; clean sources unaffected | `apply_to_policy(source_id=quarantined)` narrows; `apply_to_policy(source_id=clean)` unchanged |
-| **D-5** `apply_to_policy` for quarantined source always returns `export_mode=RESTRICTED` | Enforced unconditionally in `DegradationEngine.apply_to_policy()` |
-| **D-6** Child nodes cannot start below parent's current `DegradationLevel` | Child nodes receive the same `DegradationEngine` instance as the parent |
-| **D-7** Governance clearance requires `GovernanceAuthority` object | `clear_by_governance()` type-checks authority; `attempt_clear_by_worker()` always raises |
+| Degradation level is monotonically increasing — worker-path clear blocked | `DegradationClearanceError` raised on worker-path clear attempt |
+| TERMINAL session raises before any intent is evaluated | `GovernedSession.run()` checks `TERMINAL` at the top; `SessionTerminatedError` raised |
+| Cross-origin export denial → LOCKED immediately | `DegradationEngine.record_signal()` detects `destination_kind ∈ {external_domain, private_network}` |
+| Quarantined source loses write/bash/export; clean sources unaffected | `apply_to_policy(source_id=quarantined)` narrows; `apply_to_policy(source_id=clean)` unchanged |
+| `apply_to_policy` for quarantined source always returns `export_mode=RESTRICTED` | Enforced unconditionally in `DegradationEngine.apply_to_policy()` |
+| Child nodes cannot start below parent's current `DegradationLevel` | Child nodes receive the same `DegradationEngine` instance as the parent |
+| Governance clearance requires `GovernanceAuthority` object | `clear_by_governance()` type-checks authority; `attempt_clear_by_worker()` always raises |
 
 ---
 
 ## Package Structure
 
 ```
-axor-core                        always present
-  └─ Layer 1 (rules)             zero deps, zero latency
+axor-core              the kernel: gates, per-value provenance, degradation,
+                       federation — zero required dependencies
 
-axor-classifier-simple           pip install "axor-classifier-simple[ml]"
-  └─ Layer 2 (ML scorer)         scikit-learn, joblib
-
-axor-classifier-llm              pip install "axor-classifier-llm[llm]"
-  └─ Layer 3 (LLM verifier)      anthropic SDK
+axor-sentinel          cross-session resource reputation (observe-only)
+axor-probe             behavioural drift (observe-only, out-of-band)
+axor-classifier-*      richer task-signal classification (policy selection only)
 ```
 
-Layers are injected at `GovernedSession` construction time. Core never imports them. They implement protocols defined in `axor-core`:
-
-```python
-class AnomalyDetector(Protocol):
-    async def score(self, intent: NormalizedIntent) -> AnomalyResult: ...
-
-class LLMVerifier(Protocol):
-    async def verify(self, window: list[CanonicalizedIntent]) -> AnomalyResult: ...
-```
-
-Session construction:
+Everything pluggable is injected at `GovernedSession` construction; core never
+imports an implementation. The enforcement-relevant knobs are all opt-in:
 
 ```python
 session = GovernedSession(
-    executor=...,
-    capability_executor=...,
-    anomaly_detector=MLAnomalyDetector(),    # Layer 2, optional
-    llm_verifier=LLMAnomalyVerifier(),       # Layer 3, optional
+    executor=..., capability_executor=...,
+    # enforcement
+    positional_sinks={"publish"},                 # declare instruction-incomplete sinks
+    value_policies={"transfer": [numeric_range("amount", 0, 1000)]},
+    federation_gateway=gateway,                    # agent-to-agent trust
+    adjudicator=my_oracle,                         # advisory second opinion
+    # detection (observe-only; may opt-in tighten degradation)
+    detection_floor=0.3,                           # reputation threshold-crossing
+    behavioral_drift_observer=probe_observer,
 )
 ```
 
-If neither is passed — Layer 1 only. If only ML — cascade stops at Layer 2. If both — full three-layer cascade.
+A detection layer (reputation, drift) only ever observes — it cannot return an
+allow/deny and is not on the gate path. The one exception is `detection_floor`: a
+reputation reading crossing it is a decidable fact that may *tighten* degradation.
 
 ---
 
