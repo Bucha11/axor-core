@@ -28,6 +28,12 @@ _MIN_SEGMENT = 12
 # Punctuation stripped from the ENDS of a whitespace token (never the middle) so a
 # source-side "x@y.z." or "'x@y.z'" still matches the clean "x@y.z" a sink extracts.
 _EDGE_PUNCT = ".,;:!?'\"`()[]{}<>«»…|*"
+# Structural delimiters that wrap or prefix an identifier in prose but are NEVER
+# inside one (an email/URL/IBAN/phone). Splitting on these extracts the bare
+# identifier from cruft like "mailto:x@y.z", "cc=x@y.z;", "[t](https://h/p)",
+# "https://h/p?ref=1". The identifier-internal chars . - _ + @ / are deliberately
+# NOT delimiters, so the identifier itself stays whole.
+_STRUCT_DELIM = re.compile(r"""[\s<>()\[\]{}'"«»:;,=|?!*~^#&]+""")
 # Bounds so a huge read cannot blow up memory / match cost.
 _MAX_SEGMENTS_PER_REGISTER = 256
 _MAX_TOTAL_SEGMENTS = 20000
@@ -104,7 +110,8 @@ class ValueTaintLedger:
         """
         if self._saturated:
             return CausalRoot.cross_process_in()
-        text = self._flatten(value)
+        # Fold the query side to match the case-folded segments (see _segmentize).
+        text = self._flatten(value).casefold()
         if not text or not self._segments:
             return CausalRoot.constant()
         root = CausalRoot.constant()
@@ -117,7 +124,10 @@ class ValueTaintLedger:
 
     @staticmethod
     def _segmentize(content: object) -> list[str]:
-        s = ValueTaintLedger._flatten(content)
+        # Case-fold so a source-side "X@Y.Z" still matches a sink-side "x@y.z"
+        # (an address/identifier is case-insensitive; the model often normalises
+        # case). derive() folds the query side to match.
+        s = ValueTaintLedger._flatten(content).casefold()
         segs: set[str] = set()
         for line in s.splitlines():
             line = line.strip()
@@ -126,15 +136,20 @@ class ValueTaintLedger:
         for tok in re.split(r"\s+", s):
             if len(tok) >= _MIN_SEGMENT:
                 segs.add(tok)
-            # Also emit the token with surrounding punctuation stripped. A source
-            # writes an attacker identifier adjacent to punctuation ("Relay: x@y.z."
-            # or "'x@y.z'"), but the model extracts the clean token into the sink
-            # argument ("x@y.z"). Whitespace-only tokenisation would keep the
-            # trailing "." / quote and miss the substring match. Stripping only the
-            # ENDS preserves internal punctuation (an email's dots, an IBAN, a URL).
+            # Emit the token with surrounding punctuation stripped. A source writes
+            # an attacker identifier adjacent to punctuation ("Relay: x@y.z." or
+            # "'x@y.z'"), but the model extracts the clean token ("x@y.z"). Stripping
+            # only the ENDS preserves internal punctuation (an email's dots, a URL).
             stripped = tok.strip(_EDGE_PUNCT)
             if stripped != tok and len(stripped) >= _MIN_SEGMENT:
                 segs.add(stripped)
+        # Split on structural delimiters to extract a bare identifier from cruft a
+        # source wraps it in — "mailto:x@y.z", "cc=x@y.z;", "[t](https://h/p)",
+        # "https://h/p?ref=1". Identifier-internal chars are not delimiters, so the
+        # email/URL/IBAN/phone itself survives as its own segment.
+        for tok in _STRUCT_DELIM.split(s):
+            if len(tok) >= _MIN_SEGMENT:
+                segs.add(tok)
         return list(segs)
 
     @staticmethod
