@@ -142,6 +142,15 @@ class GovernedSession:
 
         self._session_id     = f"session_{uuid.uuid4().hex[:12]}"
         self._mode           = mode
+        # STRICT requires every egress sink to carry a destination allowlist (the
+        # sound, paraphrase-proof control) — fail closed at session construction,
+        # not deferred to the first run.
+        self._require_egress_allowlist = (mode == ExecutionMode.STRICT)
+        if self._require_egress_allowlist:
+            from axor_core.kernel.registration import validate_egress_allowlists
+            _eg_errors = validate_egress_allowlists(self._egress_sinks, self._value_policies)
+            if _eg_errors:
+                raise ValueError("strict egress allowlist: " + "; ".join(_eg_errors))
         self._behavioral_drift_observer = behavioral_drift_observer
         self._overlay_ceiling = _overlay_ceiling
         self._overlay_escalation = _overlay_escalation
@@ -569,6 +578,7 @@ class GovernedSession:
             egress_sinks=self._egress_sinks,
             untrusted_sources=self._untrusted_sources,
             sensitive_sources=self._sensitive_sources,
+            require_egress_allowlist=self._require_egress_allowlist,
             value_policies=self._value_policies,
             adjudicator=self._adjudicator,
             federation_gateway=self._federation_gateway,

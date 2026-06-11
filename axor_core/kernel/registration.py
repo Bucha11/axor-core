@@ -78,6 +78,34 @@ def validate_value_policies(
     return errors
 
 
+def validate_egress_allowlists(
+    egress_sinks: "frozenset[str] | set[str] | None",
+    policies: "dict[str, list[ValuePredicate]] | None",
+) -> list[str]:
+    """STRICT-mode obligation: every declared egress sink must carry a destination
+    allowlist (an ``enum`` value predicate).
+
+    Rationale: the per-value taint gate on an egress sink is content-derivation —
+    sound in the deny direction but with a documented paraphrase residual. An
+    ``enum`` allowlist on the destination is content-blind and provenance-
+    independent (membership, not derivation), so it closes that residual. In STRICT
+    mode we refuse to ship an egress sink that relies on the leaky gate alone:
+    returns one error per egress sink without an enum predicate (empty == valid).
+    """
+    errors: list[str] = []
+    sinks = frozenset(egress_sinks or ())
+    pol = policies or {}
+    for sink in sorted(sinks):
+        preds = pol.get(sink, [])
+        if not any(p.kind == "enum" for p in preds):
+            errors.append(
+                f"egress sink {sink!r} has no allowlist: STRICT mode requires an "
+                f"enum value_policy on its destination argument (the sound, "
+                f"paraphrase-proof control); content-derivation alone is not enough"
+            )
+    return errors
+
+
 def field_obligation(kind: CodomainKind, mode: ConsumptionMode) -> str:
     """Operator-facing helper: 'predicate' if a sink field can be guarded by a
     decidable value predicate, else 'fuzz' (must ride the fuzz/positional path)."""

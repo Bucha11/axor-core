@@ -21,7 +21,10 @@ from axor_core.policy.gates import (
     ssrf_gate,
     taint_gate,
 )
-from axor_core.kernel.registration import validate_value_policies
+from axor_core.kernel.registration import (
+    validate_value_policies,
+    validate_egress_allowlists,
+)
 from axor_core.security.carrier import classify_carrier
 from axor_core.policy.sinks import INSTRUCTION_COMPLETE_SINKS
 from axor_core.contracts.result import ExecutorEvent, ExecutorEventKind
@@ -148,6 +151,7 @@ class IntentLoop:
         egress_sinks: "frozenset[str] | set[str] | None" = None,
         untrusted_sources: "frozenset[str] | set[str] | None" = None,
         sensitive_sources: "frozenset[str] | set[str] | None" = None,
+        require_egress_allowlist: bool = False,
     ) -> None:
         self._executor = capability_executor
         self._trace_events = trace_events
@@ -208,6 +212,12 @@ class IntentLoop:
         self._egress_sinks = frozenset(egress_sinks or ())
         self._untrusted_sources = frozenset(untrusted_sources or ())
         self._sensitive_sources = frozenset(sensitive_sources or ())
+        # STRICT obligation: every egress sink must carry an enum allowlist (the
+        # sound, paraphrase-proof destination control). Fail closed at construction.
+        if require_egress_allowlist:
+            _eg_errors = validate_egress_allowlists(self._egress_sinks, self._value_policies)
+            if _eg_errors:
+                raise ValueError("strict egress allowlist: " + "; ".join(_eg_errors))
         _illegal = {s for s in self._positional_sinks if s.lower() in INSTRUCTION_COMPLETE_SINKS}
         if _illegal:
             raise ValueError(

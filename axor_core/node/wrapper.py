@@ -113,6 +113,7 @@ class GovernedNode:
         egress_sinks: "frozenset[str] | set[str] | None" = None,
         untrusted_sources: "frozenset[str] | set[str] | None" = None,
         sensitive_sources: "frozenset[str] | set[str] | None" = None,
+        require_egress_allowlist: bool = False,
         adjudicator=None,
         federation_gateway=None,
     ) -> None:
@@ -137,6 +138,7 @@ class GovernedNode:
         self._egress_sinks = frozenset(egress_sinks or ())
         self._untrusted_sources = frozenset(untrusted_sources or ())
         self._sensitive_sources = frozenset(sensitive_sources or ())
+        self._require_egress_allowlist = require_egress_allowlist
         self._adjudicator = adjudicator
         self._federation_gateway = federation_gateway
         self._value_policies = value_policies or {}
@@ -316,6 +318,7 @@ class GovernedNode:
             egress_sinks=self._egress_sinks,
             untrusted_sources=self._untrusted_sources,
             sensitive_sources=self._sensitive_sources,
+            require_egress_allowlist=self._require_egress_allowlist,
             adjudicator=self._adjudicator,
             federation_gateway=self._federation_gateway,
         )
@@ -509,6 +512,7 @@ class GovernedNode:
             egress_sinks=self._egress_sinks,
             untrusted_sources=self._untrusted_sources,
             sensitive_sources=self._sensitive_sources,
+            require_egress_allowlist=self._require_egress_allowlist,
             adjudicator=self._adjudicator,
             federation_gateway=self._federation_gateway,
         )

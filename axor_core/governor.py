@@ -39,6 +39,7 @@ from axor_core.policy.gates import (
     value_policy_gate,
 )
 from axor_core.policy.sinks import INSTRUCTION_COMPLETE_SINKS
+from axor_core.kernel.registration import validate_egress_allowlists
 from axor_core.taint.causal_root import CausalRoot
 from axor_core.taint.engine import TaintEngine
 
@@ -87,6 +88,7 @@ class ToolCallGovernor:
         sensitive_sources: "set[str] | frozenset[str] | None" = None,
         egress_sinks: "set[str] | frozenset[str] | None" = None,
         imperative_sinks: "set[str] | frozenset[str] | None" = None,
+        require_egress_allowlist: bool = False,
         node_id: str = "",
     ) -> None:
         self._positional_sinks = frozenset(positional_sinks or ())
@@ -112,6 +114,13 @@ class ToolCallGovernor:
         self._sensitive_sources = frozenset(sensitive_sources or ())
         self._egress_sinks = frozenset(egress_sinks or ())
         self._imperative_sinks = frozenset(imperative_sinks or ())
+        # STRICT obligation: every egress sink must carry a destination allowlist
+        # (an enum value_policy) — the sound, paraphrase-proof control. Fail closed
+        # at construction rather than ship an egress sink on content-derivation alone.
+        if require_egress_allowlist:
+            errors = validate_egress_allowlists(self._egress_sinks, self._value_policies)
+            if errors:
+                raise ValueError("strict egress allowlist: " + "; ".join(errors))
         self._normalizer = IntentNormalizer()
         self._taint = TaintEngine(node_id=node_id)
 

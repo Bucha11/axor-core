@@ -229,13 +229,22 @@ informs humans and may only ratchet restrictions.
 
 ## 10. Modes
 
-| Mode | Isolation | Policy from task text | On ambiguity |
-|---|---|---|---|
-| Library | none (same process) | yes (classifier on) | escalate |
-| Production | bypass attempts raise an error | yes | escalate |
-| Strict | production + audit-required trace | no — operator sets policy | deny |
+| Mode | Isolation | Policy from task text | On ambiguity | Egress allowlist |
+|---|---|---|---|---|
+| Library | none (same process) | yes (classifier on) | escalate | optional |
+| Production | bypass attempts raise an error | yes | escalate | optional |
+| Strict | production + audit-required trace | no — operator sets policy | deny | **required** |
 
-Strict removes content-derived policy decisions entirely and fails closed.
+Strict removes content-derived policy decisions entirely and fails closed. It adds
+one more obligation: **every declared egress sink must carry a destination
+allowlist** (an `enum` value policy on its destination argument). The per-value
+taint gate on an egress sink is content-derivation — sound in the deny direction
+but with the §7 paraphrase residual; an `enum` allowlist is content-blind and
+provenance-independent (membership, not derivation), so it closes that residual.
+Strict refuses to construct a session whose egress sink relies on the leaky gate
+alone — the misconfiguration fails closed at construction, not at run time. In
+Library/Production the allowlist stays optional (the content-derivation gate still
+applies); Strict makes the sound control mandatory where it matters most.
 
 ---
 
