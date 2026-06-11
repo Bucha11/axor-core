@@ -180,6 +180,13 @@ The same six stateless gates run on both enforcement paths: the streaming
 `IntentLoop` and the synchronous `ToolCallGovernor` both delegate to
 `policy/gates.py`, so the decision logic exists once and cannot drift between them.
 
+**Kernel-only bypass.** The package uses lazy imports (PEP 562), so you pay only
+for the rings you touch. `from axor_core import ToolCallGovernor` loads the Ring-0
+kernel and nothing from the runtime or platform — a caller that owns its own agent
+loop gets the gate engine without the orchestration, budget, context, or trace
+machinery. `from axor_core import GovernedSession` pulls the full stack on demand.
+The guarantee is regression-tested (`tests/test_kernel_only_import.py`).
+
 ---
 
 ## Design Invariants
