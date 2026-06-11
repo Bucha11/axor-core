@@ -24,7 +24,7 @@ The distinction:
 | "Which policy preset fits this task?" | Classifier (advisory) | Task text signal |
 | "What tools are allowed?" | Operator policy | Static configuration |
 | "Can this tool be called now?" | the capability gate | Runtime evaluation |
-| "Is this sequence suspicious?" | the ML detection layer (observe-only) | Behavioral features |
+| "Is this sequence suspicious?" | the detection layer (reputation / drift, observe-only) | Behavioral features |
 | "Is this intent adversarial?" | an advisory adjudicator (projection only) | Canonical features only |
 
 ---

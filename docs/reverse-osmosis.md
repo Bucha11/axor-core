@@ -278,10 +278,10 @@ The current implementation is designed so that no path allows a child to exceed 
 
 The cascade is not only a pre-execution filter. Intent sequences are recorded in `DecisionTrace` for every session. This enables:
 
-- **Why was this denied?** — full intent chain with scores at each layer
+- **Why was this denied?** — the full intent chain with the deciding gate and reason at each step
 - **Pattern analysis** — which intent sequences correlate with injection attempts
-- **Threshold tuning** — adjust ML thresholds based on false positive/negative rates
-- **Dataset curation** — confirmed traces may be curated into future detection-training datasets
+- **Threshold tuning** — adjust the opt-in detection thresholds (reputation / drift) from observed false positive/negative rates; the enforcement gates are structural booleans with nothing to tune
+- **Dataset curation** — confirmed traces may be curated into future detection datasets
 
 The trace is the primary debugging surface. When the system gets something wrong, the postmortem is in the trace.
 

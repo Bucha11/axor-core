@@ -15,7 +15,9 @@ external content.  Policy enforcement must remain valid even under compromise.
 | Operator configuration | Trusted | Source of all policy authority |
 | `axor-core` governance process | Trusted | Policy evaluation, taint engine |
 | `PolicyComposer` / `PolicySelector` | Trusted | Compile and select execution policy |
-| `ToolInterceptor` / `IntentLoop` | Trusted | Intercepts all tool calls |
+| `ToolInterceptor` / `IntentLoop` | Trusted | Intercepts all tool calls (streaming path) |
+| `ToolCallGovernor` | Trusted | Synchronous per-call gate engine (same gates) |
+| `policy/gates.py` | Trusted | The shared gate decision logic both paths call |
 | `ProviderNormalizer` | Trusted | Converts raw provider events |
 | `TaintEngine` | Trusted | Tracks taint; workers cannot clear |
 | `DegradationEngine` | Trusted | Monotonically degrades session level; workers cannot clear |
@@ -23,9 +25,16 @@ external content.  Policy enforcement must remain valid even under compromise.
 | `TraceCollector` | Trusted | Out-of-band audit trail |
 | `IntentCanonicalizer` | Trusted | Strips raw content before any advisory/detection layer |
 | `LockedExecutor` | Trusted | Blocks direct executor bypass |
-| ML detection layer | Conditionally trusted | Observe-only; cannot expand capability or allow |
+| Detection layer (reputation / behavioral drift) | Conditionally trusted | Observe-only; cannot expand capability or allow |
 | Advisory adjudicator | Conditionally trusted | Tightening-only; cannot override a structural gate |
 | Provider adapters post-normalization | Conditionally trusted | After NormalizedIntent is produced |
+
+The minimal **trusted computing base** is the kernel ring (the gate logic in
+`policy/gates.py`, `TaintEngine`, `DegradationEngine`, the policy decision tables,
+the normalizer, the adjudicator interface) — the subset whose correctness is
+load-bearing for an allow/deny. CI enforces that this kernel cannot import the
+runtime or the platform, so a budget/context/trace bug is outside the TCB by
+construction.
 
 ---
 
