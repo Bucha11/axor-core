@@ -155,22 +155,33 @@ enforces, server-side and independent of the worker:
 - **tool implementations** — they live only in the daemon, so a compromised worker
   cannot touch the filesystem/network directly; it must go through the socket.
 
-The daemon does **not** currently re-run the per-value data-flow gates (taint,
-confidentiality floor, consequence, carrier, positional). Those run only in the
-worker's `IntentLoop`. The consequence, for the two threat models:
+The daemon also re-runs the **per-value data-flow gates** server-side. It hosts a
+per-session `ToolCallGovernor` (the same `policy/gates.py` functions, with its own
+taint ledger and confidentiality floor) and runs `evaluate` before touching a
+handler and `register_output` after — so taint, the confidentiality floor,
+consequence, carrier, and positional are enforced on the daemon's side of the
+boundary, not only in the worker. The data-flow taxonomy
+(`untrusted_sources` / `sensitive_sources` / `egress_sinks`) is **operator-set at
+daemon startup**, never taken from the client, so a compromised worker cannot
+disable the gates by declaring an empty taxonomy. The consequence, for the two
+threat models:
 
-- **Prompt injection** (the model is manipulated, worker code intact) — fully
-  covered: the model can only emit tool calls, and the in-process gates intercept
-  them before they reach the daemon. This is the threat axor targets.
+- **Prompt injection** (the model is manipulated, worker code intact) — covered at
+  both layers: the in-process gates intercept the tool call, and the daemon would
+  catch it again if the worker path were skipped.
 - **Code-level worker compromise** (RCE / malicious native code in the worker) — the
-  daemon confines it to the capability ceiling and the path sandbox, but within
-  those allowed tools the data-flow gates are bypassed, so e.g. exfiltration through
-  an allowed egress tool is not stopped out-of-process.
+  worker can send raw tool calls straight to the socket, bypassing its own
+  `IntentLoop`, but the daemon still enforces the capability ceiling, the path
+  sandbox, **and** the data-flow gates against its own ledger. An exfiltration
+  through an allowed egress tool, driven by a value the daemon saw arrive from an
+  untrusted read, is denied server-side
+  (`axor-daemon/tests/test_dataflow_enforcement.py`).
 
-Closing that residual is cheap given the shared gate engine: the daemon can host a
-`ToolCallGovernor` (the same `policy/gates.py` functions, run synchronously with a
-per-session taint ledger) and run the full sequence server-side. Until it does, the
-sound data-flow mechanisms are an in-process guarantee, not a cross-process one.
+Residual: the gates are only as complete as the operator's declared taxonomy and
+the content-derivation ledger's documented limits (§ governance-model §7); and the
+daemon's ledger is its own, so it tracks provenance across the calls it actually
+sees. With no taxonomy declared, the daemon still applies the normalizer's generic
+heuristics, the same as the in-process path.
 
 ---
 
