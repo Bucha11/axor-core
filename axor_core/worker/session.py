@@ -103,6 +103,9 @@ class GovernedSession:
         workspace: str | None = None,
         danger: "dict | None" = None,
         positional_sinks: "set[str] | frozenset[str] | None" = None,
+        egress_sinks: "set[str] | frozenset[str] | None" = None,
+        untrusted_sources: "set[str] | frozenset[str] | None" = None,
+        sensitive_sources: "set[str] | frozenset[str] | None" = None,
         value_policies: "dict | None" = None,
         detection_floor: float | None = None,
         adjudicator=None,
@@ -112,6 +115,12 @@ class GovernedSession:
         # pre-fills mode / isolation / escalation / consequence-ceiling / watcher.
         self._consequence_overrides = dict(danger or {})
         self._positional_sinks = frozenset(positional_sinks or ())
+        # Operator tool taxonomy — which tools exfiltrate / produce untrusted or
+        # secret data. Lets the kernel govern a deployment's renamed tools that the
+        # normalizer's generic heuristics do not recognise.
+        self._egress_sinks = frozenset(egress_sinks or ())
+        self._untrusted_sources = frozenset(untrusted_sources or ())
+        self._sensitive_sources = frozenset(sensitive_sources or ())
         self._value_policies = dict(value_policies or {})
         self._detection_floor = detection_floor  # opt-in; None = detection observe-only
         self._adjudicator = adjudicator          # opt-in advisory layer; None = off
@@ -557,6 +566,9 @@ class GovernedSession:
             degradation_engine=self._degradation_engine,
             consequence_overrides=self._consequence_overrides,
             positional_sinks=self._positional_sinks,
+            egress_sinks=self._egress_sinks,
+            untrusted_sources=self._untrusted_sources,
+            sensitive_sources=self._sensitive_sources,
             value_policies=self._value_policies,
             adjudicator=self._adjudicator,
             federation_gateway=self._federation_gateway,

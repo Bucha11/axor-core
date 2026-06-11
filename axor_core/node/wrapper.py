@@ -110,6 +110,9 @@ class GovernedNode:
         consequence_overrides: "dict | None" = None,
         value_policies: "dict | None" = None,
         positional_sinks: "frozenset[str] | set[str] | None" = None,
+        egress_sinks: "frozenset[str] | set[str] | None" = None,
+        untrusted_sources: "frozenset[str] | set[str] | None" = None,
+        sensitive_sources: "frozenset[str] | set[str] | None" = None,
         adjudicator=None,
         federation_gateway=None,
     ) -> None:
@@ -131,6 +134,9 @@ class GovernedNode:
         self._max_total_spawns = max_total_spawns
         self._consequence_overrides = consequence_overrides or {}
         self._positional_sinks = frozenset(positional_sinks or ())
+        self._egress_sinks = frozenset(egress_sinks or ())
+        self._untrusted_sources = frozenset(untrusted_sources or ())
+        self._sensitive_sources = frozenset(sensitive_sources or ())
         self._adjudicator = adjudicator
         self._federation_gateway = federation_gateway
         self._value_policies = value_policies or {}
@@ -307,6 +313,9 @@ class GovernedNode:
             consequence_overrides=self._consequence_overrides,
             value_policies=self._value_policies,
             positional_sinks=self._positional_sinks,
+            egress_sinks=self._egress_sinks,
+            untrusted_sources=self._untrusted_sources,
+            sensitive_sources=self._sensitive_sources,
             adjudicator=self._adjudicator,
             federation_gateway=self._federation_gateway,
         )
@@ -497,6 +506,9 @@ class GovernedNode:
             consequence_overrides=self._consequence_overrides,
             value_policies=self._value_policies,
             positional_sinks=self._positional_sinks,
+            egress_sinks=self._egress_sinks,
+            untrusted_sources=self._untrusted_sources,
+            sensitive_sources=self._sensitive_sources,
             adjudicator=self._adjudicator,
             federation_gateway=self._federation_gateway,
         )

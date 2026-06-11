@@ -27,17 +27,20 @@ from typing import Any
 from axor_core.contracts.anomaly import NormalizedIntent
 from axor_core.contracts.canonical import ConsequenceClass
 from axor_core.contracts.intent import Intent, IntentKind
-from axor_core.contracts.taint import Carrier, TaintSource
+from axor_core.contracts.taint import TaintSource
 from axor_core.node.normalizer import IntentNormalizer
-from axor_core.policy.consequence import consequence_class
-from axor_core.policy.sinks import INSTRUCTION_COMPLETE_SINKS, is_imperative_sink
-from axor_core.policy.value_policy import check_value_policies
-from axor_core.security.carrier import classify_carrier
+from axor_core.policy.gates import (
+    GateDecision,
+    carrier_gate,
+    consequence_gate,
+    positional_gate,
+    ssrf_gate,
+    taint_gate,
+    value_policy_gate,
+)
+from axor_core.policy.sinks import INSTRUCTION_COMPLETE_SINKS
 from axor_core.taint.causal_root import CausalRoot
 from axor_core.taint.engine import TaintEngine
-
-_INTERNAL_TARGETS = ("cloud_metadata", "private_network", "docker_socket")
-_EXFIL_DESTINATIONS = ("cloud_metadata", "private_network", "external_domain")
 
 
 @dataclass
@@ -125,104 +128,49 @@ class ToolCallGovernor:
         )
         normalized = self._normalizer.normalize(intent)
 
-        # 1. consequence — content-blind action-class gate.
-        cls = consequence_class(
-            tool_name, operation=normalized.operation,
-            overrides=self._consequence_overrides,
-        )
-        if cls > self._ceiling:
+        def _deny(gd: GateDecision) -> GovernanceDecision:
             return GovernanceDecision(
-                allowed=False,
-                reason=(
-                    f"consequence gate: sink '{tool_name}' is {cls.name}, exceeding "
-                    f"the unattended ceiling {self._ceiling.name}; a governance/human "
-                    f"gate is required"
-                ),
-                category="consequence_gate",
+                allowed=False, reason=gd.reason, category=gd.category,
                 _normalized=normalized,
             )
 
-        # 2. value policies — operator-registered decidable predicates.
-        value_denial = check_value_policies(tool_name, args, self._value_policies)
-        if value_denial is not None:
-            return GovernanceDecision(
-                allowed=False, reason=value_denial,
-                category="value_policy", _normalized=normalized,
-            )
+        # 1. consequence — content-blind action-class gate. (No lease/escalation
+        #    in the governor, so no governance-gate exception.)
+        gd = consequence_gate(
+            tool_name, normalized.operation, self._ceiling, self._consequence_overrides
+        )
+        if gd is not None:
+            return _deny(gd)
 
-        # 3. SSRF / internal-destination gate — content-blind, taint-independent.
-        if (
-            normalized.target_kind in _INTERNAL_TARGETS
-            or normalized.destination_kind in ("cloud_metadata", "private_network")
-        ):
-            return GovernanceDecision(
-                allowed=False,
-                reason=(
-                    f"ssrf gate: '{tool_name}' targets an internal destination "
-                    f"({normalized.target_kind}/{normalized.destination_kind}) — "
-                    f"blocked independent of taint"
-                ),
-                category="ssrf_gate", _normalized=normalized,
-            )
+        # 2. value policies — operator-registered decidable predicates.
+        gd = value_policy_gate(tool_name, args, self._value_policies)
+        if gd is not None:
+            return _deny(gd)
+
+        # 3. SSRF / internal-destination gate.
+        gd = ssrf_gate(tool_name, normalized)
+        if gd is not None:
+            return _deny(gd)
 
         driving_root = self._taint.derive_value(args)
 
         # 4. positional admission — for declared instruction-incomplete sinks.
-        if tool_name in self._positional_sinks:
-            if classify_carrier(args) == Carrier.FREE_TEXT:
-                return GovernanceDecision(
-                    allowed=False,
-                    reason=(
-                        f"positional gate: '{tool_name}' is a declared "
-                        f"instruction-incomplete sink; its driving value is FREE_TEXT "
-                        f"(non-positional)"
-                    ),
-                    category="positional_gate", _normalized=normalized,
-                )
+        gd = positional_gate(tool_name, args, self._positional_sinks)
+        if gd is not None:
+            return _deny(gd)
 
         # 5. carrier / imperative-channel gate.
-        imperative = (
-            is_imperative_sink(tool_name, normalized)
-            or tool_name in self._imperative_sinks
-        )
-        if driving_root.is_tainted and imperative:
-            if classify_carrier(args) == Carrier.FREE_TEXT:
-                return GovernanceDecision(
-                    allowed=False,
-                    reason=(
-                        f"carrier gate: untrusted FREE_TEXT value into the "
-                        f"instruction-following sink '{tool_name}' (imperative channel)"
-                    ),
-                    category="carrier_gate", _normalized=normalized,
-                )
+        gd = carrier_gate(tool_name, args, normalized, driving_root, self._imperative_sinks)
+        if gd is not None:
+            return _deny(gd)
 
         # 6. per-value taint — integrity + confidentiality floor.
-        exfil = (
-            tool_name in self._egress_sinks
-            or normalized.destination_kind in _EXFIL_DESTINATIONS
+        gd = taint_gate(
+            tool_name, normalized, driving_root,
+            self._taint.confidentiality_floor_active(), self._egress_sinks,
         )
-        integrity_risk = driving_root.is_tainted and (
-            normalized.writes_outside_workdir
-            or normalized.executes_generated_code
-            or exfil
-        )
-        floor_active = self._taint.confidentiality_floor_active()
-        confidentiality_risk = exfil and floor_active
-        if integrity_risk or confidentiality_risk:
-            axis = (
-                "confidentiality (egress under the sound floor — a secret read is "
-                "outstanding; release requires governance endorsement)"
-                if confidentiality_risk
-                else "integrity (untrusted-derived value into a high-risk operation)"
-            )
-            return GovernanceDecision(
-                allowed=False,
-                reason=(
-                    f"taint enforcement (per-value): the driving argument of "
-                    f"'{tool_name}' carries a tainted/sensitive value — {axis}"
-                ),
-                category="taint_enforcement", _normalized=normalized,
-            )
+        if gd is not None:
+            return _deny(gd)
 
         return GovernanceDecision(allowed=True, _normalized=normalized)
 

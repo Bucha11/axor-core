@@ -14,12 +14,16 @@ from axor_core.contracts.canonical import ConsequenceClass
 from axor_core.contracts.policy import PolicyDecision, PolicyDecisionKind
 from axor_core.policy.consequence import consequence_class
 from axor_core.policy.value_policy import check_value_policies
+from axor_core.policy.gates import (
+    carrier_gate,
+    consequence_gate,
+    positional_gate,
+    ssrf_gate,
+    taint_gate,
+)
 from axor_core.kernel.registration import validate_value_policies
 from axor_core.security.carrier import classify_carrier
-from axor_core.policy.sinks import (
-    INSTRUCTION_COMPLETE_SINKS,
-    is_imperative_sink,
-)
+from axor_core.policy.sinks import INSTRUCTION_COMPLETE_SINKS
 from axor_core.contracts.result import ExecutorEvent, ExecutorEventKind
 from axor_core.contracts.trace import (
     CancelledEvent,
@@ -141,6 +145,9 @@ class IntentLoop:
         positional_sinks: "frozenset[str] | set[str] | None" = None,
         adjudicator: "Adjudicator | MemoizingAdjudicator | None" = None,
         federation_gateway=None,
+        egress_sinks: "frozenset[str] | set[str] | None" = None,
+        untrusted_sources: "frozenset[str] | set[str] | None" = None,
+        sensitive_sources: "frozenset[str] | set[str] | None" = None,
     ) -> None:
         self._executor = capability_executor
         self._trace_events = trace_events
@@ -194,6 +201,13 @@ class IntentLoop:
         # arrives wrapped as a FederatedValue. None = federation off.
         self._federation_gateway = federation_gateway
         self._positional_sinks = frozenset(positional_sinks or ())
+        # Operator tool taxonomy (complements the normalizer's heuristics): which
+        # tools exfiltrate (egress_sinks) and which produce untrusted/secret data
+        # (untrusted_sources / sensitive_sources). Empty by default — the normalizer
+        # still classifies generic tools; a deployment declares its renamed tools.
+        self._egress_sinks = frozenset(egress_sinks or ())
+        self._untrusted_sources = frozenset(untrusted_sources or ())
+        self._sensitive_sources = frozenset(sensitive_sources or ())
         _illegal = {s for s in self._positional_sinks if s.lower() in INSTRUCTION_COMPLETE_SINKS}
         if _illegal:
             raise ValueError(
@@ -528,28 +542,25 @@ class IntentLoop:
                     result=denial_resp.to_tool_result(),
                 )
 
+        # Shared gate denial → ResolvedIntent (records denial + degradation signal).
+        def _gate_denial(gd) -> ResolvedIntent:
+            self._record_denial(intent, gd.reason, envelope)
+            denial_resp = _make_denial_response(gd.reason, gd.category)
+            self._record_degradation_signal(intent, denial_resp, normalized)
+            return ResolvedIntent(
+                intent=intent, approved=False, reason=gd.reason,
+                result=denial_resp.to_tool_result(),
+            )
+
         # SSRF / internal-destination gate — content-blind, always-on, and
         # independent of taint (this is a *destination* concern, not a data-flow
         # one): no agent should reach cloud metadata or the docker socket unless
         # policy explicitly allows it. Decoupling this from taint is what lets the
         # taint gate below be cleanly per-value without regressing SSRF safety.
-        _INTERNAL = ("cloud_metadata", "private_network", "docker_socket")
-        if normalized is not None and (
-            normalized.target_kind in _INTERNAL
-            or normalized.destination_kind in ("cloud_metadata", "private_network")
-        ):
-            reason = (
-                f"ssrf gate: '{tool_name}' targets an internal destination "
-                f"({normalized.target_kind}/{normalized.destination_kind}) — "
-                "blocked independent of taint"
-            )
-            self._record_denial(intent, reason, envelope)
-            denial_resp = _make_denial_response(reason, "ssrf_gate")
-            self._record_degradation_signal(intent, denial_resp, normalized)
-            return ResolvedIntent(
-                intent=intent, approved=False, reason=reason,
-                result=denial_resp.to_tool_result(),
-            )
+        if normalized is not None:
+            gd = ssrf_gate(tool_name, normalized)
+            if gd is not None:
+                return _gate_denial(gd)
 
         # taint enforcement — PER-VALUE. The gate decides on the *driving
         # argument's own* causal_root (content-derivation ledger), NOT a
@@ -590,94 +601,40 @@ class IntentLoop:
             # POSITIONAL ADMISSION. For a sink the operator DECLARED
             # instruction-incomplete, admission flips from the (leaky)
             # content-derivation deny-list to a sound positional allow-list: admit
-            # ONLY if the driving value's carrier is instruction-incomplete
-            # (ENDORSED/CLOSED_SCHEMA), else fail-closed. Crucially this does NOT
-            # consult driving_root.is_tainted — that is the whole point: a paraphrase
+            # ONLY if the driving value's carrier is instruction-incomplete, else
+            # fail-closed. It does NOT consult driving_root.is_tainted — a paraphrase
             # that launders the content-derivation label cannot change the value's
             # FORM, and classify_carrier is structural, so admission holds against
-            # semantic derivation, content-independently. classify_carrier takes the
-            # WORST carrier over all argument leaves, so a single non-positional
-            # argument path nullifies admission (complete mediation, local to this
-            # sink). The carrier is recomputed structurally each call, so there is no
-            # stored positional label to launder through later calls.
-            if tool_name in self._positional_sinks:
-                if classify_carrier(tool_args) == Carrier.FREE_TEXT:
-                    reason = (
-                        f"positional gate: '{tool_name}' is a declared "
-                        f"instruction-incomplete sink; its driving value is FREE_TEXT "
-                        f"(non-positional) — admitted only via an instruction-incomplete "
-                        f"carrier, independent of content-derivation"
-                    )
-                    self._record_denial(intent, reason, envelope)
-                    denial_resp = _make_denial_response(reason, "positional_gate")
-                    self._record_degradation_signal(intent, denial_resp, normalized)
-                    return ResolvedIntent(
-                        intent=intent, approved=False, reason=reason,
-                        result=denial_resp.to_tool_result(),
-                    )
+            # semantic derivation, content-independently.
+            gd = positional_gate(tool_name, tool_args, self._positional_sinks)
+            if gd is not None:
+                return _gate_denial(gd)
 
             # Carrier / imperative-channel gate: a tainted FREE_TEXT value reaching
-            # an instruction-following sink (it would be interpreted as a directive
-            # — spawn a sub-agent, send a message, execute) is the imperative
-            # channel. classify_carrier reads the *form*, deterministically.
-            # Complements per-value: catches free-text-as-directive that the
-            # risky-op list below does not (e.g. spawn_child(task=<free text>)).
-            if driving_root.is_tainted and _is_imperative_sink(tool_name, normalized):
-                if classify_carrier(tool_args) == Carrier.FREE_TEXT:
-                    reason = (
-                        f"carrier gate: untrusted FREE_TEXT value into the "
-                        f"instruction-following sink '{tool_name}' (imperative channel)"
-                    )
-                    self._record_denial(intent, reason, envelope)
-                    denial_resp = _make_denial_response(reason, "carrier_gate")
-                    self._record_degradation_signal(intent, denial_resp, normalized)
-                    return ResolvedIntent(
-                        intent=intent, approved=False, reason=reason,
-                        result=denial_resp.to_tool_result(),
-                    )
+            # an instruction-following sink (spawn a sub-agent, send a message,
+            # execute) is the imperative channel. Complements per-value: catches
+            # free-text-as-directive the risky-op list below does not.
+            gd = carrier_gate(tool_name, tool_args, normalized, driving_root)
+            if gd is not None:
+                return _gate_denial(gd)
 
-            exfil_destination = normalized.destination_kind in (
-                "cloud_metadata", "private_network", "external_domain"
-            )
-            integrity_risk = driving_root.is_tainted and (
-                normalized.writes_outside_workdir
-                or normalized.executes_generated_code
-                or exfil_destination
-            )
-            # Confidentiality SOUND FLOOR. Egress is denied while a secret read is
-            # outstanding — on the FACT of the read, NOT on whether THIS value's
-            # content derives as sensitive. Per-value confidentiality (driving_root.
-            # sensitive) is leaky (a paraphrased secret evades content-matching), so
-            # the floor gates egress coarsely and is lifted only by governance
-            # endorsement of the secret. Sparse by construction — it fires only
-            # after a sensitive read. The per-value sensitive check is subsumed
-            # (value sensitive ⟹ a sensitive read happened ⟹ floor active).
+            # Per-value taint: integrity (untrusted-derived value into a high-risk
+            # operation) + the confidentiality SOUND FLOOR (egress denied while a
+            # secret read is outstanding — on the FACT of the read, content-blind, so
+            # a paraphrased/re-encoded secret cannot escape; lifted only by
+            # governance endorsement). `self._egress_sinks` is the operator's
+            # declaration of which tools exfiltrate (complements the normalizer's
+            # destination classification).
             floor_active = (
                 self._taint_engine.confidentiality_floor_active()
                 if hasattr(self._taint_engine, "confidentiality_floor_active")
                 else driving_root.sensitive
             )
-            confidentiality_risk = exfil_destination and floor_active
-            if integrity_risk or confidentiality_risk:
-                axis = (
-                    "confidentiality (egress under the sound floor — a secret read is "
-                    "outstanding; release requires governance endorsement)"
-                    if confidentiality_risk
-                    else "integrity (untrusted-derived value into a high-risk operation)"
-                )
-                reason = (
-                    f"taint enforcement (per-value): the driving argument of "
-                    f"'{tool_name}' carries a tainted/sensitive value — {axis}"
-                )
-                self._record_denial(intent, reason, envelope)
-                denial_resp = _make_denial_response(reason, "taint_enforcement")
-                self._record_degradation_signal(intent, denial_resp, normalized)
-                return ResolvedIntent(
-                    intent=intent,
-                    approved=False,
-                    reason=reason,
-                    result=denial_resp.to_tool_result(),
-                )
+            gd = taint_gate(
+                tool_name, normalized, driving_root, floor_active, self._egress_sinks
+            )
+            if gd is not None:
+                return _gate_denial(gd)
 
         # approved or transformed — but first consult the advisory adjudicator on
         # the PROJECTION only. We are on the would-approve path: every kernel hard
@@ -1119,19 +1076,28 @@ class IntentLoop:
         if override_root is not None:
             self._taint_engine.register_value(result, override_root)
             return
-        ni = normalized or self._normalizer.normalize(effective_intent)
-        if ni.target_kind in ("external_url", "cloud_metadata", "docker_socket") or \
-                ni.operation == "network_request":
+        tool_name = effective_intent.payload.get("tool", "")
+        # An operator-declared source wins over the normalizer heuristic — this is
+        # how a deployment's renamed read tools (get_inbox, search_docs, ...) get
+        # their output registered untrusted/secret. Mirrors register_output's order.
+        if tool_name in self._sensitive_sources:
+            root = CausalRoot.external_read(TaintSource.FILE, sensitive=True)
+        elif tool_name in self._untrusted_sources:
             root = CausalRoot.external_read(TaintSource.WEB)
-        elif (
-            ni.target_kind in ("secret", "system_path")
-            or ni.reads_secret_like_data
-            or ni.writes_outside_workdir
-        ):
-            sensitive = ni.target_kind == "secret" or ni.reads_secret_like_data
-            root = CausalRoot.external_read(TaintSource.FILE, sensitive=sensitive)
         else:
-            return  # clean read — nothing to register
+            ni = normalized or self._normalizer.normalize(effective_intent)
+            if ni.target_kind in ("external_url", "cloud_metadata", "docker_socket") or \
+                    ni.operation == "network_request":
+                root = CausalRoot.external_read(TaintSource.WEB)
+            elif (
+                ni.target_kind in ("secret", "system_path")
+                or ni.reads_secret_like_data
+                or ni.writes_outside_workdir
+            ):
+                sensitive = ni.target_kind == "secret" or ni.reads_secret_like_data
+                root = CausalRoot.external_read(TaintSource.FILE, sensitive=sensitive)
+            else:
+                return  # clean read — nothing to register
         self._taint_engine.register_value(result, root)
 
     def _check_consequence(
@@ -1148,21 +1114,19 @@ class IntentLoop:
         The governance gate is satisfied by an active escalation grant or
         capability lease for the tool (a human/operator-authorised path).
         """
-        cls = consequence_class(
-            tool_name, operation=operation, overrides=self._consequence_overrides
-        )
         ceiling = getattr(
             envelope.policy, "max_unattended_consequence", ConsequenceClass.CONSEQUENTIAL
         )
-        if cls <= ceiling:
-            return None
-        # over ceiling — admissible only through a governance gate.
-        if tool_name in self._granted_escalations or tool_name in self._capability_leases:
-            return None
-        return (
-            f"consequence gate: sink '{tool_name}' is {cls.name}, exceeding the "
-            f"unattended ceiling {ceiling.name}; a governance/human gate is required"
+        # over-ceiling is admissible only through a governance gate (an active
+        # escalation grant or capability lease for the tool).
+        has_gate = (
+            tool_name in self._granted_escalations or tool_name in self._capability_leases
         )
+        gd = consequence_gate(
+            tool_name, operation, ceiling, self._consequence_overrides,
+            has_governance_gate=has_gate,
+        )
+        return gd.reason if gd is not None else None
 
     # ── Detection layer — out-of-band from the allow decision ───────────────────
 
@@ -1239,9 +1203,6 @@ class IntentLoop:
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
-
-
-_is_imperative_sink = is_imperative_sink
 
 
 def _denial_result(tool_name: str, reason: str) -> dict:
