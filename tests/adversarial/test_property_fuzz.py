@@ -24,7 +24,7 @@ pytest.importorskip("hypothesis")
 from hypothesis import given, settings, strategies as st  # noqa: E402
 
 from axor_core.capability.lease_validator import path_matches_allowlist
-from axor_core.node.normalizer import IntentNormalizer
+from axor_core.policy.normalizer import IntentNormalizer
 from axor_core.security.net import parse_host_to_ip as _parse_host_to_ip
 from axor_core.security.carrier import classify_carrier
 from axor_core.contracts.taint import Carrier

@@ -48,6 +48,9 @@ jobs:
           print(f"✓ no provider imports in axor_core/")
           EOF
 
+      - name: Architectural rings — kernel must not import runtime/platform
+        run: lint-imports
+
       - name: Docs reference check — no drift to nonexistent modules
         run: python tools/check_docs.py
 

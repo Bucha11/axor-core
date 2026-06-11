@@ -158,6 +158,30 @@ axor_core/
 
 ---
 
+## Trust Rings
+
+The subsystems are grouped into three rings by how load-bearing they are for a
+correct decision. The test for each: *can a bug here cause a wrong ALLOW?*
+
+| Ring | Role | Subsystems |
+|---|---|---|
+| **0 — kernel** | the trusted computing base: gate logic + the data it reasons over | `contracts`, `errors`, `taint`, `security`, `policy` (incl. `gates`, `normalizer`), `kernel`, `degradation` |
+| **1 — runtime** | wires the kernel to an executor: capability boundary, node/worker orchestration, opt-in federation | `capability`, `node`, `worker`, `federation` |
+| **2 — platform** | quality / cost / observability — a bug wastes resources, not safety | `budget`, `context`, `trace`, `extensions` |
+
+The one guarantee that matters and is **machine-enforced**: the kernel must not
+depend on the runtime or the platform, so a platform bug cannot reach the
+decision. This is checked in CI by `import-linter` (the `kernel-purity` contract
+in `.importlinter`); a kernel module importing a runtime/platform module fails the
+build. The reverse edge is allowed — the runtime legitimately orchestrates
+platform services (e.g. `node` uses `budget`/`context`/`trace`).
+
+The same six stateless gates run on both enforcement paths: the streaming
+`IntentLoop` and the synchronous `ToolCallGovernor` both delegate to
+`policy/gates.py`, so the decision logic exists once and cannot drift between them.
+
+---
+
 ## Design Invariants
 
 **Everything is a GovernedNode.** Flat execution is `depth=0`. No special cases for single-agent vs multi-agent.

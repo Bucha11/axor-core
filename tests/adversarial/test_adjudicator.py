@@ -26,7 +26,7 @@ from axor_core.kernel.adjudicator import (
 )
 from axor_core.node.canonicalizer import IntentCanonicalizer
 from axor_core.node.intent_loop import IntentLoop
-from axor_core.node.normalizer import IntentNormalizer
+from axor_core.policy.normalizer import IntentNormalizer
 from axor_core.contracts.intent import Intent, IntentKind
 from axor_core.taint.engine import TaintEngine
 

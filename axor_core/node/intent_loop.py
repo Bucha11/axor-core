@@ -49,7 +49,7 @@ from axor_core.contracts.lease import LeaseAuthorityType
 from axor_core.contracts.degradation import DegradationLevel
 from axor_core.contracts.taint import Carrier, TaintSource
 from axor_core.degradation.engine import _LOCKED_ALLOWED_TOOLS
-from axor_core.node.normalizer import IntentNormalizer
+from axor_core.policy.normalizer import IntentNormalizer
 from axor_core.node.canonicalizer import IntentCanonicalizer
 from axor_core.kernel.adjudicator import (
     Adjudicator,

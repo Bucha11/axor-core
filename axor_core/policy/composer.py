@@ -290,7 +290,7 @@ def _restrict_allowed_paths(
     - child unrestricted but parent restricted → child inherits parent's ceiling
     - both restricted → keep only child roots contained by the parent ceiling
     """
-    from axor_core.capability.lease_validator import path_matches_allowlist
+    from axor_core.security.paths import path_matches_allowlist
 
     if not parent_paths:
         return child_paths

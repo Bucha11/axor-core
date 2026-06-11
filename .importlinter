@@ -1,0 +1,39 @@
+# Architectural boundary enforcement (run: `lint-imports`).
+#
+# The codebase is organised in three trust rings (see docs/ARCHITECTURE.md):
+#
+#   Ring 0  kernel    — the trusted computing base: the gate logic and the data
+#                       it reasons over. A bug here can cause a wrong ALLOW.
+#   Ring 1  runtime   — wires the kernel to an executor (capability boundary,
+#                       node/worker orchestration, opt-in federation).
+#   Ring 2  platform  — quality/cost/observability (budget, context, trace,
+#                       extensions). A bug here wastes resources, not safety.
+#
+# The one guarantee that matters: the kernel must not depend on the runtime or
+# the platform. A platform bug therefore cannot reach the decision. (Runtime is
+# allowed to use the platform — node legitimately orchestrates budget/context/
+# trace — so that edge is not forbidden; only the kernel boundary is.)
+
+[importlinter]
+root_package = axor_core
+
+[importlinter:contract:kernel-purity]
+name = Kernel (Ring 0) must not import runtime (Ring 1) or platform (Ring 2)
+type = forbidden
+source_modules =
+    axor_core.contracts
+    axor_core.errors
+    axor_core.taint
+    axor_core.security
+    axor_core.policy
+    axor_core.kernel
+    axor_core.degradation
+forbidden_modules =
+    axor_core.capability
+    axor_core.node
+    axor_core.worker
+    axor_core.federation
+    axor_core.budget
+    axor_core.context
+    axor_core.trace
+    axor_core.extensions

@@ -29,7 +29,7 @@ from axor_core.contracts.degradation import DegradationLevel, GovernanceAuthorit
 from axor_core.errors.exceptions import DegradationClearanceError, TaintClearanceError
 from axor_core.node.export import ExportFilter
 from axor_core.node.intent_loop import IntentLoop, _safe_int
-from axor_core.node.normalizer import IntentNormalizer
+from axor_core.policy.normalizer import IntentNormalizer
 from axor_core.taint.engine import TaintEngine
 
 
