@@ -183,6 +183,32 @@ daemon's ledger is its own, so it tracks provenance across the calls it actually
 sees. With no taxonomy declared, the daemon still applies the normalizer's generic
 heuristics, the same as the in-process path.
 
+### The two ledgers are redundant, not split
+
+In the daemon topology there are two per-value ledgers — the worker's (inside its
+`IntentLoop`) and the daemon's (inside its per-session governor). They are **not**
+split: `GovernedSession` has a single capability executor, so in daemon mode *every*
+approved tool call is forwarded to the daemon, and the worker registers the
+daemon-returned output into its own ledger. Both ledgers therefore see the same full
+call stream and stay consistent; the daemon's is simply the authoritative copy that
+survives a compromised worker. Their roles are complementary:
+
+- the **worker** ledger drives the in-process gates plus the trace and the
+  degradation ladder — but a code-compromised worker can bypass it;
+- the **daemon** ledger drives the per-call gates server-side and cannot be bypassed
+  by the worker, but it does not run degradation or write the trace.
+
+Two genuine residuals remain, neither of which is a ledger divergence:
+
+1. **Executor-internal tools.** A tool the LLM executor runs *without* yielding a
+   `tool_use` event (a provider-native search, a built-in code interpreter) reaches
+   neither the worker gates nor the daemon. This is the executor-contract concern —
+   the executor must surface every tool call — not a provenance gap between ledgers.
+2. **Degradation is worker-only.** The daemon enforces the per-call gates but not the
+   session degradation ladder, so a compromised worker can bypass *degradation*
+   (the slow tightening) while every individual call still hits the daemon's
+   per-value gates (the hard floor).
+
 ---
 
 ## Fail-Closed Semantics
