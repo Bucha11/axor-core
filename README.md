@@ -151,6 +151,18 @@ Every tool call runs through the gate sequence above. A deny at any gate is fina
 
 The only way down is an explicit `GovernanceAuthority` clearance — a worker path cannot lower it.
 
+**Two ways to call the same gates.** The six structural gates live as pure functions in `policy/gates.py`. The streaming `GovernedSession`/`IntentLoop` is one caller; for a framework that owns its own agent loop there is a synchronous `ToolCallGovernor` that runs the identical gates on one `(tool, args)` pair. The decision logic exists once and cannot drift between them.
+
+```python
+from axor_core import ToolCallGovernor  # kernel only — loads no runtime/platform
+
+gov = ToolCallGovernor(untrusted_sources={"read_inbox"}, egress_sinks={"send_email"})
+decision = gov.evaluate("send_email", {"to": attacker_addr})   # came from read_inbox
+assert not decision.allowed                                    # taint_enforcement
+```
+
+**Deployment taxonomy.** axor's normalizer recognises generic tool names; a real deployment renames its tools, so the operator declares their roles — `untrusted_sources` (reads that can carry injected content), `egress_sinks` (calls that leave the trust boundary), `positional_sinks`, `value_policies`. That declaration is how the kernel governs a renamed tool set; it is threaded through `GovernedSession` and `ToolCallGovernor` alike.
+
 See **[docs/governance-model.md](docs/governance-model.md)** for the complete model and the guarantees in one place.
 
 ---
@@ -260,27 +272,34 @@ depth=3   GovernedNode
 
 ## Architecture
 
+Subsystems are grouped into three **trust rings**. A bug in the kernel can cause a wrong *allow*; a bug in the platform cannot. The kernel must not depend on the runtime or the platform — machine-enforced by `import-linter` in CI, and reinforced by lazy imports so `from axor_core import ToolCallGovernor` loads the kernel alone.
+
 ```
 axor_core/
+│  Ring 0 — kernel (TCB: gate logic + the data it reasons over)
 ├── contracts/      Pure contracts — no business logic, no side effects
-├── node/           Governance boundary: the gate sequence, canonicalization, export
-├── capability/     Tool permission derivation, execution, lease validation
-├── taint/          Per-value provenance — causal roots, content-derivation ledger,
-│                   confidentiality floor, governance release
-├── kernel/         The decidability classifier, projection registration, the advisory
-│                   adjudicator
-├── federation/     Agent-to-agent trust — signed receipts, gateway, transport
+├── policy/         Gate engine (gates.py), normalizer, consequence axis, value policies, selection
+├── taint/          Per-value provenance — causal roots, content-derivation ledger, confidentiality floor
+├── security/       Carrier classifier, host/path classification
+├── kernel/         Decidability classifier, projection registration, advisory adjudicator
 ├── degradation/    Source-aware, monotone session degradation state machine
-├── policy/         Policy selection + consequence axis + value-policy predicates
+├── errors/         GovernanceBypassError, TaintClearanceError, SessionTerminatedError, …
+├── governor.py     ToolCallGovernor — synchronous per-call gate engine (kernel-only)
+│
+│  Ring 1 — runtime (wires the kernel to an executor)
+├── node/           Governance boundary: GovernedNode, IntentLoop, canonicalization, export
+├── capability/     Tool permission derivation, execution, lease validation, out-of-process daemon client
+├── federation/     Agent-to-agent trust — signed receipts, gateway, transport
+├── worker/         GovernedSession — the public entry point
+│
+│  Ring 2 — platform (quality / cost / observability)
 ├── context/        Session-scoped context: compression, cache, selection
 ├── budget/         Token accounting across the full spawn tree
 ├── trace/          Decision trace collection and access control
-├── worker/         GovernedSession — the public entry point
-└── errors/         GovernanceBypassError, TaintClearanceError, DegradationClearanceError,
-                    SessionTerminatedError, SpawnValidationError
+└── extensions/     Extension loading + sanitization
 ```
 
-See **[docs/governance-model.md](docs/governance-model.md)** for the model and guarantees, and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the module tree and pipeline.
+See **[docs/governance-model.md](docs/governance-model.md)** for the model and guarantees, and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the module tree, trust rings, and pipeline.
 
 ---
 

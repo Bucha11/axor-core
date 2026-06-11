@@ -76,11 +76,14 @@ axor_core/
 │   ├── wrapper.py         GovernedNode — central primitive, wires all subsystems
 │   ├── envelope.py        EnvelopeBuilder — assembles ExecutionEnvelope
 │   ├── intent_loop.py     IntentLoop — stream interception, ToolResultBus, SpawnCallback,
-│   │                                   DegradationEngine pre-check + signal recording
+│   │                                   DegradationEngine pre-check + signal recording;
+│   │                                   delegates the structural gates to policy/gates.py
 │   ├── canonicalizer.py   IntentCanonicalizer — strips raw strings before any advisory/detection layer
-│   ├── normalizer.py      IntentNormalizer — provider format → NormalizedIntent
 │   ├── spawn.py           ChildSpawner — _validate_child_policy(), SpawnValidationError
 │   └── export.py          ExportFilter — SummarizationMembrane, export contracts
+│
+├── governor.py            ToolCallGovernor — synchronous per-call gate engine for
+│                          frameworks that own their agent loop; same gates as IntentLoop
 │
 ├── capability/            Tool permission derivation and execution
 │   ├── resolver.py        CapabilityResolver — fail-closed: unknown prefix = denied
@@ -117,6 +120,10 @@ axor_core/
 │   ├── analyzer.py        TaskAnalyzer — heuristic + domain detection + external classifier
 │   ├── selector.py        PolicySelector — TaskSignal → ExecutionPolicy (7-policy matrix)
 │   ├── composer.py        PolicyComposer — parent restrictions always applied to child
+│   ├── normalizer.py      IntentNormalizer — tool call → NormalizedIntent (structural classification)
+│   ├── gates.py           the six stateless gates as pure functions — the one shared
+│   │                      decision core both IntentLoop and ToolCallGovernor call
+│   ├── sinks.py           imperative / instruction-complete sink sets
 │   ├── consequence.py     consequence axis — content-blind action-class classification
 │   ├── value_policy.py    value-policy predicates (numeric range / enum) on arguments
 │   ├── presets.py         readonly, sandboxed, standard, federated, research, support, analysis
@@ -444,7 +451,7 @@ class BashHandler(ToolHandler):
 
 
 # 3. IntentNormalizer — translate provider format → NormalizedIntent
-from axor_core.node.normalizer import IntentNormalizer
+from axor_core.policy.normalizer import IntentNormalizer
 from axor_core.contracts.anomaly import NormalizedIntent
 
 class MyNormalizer(IntentNormalizer):

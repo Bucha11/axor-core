@@ -1,5 +1,39 @@
 # Changelog
 
+## Unreleased
+
+The kernel/platform split and one-implementation gate engine.
+
+### Added
+
+- **Trust rings, machine-enforced.** Subsystems grouped into Ring 0 (kernel — the
+  TCB), Ring 1 (runtime), Ring 2 (platform). An `import-linter` `kernel-purity`
+  contract (`.importlinter`, run in CI) forbids the kernel from importing the
+  runtime or platform, so a platform bug cannot reach a decision.
+- **`policy/gates.py` — one shared gate engine.** The six stateless gates
+  (consequence, value policies, SSRF, positional, carrier, per-value taint +
+  confidentiality floor) are pure functions. The streaming `IntentLoop` and the
+  synchronous `ToolCallGovernor` both delegate to them — the decision logic exists
+  once and cannot drift.
+- **Operator tool taxonomy on the session path.** `egress_sinks`,
+  `untrusted_sources`, `sensitive_sources` are threaded through `GovernedSession →
+  GovernedNode → IntentLoop` (previously only the standalone governor had them), so
+  the main path governs a deployment's renamed tools. New integration test proves a
+  declared-tool exfiltration is blocked end-to-end.
+- **Kernel-only import bypass.** Lazy package `__init__` (PEP 562): `from axor_core
+  import ToolCallGovernor` loads Ring 0 and nothing from the runtime or platform;
+  `GovernedSession` lazy-loads the full stack. Regression-tested.
+- **Robust identifier tokenisation** in the taint ledger: case-fold + structural
+  delimiter splitting, so an attacker address written `mailto:x@y.z` / `'x@y.z'` /
+  `cc=x@y.z;` still matches the clean form a model extracts. Exhaustive
+  evasion-surface tests; documented residuals (encoding, sub-12-char shredding,
+  semantic paraphrase) marked strict-xfail.
+
+### Changed
+
+- `IntentNormalizer` moved `node/normalizer.py → policy/normalizer.py` (Ring-0
+  structural classification; it never belonged in the runtime ring).
+
 ## 0.8.0 — 2026-06-10
 
 The v4.12 governance pass — per-value provenance becomes the enforcement spine, with

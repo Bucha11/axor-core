@@ -256,3 +256,28 @@ Strict removes content-derived policy decisions entirely and fails closed.
 - Unknown sinks fail closed under the high-assurance (strict) ceiling.
 - The core has zero required dependencies; everything provider-, transport-, or
   model-specific lives outside it behind a small interface.
+- The gates exist as one shared implementation; the streaming path and the
+  synchronous `ToolCallGovernor` both call it, so the decision cannot drift between
+  them.
+- The kernel (the gate logic and the data it reasons over) does not depend on the
+  runtime or the platform — enforced in CI, so a budget/context/trace bug cannot
+  reach a decision, and the kernel can be imported and used on its own.
+
+---
+
+## 12. Declaring the tool set
+
+The kernel recognises generic tool names on its own, but a real deployment renames
+its tools. The operator declares their roles so the kernel can govern them:
+
+- **`untrusted_sources`** — reads whose output can carry injected content (an inbox,
+  a web fetch, a document store). Their output is registered untrusted.
+- **`sensitive_sources`** — reads of a secret (a credential store). Their output is
+  registered untrusted *and* arms the confidentiality floor.
+- **`egress_sinks`** — calls that leave the trust boundary (send an email, post to a
+  URL, move money). Gated when driven by an untrusted/secret value.
+- **`positional_sinks`**, **`value_policies`** — as in §3 and the gate sequence.
+
+A declared role takes precedence over the built-in heuristic; undeclared tools still
+get the heuristic. The same declaration is accepted by `GovernedSession` and
+`ToolCallGovernor`.

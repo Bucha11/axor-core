@@ -35,6 +35,16 @@ never override one. Detection (reputation, drift) is observe-only and is not on 
 path; it may, opt-in, only tighten degradation. Step 5 (degradation pre-check) runs
 first — a quarantined or locked session denies the tool before the gates start.
 
+**One gate implementation, two callers.** The six stateless gates in step 6
+(consequence, value policies, SSRF, positional, carrier, per-value taint +
+confidentiality floor) live as pure functions in `policy/gates.py`. The streaming
+`IntentLoop` above is one caller; the synchronous `ToolCallGovernor` — for
+frameworks that own their own agent loop — is the other. Both delegate to the same
+functions, so the decision logic exists once and cannot drift. The IntentLoop adds
+the stateful wrapper (capability, degradation, leases, escalation, execution); the
+governor adds only the per-value ledger. Capability, degradation, and the
+adjudicator are IntentLoop-only and not part of the shared core.
+
 ---
 
 ## Provider-Specific Call Flows
