@@ -138,6 +138,40 @@ In PRODUCTION and STRICT mode:
 In LIBRARY mode, direct executor calls are allowed but a warning is emitted
 when `AXOR_ENV=production` is set.
 
+### What the process boundary does and does not cover
+
+`LockedExecutor` is an **in-process soft boundary**: it stops the *worker code* from
+calling the executor outside `governance_context()`, but a worker process that runs
+attacker-controlled native code can bypass it. The real boundary is out-of-process
+execution via `DaemonCapabilityClient` → `axor-daemon` (set `require_isolation=True`
+or `AXOR_REQUIRE_ISOLATION=1` to force it).
+
+It is important to be precise about what crosses to the daemon. The daemon
+enforces, server-side and independent of the worker:
+
+- the **capability ceiling** — `operator_policy` set at daemon startup (the worker
+  cannot widen it), plus the session ceiling from a signed grant;
+- the **filesystem sandbox** — path arguments are normalised against the sandbox root;
+- **tool implementations** — they live only in the daemon, so a compromised worker
+  cannot touch the filesystem/network directly; it must go through the socket.
+
+The daemon does **not** currently re-run the per-value data-flow gates (taint,
+confidentiality floor, consequence, carrier, positional). Those run only in the
+worker's `IntentLoop`. The consequence, for the two threat models:
+
+- **Prompt injection** (the model is manipulated, worker code intact) — fully
+  covered: the model can only emit tool calls, and the in-process gates intercept
+  them before they reach the daemon. This is the threat axor targets.
+- **Code-level worker compromise** (RCE / malicious native code in the worker) — the
+  daemon confines it to the capability ceiling and the path sandbox, but within
+  those allowed tools the data-flow gates are bypassed, so e.g. exfiltration through
+  an allowed egress tool is not stopped out-of-process.
+
+Closing that residual is cheap given the shared gate engine: the daemon can host a
+`ToolCallGovernor` (the same `policy/gates.py` functions, run synchronously with a
+per-session taint ledger) and run the full sequence server-side. Until it does, the
+sound data-flow mechanisms are an in-process guarantee, not a cross-process one.
+
 ---
 
 ## Fail-Closed Semantics
