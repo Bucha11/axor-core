@@ -341,6 +341,30 @@ class GovernedSession:
             self._registry.register(sanitized)
         self._started = True
 
+    @classmethod
+    def from_config(
+        cls,
+        executor: Invokable,
+        capability_executor: CapabilityExecutor,
+        config: "Any",
+        **overrides,
+    ) -> "GovernedSession":
+        """Build a session from a :class:`~axor_core.config.GovernanceConfig`.
+
+        The config supplies the declarative governance taxonomy (mode, sources,
+        sinks, allowlists, consequence overrides). ``overrides`` are extra keyword
+        arguments — the executor-side wiring that does not belong in a YAML file
+        (``telemetry``, ``memory_provider``, ``trace_config``, ``child_executor``,
+        ...) — and take precedence over the config.
+        """
+        kwargs = config.as_session_kwargs()
+        kwargs.update(overrides)
+        return cls(
+            executor=executor,
+            capability_executor=capability_executor,
+            **kwargs,
+        )
+
     async def run(
         self,
         task: str,

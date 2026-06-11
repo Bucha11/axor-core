@@ -73,6 +73,8 @@ _LAZY = {
     # governor (Ring 0 kernel only)
     "ToolCallGovernor": "axor_core.governor",
     "GovernanceDecision": "axor_core.governor",
+    # declarative config
+    "GovernanceConfig": "axor_core.config",
     # contracts (Ring 0)
     "Invokable": "axor_core.contracts.invokable",
     "CancelToken": "axor_core.contracts.cancel",
@@ -126,6 +128,7 @@ if TYPE_CHECKING:  # static visibility for type checkers / IDEs (not loaded at r
     from axor_core.budget import TokenCostRates
     from axor_core.capability.executor import CapabilityExecutor, ToolHandler
     from axor_core.governor import ToolCallGovernor, GovernanceDecision
+    from axor_core.config import GovernanceConfig
     from axor_core.contracts.invokable import Invokable
     from axor_core.contracts.cancel import CancelToken, CancelReason, make_token
     from axor_core.contracts.policy import (
@@ -164,6 +167,7 @@ __all__ = [
     "CapabilityExecutor", "ToolHandler",
     # governor
     "ToolCallGovernor", "GovernanceDecision",
+    "GovernanceConfig",
     # budget
     "TokenCostRates",
     # policy

@@ -161,7 +161,16 @@ decision = gov.evaluate("send_email", {"to": attacker_addr})   # came from read_
 assert not decision.allowed                                    # taint_enforcement
 ```
 
-**Deployment taxonomy.** axor's normalizer recognises generic tool names; a real deployment renames its tools, so the operator declares their roles — `untrusted_sources` (reads that can carry injected content), `egress_sinks` (calls that leave the trust boundary), `positional_sinks`, `value_policies`. That declaration is how the kernel governs a renamed tool set; it is threaded through `GovernedSession` and `ToolCallGovernor` alike.
+**Deployment taxonomy.** axor's normalizer recognises generic tool names; a real deployment renames its tools, so the operator declares their roles — `untrusted_sources` (reads that can carry injected content), `egress_sinks` (calls that leave the trust boundary), `positional_sinks`, `value_policies`. That declaration is how the kernel governs a renamed tool set; it is threaded through `GovernedSession` and `ToolCallGovernor` alike. You can pass these as keyword arguments, or describe them once in a YAML file:
+
+```python
+from axor_core import GovernanceConfig, GovernedSession
+
+config  = GovernanceConfig.from_yaml("governance.yaml")   # pip install axor-core[config]
+session = GovernedSession.from_config(executor, capability_executor, config)
+```
+
+See [`examples/governance.yaml`](examples/governance.yaml) for a fully-commented template. Parsing is fail-closed: an unknown key or malformed predicate raises at load time, so a typo can't silently disable a rule.
 
 See **[docs/governance-model.md](docs/governance-model.md)** for the complete model and the guarantees in one place.
 

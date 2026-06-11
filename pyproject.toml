@@ -29,6 +29,11 @@ dependencies = []
 federation = [
     "cryptography>=42.0",
 ]
+# Declarative governance config loaded from YAML (GovernanceConfig.from_yaml).
+# Core stays dependency-free; from_dict works without this.
+config = [
+    "PyYAML>=6.0",
+]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
