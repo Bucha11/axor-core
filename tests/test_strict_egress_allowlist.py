@@ -105,3 +105,77 @@ def test_non_strict_session_does_not_require_allowlist():
         egress_sinks={"send_email"},
     )
     assert s is not None
+
+
+# ── STRICT role completeness (the symmetric source-side obligation) ──────────────
+
+from axor_core.kernel.registration import validate_role_completeness
+
+
+def test_role_completeness_flags_unclassified_tool():
+    errs = validate_role_completeness(
+        {"search_docs", "send_email", "get_time"},
+        untrusted_sources={"search_docs"}, egress_sinks={"send_email"},
+    )
+    assert len(errs) == 1 and "get_time" in errs[0]
+
+
+def test_role_completeness_satisfied_by_each_role():
+    tools = {"a", "b", "c", "d", "e"}
+    assert validate_role_completeness(
+        tools,
+        untrusted_sources={"a"}, sensitive_sources={"b"},
+        egress_sinks={"c"}, positional_sinks={"d"}, benign_tools={"e"},
+    ) == []
+
+
+def test_role_completeness_value_policy_counts_as_classified():
+    assert validate_role_completeness(
+        {"transfer"}, value_policies={"transfer": [enum("x", {"y"})]}
+    ) == []
+
+
+def test_role_completeness_exempts_kernel_intents():
+    assert validate_role_completeness({"spawn_child", "escalate_policy"}) == []
+
+
+def _strict_session_with_tools(tool_names, **kw):
+    from axor_core import GovernedSession
+    from axor_core.capability.executor import CapabilityExecutor, ToolHandler
+    from axor_core.contracts.mode import ExecutionMode
+    from axor_core.contracts.trace import TraceConfig
+    from tests.conftest import EchoExecutor
+
+    class _H(ToolHandler):
+        def __init__(self, n): self._n = n
+        @property
+        def name(self): return self._n
+        async def execute(self, args): return "x"
+
+    cap = CapabilityExecutor()
+    for n in tool_names:
+        cap.register(_H(n))
+    return GovernedSession(
+        executor=EchoExecutor(), capability_executor=cap,
+        trace_config=TraceConfig(local_only=True, persist_inputs=False),
+        mode=ExecutionMode.STRICT, **kw,
+    )
+
+
+def test_strict_session_fails_on_unclassified_tool():
+    with pytest.raises(ValueError, match="strict role completeness"):
+        _strict_session_with_tools(
+            ["search_docs", "send_email", "get_time"],
+            untrusted_sources={"search_docs"}, egress_sinks={"send_email"},
+            value_policies={"send_email": [enum("to", {"a@b.com"})]},
+        )  # get_time unclassified
+
+
+def test_strict_session_constructs_with_full_classification():
+    s = _strict_session_with_tools(
+        ["search_docs", "send_email", "get_time"],
+        untrusted_sources={"search_docs"}, egress_sinks={"send_email"},
+        value_policies={"send_email": [enum("to", {"a@b.com"})]},
+        benign_tools={"get_time"},
+    )
+    assert s is not None

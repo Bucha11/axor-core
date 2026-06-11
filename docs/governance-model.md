@@ -246,6 +246,17 @@ alone — the misconfiguration fails closed at construction, not at run time. In
 Library/Production the allowlist stays optional (the content-derivation gate still
 applies); Strict makes the sound control mandatory where it matters most.
 
+Strict closes the symmetric source-side gap too: **every registered tool must
+carry an explicit data-flow role.** Outside Strict, a tool that is neither declared
+nor matched by the normalizer's heuristics defaults to a *clean* read and registers
+no provenance — so forgetting to mark a secret-reading tool means its output is
+never tainted and the confidentiality floor never arms (the mirror of a missing
+egress allowlist). Strict refuses any registered tool that is not classified as a
+source (`untrusted` / `sensitive`), a sink (`egress` / `positional`), guarded by a
+value policy, or explicitly declared `benign_tools` (a trusted read whose output
+need not be tainted). The misconfiguration fails closed at construction. (`spawn_child`
+and `escalate_policy` are kernel-internal intents and are exempt.)
+
 ---
 
 ## 11. The guarantees, in one place

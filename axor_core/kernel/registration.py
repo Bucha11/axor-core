@@ -106,6 +106,53 @@ def validate_egress_allowlists(
     return errors
 
 
+def validate_role_completeness(
+    allowed_tools: "frozenset[str] | set[str]",
+    *,
+    untrusted_sources: "frozenset[str] | set[str] | None" = None,
+    sensitive_sources: "frozenset[str] | set[str] | None" = None,
+    egress_sinks: "frozenset[str] | set[str] | None" = None,
+    positional_sinks: "frozenset[str] | set[str] | None" = None,
+    benign_tools: "frozenset[str] | set[str] | None" = None,
+    value_policies: "dict[str, list[ValuePredicate]] | None" = None,
+) -> list[str]:
+    """STRICT-mode obligation: every callable tool has an explicit data-flow role.
+
+    The source side of the taxonomy has a silent default: a tool that is neither
+    declared nor matched by the normalizer's heuristics is treated as a *clean*
+    read and registers no provenance. So forgetting to mark a secret-reading tool
+    means its output is never tainted and the confidentiality floor never arms —
+    the symmetric foot-gun to a missing egress allowlist. STRICT closes it by
+    refusing any tool whose role is not explicitly declared.
+
+    A tool is "classified" when it appears in any taxonomy set (untrusted /
+    sensitive / egress / positional), has a value policy, or is explicitly declared
+    benign (a trusted read whose output need not be tainted). Returns one error per
+    unclassified tool (empty == valid). ``spawn_child`` and ``escalate_policy`` are
+    kernel-internal intents, not data-flow tools, and are always exempt.
+    """
+    _EXEMPT = frozenset({"spawn_child", "escalate_policy"})
+    classified = (
+        frozenset(untrusted_sources or ())
+        | frozenset(sensitive_sources or ())
+        | frozenset(egress_sinks or ())
+        | frozenset(positional_sinks or ())
+        | frozenset(benign_tools or ())
+        | frozenset((value_policies or {}).keys())
+        | _EXEMPT
+    )
+    unclassified = sorted(frozenset(allowed_tools) - classified)
+    if not unclassified:
+        return []
+    return [
+        f"tool {tool!r} has no declared data-flow role: STRICT mode requires every "
+        f"tool to be classified (untrusted_source / sensitive_source / egress_sink / "
+        f"positional_sink / value_policy) or explicitly benign_tools — an "
+        f"unclassified read defaults to clean and silently arms no floor"
+        for tool in unclassified
+    ]
+
+
 def field_obligation(kind: CodomainKind, mode: ConsumptionMode) -> str:
     """Operator-facing helper: 'predicate' if a sink field can be guarded by a
     decidable value predicate, else 'fuzz' (must ride the fuzz/positional path)."""

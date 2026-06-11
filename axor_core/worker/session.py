@@ -106,6 +106,7 @@ class GovernedSession:
         egress_sinks: "set[str] | frozenset[str] | None" = None,
         untrusted_sources: "set[str] | frozenset[str] | None" = None,
         sensitive_sources: "set[str] | frozenset[str] | None" = None,
+        benign_tools: "set[str] | frozenset[str] | None" = None,
         value_policies: "dict | None" = None,
         detection_floor: float | None = None,
         adjudicator=None,
@@ -146,11 +147,32 @@ class GovernedSession:
         # sound, paraphrase-proof control) — fail closed at session construction,
         # not deferred to the first run.
         self._require_egress_allowlist = (mode == ExecutionMode.STRICT)
+        self._benign_tools = frozenset(benign_tools or ())
         if self._require_egress_allowlist:
-            from axor_core.kernel.registration import validate_egress_allowlists
+            from axor_core.kernel.registration import (
+                validate_egress_allowlists,
+                validate_role_completeness,
+            )
             _eg_errors = validate_egress_allowlists(self._egress_sinks, self._value_policies)
             if _eg_errors:
                 raise ValueError("strict egress allowlist: " + "; ".join(_eg_errors))
+            # STRICT role completeness: every registered tool needs an explicit
+            # data-flow role — no silent clean-read default. Validated against the
+            # registered handler universe (empty for the daemon path, which carries
+            # its own taxonomy server-side).
+            _tools = capability_executor.registered_tools()
+            if _tools:
+                _role_errors = validate_role_completeness(
+                    _tools,
+                    untrusted_sources=self._untrusted_sources,
+                    sensitive_sources=self._sensitive_sources,
+                    egress_sinks=self._egress_sinks,
+                    positional_sinks=self._positional_sinks,
+                    benign_tools=self._benign_tools,
+                    value_policies=self._value_policies,
+                )
+                if _role_errors:
+                    raise ValueError("strict role completeness: " + "; ".join(_role_errors))
         self._behavioral_drift_observer = behavioral_drift_observer
         self._overlay_ceiling = _overlay_ceiling
         self._overlay_escalation = _overlay_escalation
