@@ -78,6 +78,6 @@ covers D0/D3/D5.
 
 ```
 export ANTHROPIC_API_KEY=sk-ant-...
-AXOR_NNSI_N=8 python -m examples.nnsi_experiment
+AXOR_NNSI_N=8 python -m examples.attacks.nnsi_experiment
 # AXOR_NNSI_MODEL=... to try another model
 ```

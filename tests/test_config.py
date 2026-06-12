@@ -13,7 +13,7 @@ from axor_core.contracts.trace import TraceConfig
 from tests.conftest import EchoExecutor
 
 _EXAMPLE = os.path.join(
-    os.path.dirname(os.path.dirname(__file__)), "examples", "governance.yaml"
+    os.path.dirname(os.path.dirname(__file__)), "examples", "config", "governance.yaml"
 )
 
 

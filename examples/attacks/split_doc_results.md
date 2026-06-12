@@ -81,5 +81,5 @@ is a real knob, not a free win.
 
 ```
 export ANTHROPIC_API_KEY=sk-ant-...
-AXOR_SPLIT_N=8 python -m examples.split_doc_experiment
+AXOR_SPLIT_N=8 python -m examples.attacks.split_doc_experiment
 ```

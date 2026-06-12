@@ -19,7 +19,7 @@ this same change; before it, the attacker address — written adjacent to a peri
 in the document — slipped past the substring match. That hole is why this file
 exists.)
 
-    ANTHROPIC_API_KEY=...  python -m examples.nnsi_experiment
+    ANTHROPIC_API_KEY=...  python -m examples.attacks.nnsi_experiment
 """
 from __future__ import annotations
 

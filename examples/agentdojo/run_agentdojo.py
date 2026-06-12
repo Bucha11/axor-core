@@ -19,7 +19,7 @@ This is a *slice* (a few user x injection pairs), not the full 144-pair suite â€
 it is sized to be honest and cheap on a real API key. Widen TASK SLICE below to
 run more. Requires ANTHROPIC_API_KEY. Uses claude-haiku.
 
-    python -m examples.run_agentdojo
+    python -m examples.agentdojo.run_agentdojo
 """
 from __future__ import annotations
 

@@ -19,7 +19,7 @@ refused regardless of how the judge reasoned. We run both defenses head-to-head
 and also probe the honest residual (an address *reconstructed* from pieces, never
 present verbatim in any document).
 
-    ANTHROPIC_API_KEY=...  python -m examples.split_doc_experiment
+    ANTHROPIC_API_KEY=...  python -m examples.attacks.split_doc_experiment
 """
 from __future__ import annotations
 

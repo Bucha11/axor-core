@@ -186,14 +186,14 @@ export OPEN_ROUTER_API_KEY=sk-or-...   # Qwen, the susceptible model
 
 # The headline serious-threat run (mass exfiltration to an attacker website):
 AXOR_BENCH_BACKEND=openrouter AXOR_BENCH_MODEL=qwen/qwen-2.5-72b-instruct \
-  AXOR_BENCH_SUITE=slack python -m examples.run_agentdojo
+  AXOR_BENCH_SUITE=slack python -m examples.agentdojo.run_agentdojo
 
 # Serious banking PII exfiltration:
-AXOR_BENCH_SUITE=slack|banking|workspace|travel ... python -m examples.run_agentdojo
+AXOR_BENCH_SUITE=slack|banking|workspace|travel ... python -m examples.agentdojo.run_agentdojo
 
 # Robust-model contrast:
 export ANTHROPIC_API_KEY=sk-ant-...
-AXOR_BENCH_BACKEND=anthropic AXOR_BENCH_SUITE=banking python -m examples.run_agentdojo
+AXOR_BENCH_BACKEND=anthropic AXOR_BENCH_SUITE=banking python -m examples.agentdojo.run_agentdojo
 ```
 
 `AXOR_BENCH_SUITE` selects the per-suite taxonomy and a slice of serious injection

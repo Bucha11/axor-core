@@ -170,7 +170,7 @@ config  = GovernanceConfig.from_yaml("governance.yaml")   # pip install axor-cor
 session = GovernedSession.from_config(executor, capability_executor, config)
 ```
 
-See [`examples/governance.yaml`](examples/governance.yaml) for a fully-commented template. Parsing is fail-closed: an unknown key or malformed predicate raises at load time, so a typo can't silently disable a rule.
+See [`examples/config/governance.yaml`](examples/config/governance.yaml) for a fully-commented template. Parsing is fail-closed: an unknown key or malformed predicate raises at load time, so a typo can't silently disable a rule.
 
 See **[docs/governance-model.md](docs/governance-model.md)** for the complete model and the guarantees in one place.
 

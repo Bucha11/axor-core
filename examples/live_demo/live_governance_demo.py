@@ -13,7 +13,7 @@ cannot paraphrase or base64 its way past it.
 
 Requires ANTHROPIC_API_KEY in the environment. Uses the cheap Haiku model.
 
-    python -m examples.live_governance_demo
+    python -m examples.live_demo.live_governance_demo
 """
 from __future__ import annotations
 
