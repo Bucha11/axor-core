@@ -31,6 +31,7 @@ from axor_core.kernel.registration import (
 from axor_core.taint.engine import TaintEngine
 from axor_core.security.carrier import classify_carrier
 from axor_core.policy.sinks import INSTRUCTION_COMPLETE_SINKS
+from axor_core.policy.provenance import output_root
 from axor_core.contracts.result import ExecutorEvent, ExecutorEventKind
 from axor_core.contracts.trace import (
     CancelledEvent,
@@ -700,11 +701,11 @@ class IntentLoop:
             # governance endorsement). `self._egress_sinks` is the operator's
             # declaration of which tools exfiltrate (complements the normalizer's
             # destination classification).
-            floor_active = (
-                self._taint_engine.confidentiality_floor_active()
-                if hasattr(self._taint_engine, "confidentiality_floor_active")
-                else driving_root.sensitive
-            )
+            # Contract-mandated (ValueProvenance.confidentiality_floor_active): call
+            # it directly. The kernel gates confidentiality on the sound floor, never
+            # on the leaky per-value `sensitive` derivation; a backend that omits it
+            # fails loudly rather than silently downgrading the guarantee.
+            floor_active = self._taint_engine.confidentiality_floor_active()
             gd = taint_gate(
                 tool_name, normalized, driving_root, floor_active, self._egress_sinks
             )
@@ -1156,27 +1157,18 @@ class IntentLoop:
             self._taint_engine.register_value(result, override_root)
             return
         tool_name = effective_intent.payload.get("tool", "")
-        # An operator-declared source wins over the normalizer heuristic — this is
-        # how a deployment's renamed read tools (get_inbox, search_docs, ...) get
-        # their output registered untrusted/secret. Mirrors register_output's order.
-        if tool_name in self._sensitive_sources:
-            root = CausalRoot.external_read(TaintSource.FILE, sensitive=True)
-        elif tool_name in self._untrusted_sources:
-            root = CausalRoot.external_read(TaintSource.WEB)
-        else:
-            ni = normalized or self._normalizer.normalize(effective_intent)
-            if ni.target_kind in ("external_url", "cloud_metadata", "docker_socket") or \
-                    ni.operation == "network_request":
-                root = CausalRoot.external_read(TaintSource.WEB)
-            elif (
-                ni.target_kind in ("secret", "system_path")
-                or ni.reads_secret_like_data
-                or ni.writes_outside_workdir
-            ):
-                sensitive = ni.target_kind == "secret" or ni.reads_secret_like_data
-                root = CausalRoot.external_read(TaintSource.FILE, sensitive=sensitive)
-            else:
-                return  # clean read — nothing to register
+        # Shared arming map (policy.provenance.output_root) — the same mapping the
+        # governor registers through, so the streaming and synchronous paths cannot
+        # drift on what a tool's output taints. A declared source role wins over the
+        # normalizer heuristic; a clean read returns None and arms nothing.
+        ni = normalized or self._normalizer.normalize(effective_intent)
+        root = output_root(
+            tool_name, ni,
+            untrusted_sources=self._untrusted_sources,
+            sensitive_sources=self._sensitive_sources,
+        )
+        if root is None:
+            return  # clean read — nothing to register
         self._taint_engine.register_value(result, root)
 
     def _check_consequence(

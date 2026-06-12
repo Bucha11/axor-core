@@ -28,6 +28,10 @@ class _FakeTrustModel:
         return (CausalRoot.external_read(TaintSource.WEB)
                 if any(f in str(value) for f in self._flagged) else CausalRoot.constant())
     def inherit_value_ledger(self, parent): pass   # contract: backends support inheritance
+    # The confidentiality floor is contract-mandated: the kernel calls it directly
+    # for the egress decision, so a backend must provide it (this fake models no
+    # secret reads, so the floor is never armed).
+    def confidentiality_floor_active(self): return False
 
 
 def test_custom_trust_model_satisfies_contract():

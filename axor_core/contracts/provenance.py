@@ -35,3 +35,16 @@ class ValueProvenance(Protocol):
         boundary). A trust-model backend must support child inheritance; how it
         folds the state is the backend's business."""
         ...
+
+    def confidentiality_floor_active(self) -> bool:
+        """True while a sensitive read is outstanding — the content-blind
+        confidentiality floor that gates egress until governance endorses release.
+
+        This is part of the contract, not an optional extra: the kernel gates
+        confidentiality on THIS, not on a value's derived ``sensitive`` label,
+        precisely because the floor is sound (armed on the fact of the read) while
+        per-value derivation is paraphrase-leaky. A backend that omits it would
+        silently downgrade the kernel's headline confidentiality guarantee, so the
+        enforcement paths call it directly and a non-conforming backend fails loudly
+        rather than degrading in silence."""
+        ...

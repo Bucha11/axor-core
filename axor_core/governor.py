@@ -27,7 +27,6 @@ from typing import Any
 from axor_core.contracts.anomaly import NormalizedIntent
 from axor_core.contracts.canonical import ConsequenceClass
 from axor_core.contracts.intent import Intent, IntentKind
-from axor_core.contracts.taint import TaintSource
 from axor_core.policy.normalizer import IntentNormalizer
 from axor_core.policy.gates import (
     GateDecision,
@@ -40,12 +39,12 @@ from axor_core.policy.gates import (
     value_policy_gate,
 )
 from axor_core.policy.sinks import INSTRUCTION_COMPLETE_SINKS
+from axor_core.policy.provenance import output_root
 from axor_core.kernel.registration import (
     validate_driving_arg_allowlists,
     validate_egress_allowlists,
     tool_is_classified,
 )
-from axor_core.taint.causal_root import CausalRoot
 from axor_core.taint.engine import TaintEngine
 
 
@@ -251,27 +250,15 @@ class ToolCallGovernor:
         """
         ni = decision._normalized
         tool_name = ni.tool if ni is not None else ""
-        # A declared role wins over the normalizer heuristic.
-        if tool_name in self._sensitive_sources:
-            root = CausalRoot.external_read(TaintSource.FILE, sensitive=True)
-        elif tool_name in self._untrusted_sources:
-            root = CausalRoot.external_read(TaintSource.WEB)
-        elif ni is None:
-            return
-        elif (
-            ni.target_kind in ("external_url", "cloud_metadata", "docker_socket")
-            or ni.operation == "network_request"
-        ):
-            root = CausalRoot.external_read(TaintSource.WEB)
-        elif (
-            ni.target_kind in ("secret", "system_path")
-            or ni.reads_secret_like_data
-            or ni.writes_outside_workdir
-        ):
-            sensitive = ni.target_kind == "secret" or ni.reads_secret_like_data
-            root = CausalRoot.external_read(TaintSource.FILE, sensitive=sensitive)
-        else:
-            return
+        # Shared arming map — identical to the IntentLoop's, so the two paths cannot
+        # drift on what a tool's output taints.
+        root = output_root(
+            tool_name, ni,
+            untrusted_sources=self._untrusted_sources,
+            sensitive_sources=self._sensitive_sources,
+        )
+        if root is None:
+            return  # clean read — nothing to register
         self._taint.register_value(output, root)
 
     # ── introspection ────────────────────────────────────────────────────────
