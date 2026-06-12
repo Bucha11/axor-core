@@ -184,7 +184,7 @@ async def test_sensitive_read_activates_sound_confidentiality_floor(make_envelop
     assert "confidentiality" in r_clean.reason
 
     # governance endorsement of the secret lifts the floor → egress allowed again
-    loop._taint_engine.endorse_value(secret, "operator", "human_operator", "reviewed")
+    loop._taint_engine.endorse_value(secret, GovernanceAuthority("operator", "human_operator", "reviewed"))
     assert (await loop._resolve_tool_intent(clean, env)).approved
 
 
@@ -285,7 +285,7 @@ class TestAuthorityValidation:
         eng = TaintEngine()
         eng.register_value("WEB_VAL_aabbccddeeff", CausalRoot.external_read(TaintSource.WEB))
         with pytest.raises(TaintClearanceError):
-            eng.clear_by_governance(authority="", authority_type="worker", reason_code="")
+            eng.clear_by_governance(GovernanceAuthority(authority_id="", authority_type="worker", reason_code=""))
         assert eng.derive_value("WEB_VAL_aabbccddeeff").is_tainted  # still tainted
 
     def test_taint_clear_accepts_valid_authority(self):
@@ -293,7 +293,7 @@ class TestAuthorityValidation:
         eng = TaintEngine()
         eng.register_value("WEB_VAL_aabbccddeeff", CausalRoot.external_read(TaintSource.WEB))
         eng.clear_by_governance(
-            authority="op-1", authority_type="human_operator", reason_code="reviewed")
+            GovernanceAuthority(authority_id="op-1", authority_type="human_operator", reason_code="reviewed"))
         assert not eng.derive_value("WEB_VAL_aabbccddeeff").is_tainted
 
     def test_degradation_clear_rejects_worker_authority(self):

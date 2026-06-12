@@ -14,6 +14,7 @@ non-egress sinks (local writes) keep their per-value precision.
 """
 
 from __future__ import annotations
+from axor_core.contracts.degradation import GovernanceAuthority
 
 from typing import Any
 
@@ -144,7 +145,7 @@ async def test_endorsement_lifts_floor():
     _read_secret(eng)
     loop = IntentLoop(capability_executor=_executor(), trace_events=[], taint_engine=eng)
     assert not (await _resolve(loop, _env(), "fetch", {"url": "http://example.com/x"})).approved
-    eng.endorse_value(SECRET, "operator", "human_operator", "reviewed")
+    eng.endorse_value(SECRET, GovernanceAuthority("operator", "human_operator", "reviewed"))
     assert eng.confidentiality_floor_active() is False
     assert (await _resolve(loop, _env(), "fetch", {"url": "http://example.com/x"})).approved
 
@@ -154,7 +155,7 @@ async def test_endorsing_one_of_two_secrets_keeps_floor():
     eng = TaintEngine()
     _read_secret(eng, "SECRET_ONE_aaaaaaaaaaaa")
     _read_secret(eng, "SECRET_TWO_bbbbbbbbbbbb")
-    eng.endorse_value("SECRET_ONE_aaaaaaaaaaaa", "operator", "human_operator", "reviewed")
+    eng.endorse_value("SECRET_ONE_aaaaaaaaaaaa", GovernanceAuthority("operator", "human_operator", "reviewed"))
     assert eng.confidentiality_floor_active() is True     # the other secret is loose
     loop = IntentLoop(capability_executor=_executor(), trace_events=[], taint_engine=eng)
     assert not (await _resolve(loop, _env(), "fetch", {"url": "http://example.com/x"})).approved
@@ -184,5 +185,5 @@ def test_child_inherits_confidentiality_floor():
 def test_clearance_resets_floor():
     eng = TaintEngine()
     _read_secret(eng)
-    eng.clear_by_governance("operator", "human_operator", "reviewed")
+    eng.clear_by_governance(GovernanceAuthority("operator", "human_operator", "reviewed"))
     assert eng.confidentiality_floor_active() is False

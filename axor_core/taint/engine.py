@@ -3,7 +3,9 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from axor_core.taint.causal_root import CausalRoot
+from axor_core.taint.fingerprint import content_fingerprint
 from axor_core.taint.ledger import ValueTaintLedger
+from axor_core.contracts.degradation import GovernanceAuthority
 from axor_core.contracts.trace import (
     TaintClearanceAttemptedEvent,
     TaintClearedEvent,
@@ -24,15 +26,18 @@ _VALID_GOVERNANCE_AUTHORITY_TYPES = frozenset({
 })
 
 
-def _is_valid_governance_authority(
-    authority: str,
-    authority_type: str,
-    reason_code: str,
-) -> bool:
+def _is_valid_governance_authority(authority: GovernanceAuthority) -> bool:
+    """A governance authority is valid when it is an unforgeable GovernanceAuthority
+    capability (constructible only by the host, never materialised from a worker's
+    tool-call args) carrying a non-empty principal, a non-empty reason, and an
+    authority_type from the allowed set. The TYPE is the capability — a worker
+    cannot fabricate one from JSON/strings — and the field checks reject a blank or
+    worker-labelled instance."""
     return bool(
-        authority
-        and reason_code
-        and authority_type in _VALID_GOVERNANCE_AUTHORITY_TYPES
+        isinstance(authority, GovernanceAuthority)
+        and authority.authority_id
+        and authority.reason_code
+        and authority.authority_type in _VALID_GOVERNANCE_AUTHORITY_TYPES
     )
 
 
@@ -59,14 +64,18 @@ class TaintEngine:
         # against per-value tracking honestly.
         self._session_any_tainted = False
         self._session_any_sensitive = False
-        # Confidentiality floor (sound). Counts outstanding sensitive reads: a
-        # secret entered the session and has NOT been governance-released. While
-        # > 0 the session is egress-restricted — coarsely and soundly, on the FACT
-        # of the read, independent of the egress value's content (so a paraphrased
-        # / re-encoded secret cannot escape, unlike the per-value content-derivation
-        # gate). Incremented on a sensitive read, decremented only by governance
-        # endorsement of the secret value, reset by clearance.
-        self._outstanding_sensitive = 0
+        # Confidentiality floor (sound). An IDENTITY-BOUND registry of outstanding
+        # sensitive reads: fingerprint(secret) -> count of un-released reads of THAT
+        # exact secret. While non-empty the session is egress-restricted — soundly,
+        # on the FACT of the read, content-blind (a paraphrased/re-encoded secret
+        # cannot escape, unlike the per-value derivation gate). Keyed on a whole-
+        # content fingerprint, NOT on the leaky ≥12-char ledger, so: (a) a secret
+        # shorter than the ledger segment minimum still arms AND can be released
+        # (the ledger can't represent it, the fingerprint can); (b) endorsing a
+        # DIFFERENT value that merely shares a fragment cannot lift another secret's
+        # floor (different fingerprint). This decouples the floor from the ledger's
+        # derive(), removing the count/ledger desync.
+        self._outstanding: dict[str, int] = {}
 
     # ── Per-value provenance (ValueProvenance) ────────────────────────────────
 
@@ -77,14 +86,16 @@ class TaintEngine:
             self._session_any_tainted = True
         if root.sensitive:
             self._session_any_sensitive = True
-            # Activate the confidentiality floor on the READ fact — regardless of
-            # whether the ledger stored a fragment (very short secrets still count).
-            self._outstanding_sensitive += 1
+            # Arm the floor on the READ fact, keyed by the secret's fingerprint —
+            # regardless of whether the ledger stored a fragment (sub-threshold
+            # secrets still count, and remain releasable by fingerprint).
+            fp = content_fingerprint(content)
+            self._outstanding[fp] = self._outstanding.get(fp, 0) + 1
 
     def confidentiality_floor_active(self) -> bool:
         """Sound egress floor: True while a secret read is outstanding (not
         governance-released). An ENFORCEMENT input — unlike session_shadow."""
-        return self._outstanding_sensitive > 0
+        return bool(self._outstanding)
 
     def session_shadow(self) -> tuple[bool, bool]:
         """(any_tainted, any_sensitive) for the session-wide shadow model.
@@ -112,8 +123,11 @@ class TaintEngine:
             self._session_any_sensitive or parent._session_any_sensitive
         )
         # Inherit the confidentiality floor: a child of a session that read a secret
-        # is egress-restricted too (else the child is a floor bypass).
-        self._outstanding_sensitive += parent._outstanding_sensitive
+        # is egress-restricted too (else the child is a floor bypass). Merge per
+        # fingerprint so distinct secrets are not conflated and re-inheritance does
+        # not double-count a secret the child already carries.
+        for fp, count in parent._outstanding.items():
+            self._outstanding[fp] = max(self._outstanding.get(fp, 0), count)
 
     def drain_events(self) -> list[TraceEvent]:
         """Return and clear pending trace events for the trace collector."""
@@ -135,80 +149,69 @@ class TaintEngine:
             "worker attempted to clear taint — only governance may do this"
         )
 
-    def clear_by_governance(
-        self,
-        authority: str,
-        authority_type: str,
-        reason_code: str,
-        authorized_by_principal_id: str = "",
-        audit_id: str = "",
-    ) -> None:
+    def clear_by_governance(self, authority: GovernanceAuthority) -> None:
         """Clear ALL per-value provenance under governance authority.
 
-        Rejects clearance unless it carries a verifiable governance authority — a
-        non-empty principal and an authority_type from the allowed set — so a
-        worker-reachable path cannot launder taint. For releasing a single value,
-        use endorse_value().
+        Requires an unforgeable :class:`GovernanceAuthority` capability — a worker
+        cannot materialise one from its tool-call args, so this path is not
+        worker-reachable, and the object's fields are validated besides. For
+        releasing a single value, use :meth:`endorse_value`.
         """
-        if not _is_valid_governance_authority(authority, authority_type, reason_code):
+        if not _is_valid_governance_authority(authority):
             self._pending_events.append(TaintClearanceAttemptedEvent(
                 kind=TraceEventKind.TAINT_CLEARANCE_ATTEMPTED,
                 node_id=self._node_id,
                 sequence=len(self._pending_events),
-                attempted_by=authority or "unknown",
+                attempted_by=getattr(authority, "authority_id", "") or "unknown",
             ))
             raise TaintClearanceError(
-                "taint clearance rejected: requires a valid governance authority "
-                f"(authority={authority!r}, authority_type={authority_type!r})"
+                "taint clearance rejected: requires a valid GovernanceAuthority "
+                f"capability (got {authority!r})"
             )
         self._ledger = ValueTaintLedger()
         self._session_any_tainted = False
         self._session_any_sensitive = False
-        self._outstanding_sensitive = 0
+        self._outstanding = {}
         self._pending_events.append(TaintClearedEvent(
             kind=TraceEventKind.TAINT_CLEARED,
             node_id=self._node_id,
             sequence=len(self._pending_events),
-            cleared_by=authority,
-            authority_type=authority_type,
-            reason_code=reason_code,
-            audit_id=audit_id,
+            cleared_by=authority.authority_id,
+            authority_type=authority.authority_type,
+            reason_code=authority.reason_code,
+            audit_id=authority.audit_id,
         ))
 
-    def endorse_value(
-        self,
-        content: object,
-        authority: str,
-        authority_type: str,
-        reason_code: str,
-        audit_id: str = "",
-    ) -> int:
+    def endorse_value(self, content: object, authority: GovernanceAuthority) -> int:
         """Governed structural release of one specific value.
 
-        Removes the value's fragments from the per-value ledger so `derive_value`
-        no longer flags it. Attests release of this value/lineage (schema/
+        Removes the value's fragments from the per-value ledger so ``derive_value``
+        no longer flags it, AND lifts the confidentiality floor for THAT exact
+        secret (by fingerprint). Attests release of this value/lineage (schema/
         transform/bounded use), NOT a semantic "safe" judgement, and NOT the whole
-        session. Requires a valid governance authority. Returns fragments released.
+        session. Requires an unforgeable :class:`GovernanceAuthority`. Returns
+        ledger fragments released.
         """
-        if not _is_valid_governance_authority(authority, authority_type, reason_code):
+        if not _is_valid_governance_authority(authority):
             raise TaintClearanceError(
-                "endorsement rejected: requires a valid governance authority "
-                f"(authority={authority!r}, authority_type={authority_type!r})"
+                "endorsement rejected: requires a valid GovernanceAuthority "
+                f"capability (got {authority!r})"
             )
-        # Lift one unit of the confidentiality floor iff this content is a currently
-        # registered SENSITIVE value (governance attests its release). A paraphrase
-        # that does not match the registered secret does not derive as sensitive,
-        # so it cannot lift the floor — the floor stays sound.
-        if self._outstanding_sensitive > 0 and self._ledger.derive(content).sensitive:
-            self._outstanding_sensitive -= 1
+        # Lift the floor for THIS exact secret, identity-bound by fingerprint —
+        # governance names the value it releases. A different value (even one that
+        # shares a ledger fragment) has a different fingerprint and cannot lift
+        # another secret's floor; a sub-threshold secret the ledger never stored is
+        # still releasable here. This is what keeps the floor and the ledger from
+        # desynchronising — the floor is released by identity, not by derive().
+        self._outstanding.pop(content_fingerprint(content), None)
         removed = self._ledger.unregister(content)
         self._pending_events.append(TaintClearedEvent(
             kind=TraceEventKind.TAINT_CLEARED,
             node_id=self._node_id,
             sequence=len(self._pending_events),
-            cleared_by=authority,
-            authority_type=authority_type,
-            reason_code=f"endorsement:{reason_code}",
-            audit_id=audit_id,
+            cleared_by=authority.authority_id,
+            authority_type=authority.authority_type,
+            reason_code=f"endorsement:{authority.reason_code}",
+            audit_id=authority.audit_id,
         ))
         return removed

@@ -4,6 +4,7 @@ and value-policy predicates.
 """
 
 from __future__ import annotations
+from axor_core.contracts.degradation import GovernanceAuthority
 
 import pytest
 
@@ -41,7 +42,7 @@ def test_endorse_releases_one_value_under_governance():
     eng.register_value(SECRET, CausalRoot.external_read(TaintSource.FILE, sensitive=True))
     assert eng.derive_value(SECRET).is_tainted is True
 
-    removed = eng.endorse_value(SECRET, "operator", "human_operator", "reviewed")
+    removed = eng.endorse_value(SECRET, GovernanceAuthority("operator", "human_operator", "reviewed"))
     assert removed >= 1
     assert eng.derive_value(SECRET).is_tainted is False  # released
 
@@ -50,7 +51,7 @@ def test_endorse_rejects_invalid_authority():
     eng = TaintEngine()
     eng.register_value(SECRET, CausalRoot.external_read(TaintSource.WEB))
     with pytest.raises(TaintClearanceError):
-        eng.endorse_value(SECRET, "", "worker", "")  # not a governance authority
+        eng.endorse_value(SECRET, GovernanceAuthority("", "worker", ""))  # not a governance authority
     assert eng.derive_value(SECRET).is_tainted is True  # still tainted
 
 
@@ -59,7 +60,7 @@ def test_endorse_is_per_value_not_whole_ledger():
     other = "OTHER_TAINTED_fragment_xyz"
     eng.register_value(SECRET, CausalRoot.external_read(TaintSource.FILE, sensitive=True))
     eng.register_value(other, CausalRoot.external_read(TaintSource.WEB))
-    eng.endorse_value(SECRET, "op", "human_operator", "reviewed")
+    eng.endorse_value(SECRET, GovernanceAuthority("op", "human_operator", "reviewed"))
     assert eng.derive_value(SECRET).is_tainted is False   # released
     assert eng.derive_value(other).is_tainted is True     # untouched
 

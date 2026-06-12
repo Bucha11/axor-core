@@ -7,6 +7,7 @@ entries, and that saturated state propagates when ledgers merge.
 """
 
 from __future__ import annotations
+from axor_core.contracts.degradation import GovernanceAuthority
 
 import pytest
 
@@ -85,5 +86,5 @@ def test_engine_endorse_value_respects_refcount():
     eng = TaintEngine()
     eng.register_value(A, _tainted())
     eng.register_value(B, _tainted())
-    eng.endorse_value(A, "operator", "human_operator", "reviewed")
+    eng.endorse_value(A, GovernanceAuthority("operator", "human_operator", "reviewed"))
     assert eng.derive_value(B).is_tainted is True

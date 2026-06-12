@@ -5,6 +5,7 @@ confidentiality label.
 """
 
 from __future__ import annotations
+from axor_core.contracts.degradation import GovernanceAuthority
 
 from axor_core.contracts.taint import Carrier, TaintSource, carrier_join
 from axor_core.security.carrier import classify_carrier
@@ -76,5 +77,5 @@ def test_sensitive_value_derives_sensitive_and_clears():
     eng = TaintEngine()
     eng.register_value("SENSITIVE_VAL_abc123", CausalRoot.external_read(TaintSource.FILE, sensitive=True))
     assert eng.derive_value("x SENSITIVE_VAL_abc123").sensitive is True
-    eng.clear_by_governance("op", "human_operator", "reviewed")
+    eng.clear_by_governance(GovernanceAuthority("op", "human_operator", "reviewed"))
     assert eng.derive_value("SENSITIVE_VAL_abc123").is_tainted is False

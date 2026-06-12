@@ -5,6 +5,7 @@ sink, and release it by governance (endorse a single value, or clear all). There
 is no session-wide taint flag.
 """
 from __future__ import annotations
+from axor_core.contracts.degradation import GovernanceAuthority
 
 import pytest
 
@@ -43,7 +44,7 @@ def test_worker_cannot_clear():
 def test_governance_clear_removes_all():
     e = TaintEngine()
     e.register_value(V, CausalRoot.external_read(TaintSource.WEB))
-    e.clear_by_governance("operator", "human_operator", "reviewed")
+    e.clear_by_governance(GovernanceAuthority("operator", "human_operator", "reviewed"))
     assert e.derive_value(V).is_tainted is False
 
 
@@ -51,14 +52,14 @@ def test_governance_clear_rejects_bad_authority():
     e = TaintEngine()
     e.register_value(V, CausalRoot.external_read(TaintSource.WEB))
     with pytest.raises(TaintClearanceError):
-        e.clear_by_governance("", "worker", "")
+        e.clear_by_governance(GovernanceAuthority("", "worker", ""))
     assert e.derive_value(V).is_tainted is True
 
 
 def test_endorse_releases_one_value_under_governance():
     e = TaintEngine()
     e.register_value(V, CausalRoot.external_read(TaintSource.FILE, sensitive=True))
-    removed = e.endorse_value(V, "operator", "human_operator", "ok")
+    removed = e.endorse_value(V, GovernanceAuthority("operator", "human_operator", "ok"))
     assert removed >= 1
     assert e.derive_value(V).is_tainted is False
 

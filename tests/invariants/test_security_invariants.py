@@ -175,12 +175,13 @@ def test_inv04_adversarial_taint_not_cleared_by_intent_flood():
 
 def test_inv05_positive_governance_can_clear_taint():
     """Governance call (clear_by_governance) succeeds and clears taint."""
+    from axor_core.contracts.degradation import GovernanceAuthority
     engine = _tainted_engine()
-    engine.clear_by_governance(
-        authority="operator-a",
+    engine.clear_by_governance(GovernanceAuthority(
+        authority_id="operator-a",
         authority_type="human_operator",
         reason_code="test_clearance",
-    )
+    ))
     assert not engine.derive_value(_TAINTED_VALUE).is_tainted
 
 

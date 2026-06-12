@@ -8,6 +8,7 @@ session-wide flag cannot make, and it only ever adds denials (never allows more)
 """
 
 from __future__ import annotations
+from axor_core.contracts.degradation import GovernanceAuthority
 
 from typing import Any
 
@@ -147,7 +148,7 @@ async def test_governance_clear_releases_per_value_taint():
     loop = IntentLoop(capability_executor=_executor(), trace_events=[], taint_engine=eng)
     await _drive(loop, _envelope(), [("read", {"path": ".env"})])
     assert eng.derive_value(SECRET).is_tainted is True  # registered by the read
-    eng.clear_by_governance("operator", "human_operator", "reviewed")
+    eng.clear_by_governance(GovernanceAuthority("operator", "human_operator", "reviewed"))
     assert eng.derive_value(SECRET).is_tainted is False
 
     r = await _drive(loop, _envelope(), [

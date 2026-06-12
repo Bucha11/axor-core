@@ -12,14 +12,13 @@ value (the value hash is signed), and cannot be replayed under a different algor
 
 from __future__ import annotations
 
-import hashlib
-import json
 import secrets
 import time
 from dataclasses import dataclass, field
 
 from axor_core.contracts.taint import TaintSource
 from axor_core.taint.causal_root import CausalRoot
+from axor_core.taint.fingerprint import content_fingerprint
 from axor_core.federation.signing import Signer, Verifier
 
 # Default receipt lifetime. A receipt is a one-shot attestation, not a bearer
@@ -63,26 +62,8 @@ class FederationReceipt:
     signature: bytes = b""                # Signer output over the payload
 
 
-def value_hash(value: object) -> str:
-    """Canonical content hash of a value (the receipt binds to this).
-
-    Avoids ``repr`` — which is order-unstable for dicts and non-injective for
-    objects with a custom/constant ``__repr__`` (two distinct values could share a
-    receipt). Strings/bytes hash directly; everything else goes through canonical,
-    sorted JSON, falling back to a type-tagged repr only for the genuinely
-    unserialisable (where the type tag at least prevents cross-type collision)."""
-    if isinstance(value, bytes):
-        material = b"b:" + value
-    elif isinstance(value, str):
-        material = b"s:" + value.encode()
-    else:
-        try:
-            material = b"j:" + json.dumps(
-                value, sort_keys=True, separators=(",", ":"), default=str
-            ).encode()
-        except (TypeError, ValueError):
-            material = f"r:{type(value).__module__}.{type(value).__qualname__}:{value!r}".encode()
-    return hashlib.sha256(material).hexdigest()
+# The receipt binds to the value's canonical fingerprint (shared Ring-0 definition).
+value_hash = content_fingerprint
 
 
 def _payload(
