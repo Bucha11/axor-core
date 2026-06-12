@@ -111,3 +111,36 @@ def test_valid_authority_clears():
     _read_secret(eng, "SECRET_VALUE_abcd1234")
     eng.clear_by_governance(_GA)
     assert eng.confidentiality_floor_active() is False
+
+
+# ── floor map is bounded: saturation is sticky and fail-closed ──────────────────
+
+def test_outstanding_floor_map_saturates_fail_closed():
+    from axor_core.taint import engine as _eng_mod
+    eng = TaintEngine()
+    cap = _eng_mod._MAX_OUTSTANDING_SECRETS
+    # Flood with distinct secrets past the cap.
+    for i in range(cap + 50):
+        _read_secret(eng, f"distinct-secret-number-{i:08d}")
+    assert eng.confidentiality_floor_active() is True
+    # The map is bounded (it did not grow past the cap); the sticky flag carries it.
+    assert len(eng._outstanding) <= cap
+    assert eng._floor_saturated is True
+    # Endorsing every TRACKED secret cannot lower a saturated floor — untracked
+    # past-cap secrets are still outstanding, so it stays up until governance clears.
+    for fp in list(eng._outstanding):
+        eng._outstanding.pop(fp)
+    assert eng.confidentiality_floor_active() is True
+    eng.clear_by_governance(_GA)
+    assert eng.confidentiality_floor_active() is False   # governance resets sticky
+
+
+def test_saturated_floor_is_inherited_by_children():
+    from axor_core.taint import engine as _eng_mod
+    parent = TaintEngine()
+    for i in range(_eng_mod._MAX_OUTSTANDING_SECRETS + 5):
+        _read_secret(parent, f"p-secret-{i:08d}")
+    assert parent._floor_saturated is True
+    child = TaintEngine()
+    child.inherit_value_ledger(parent)
+    assert child.confidentiality_floor_active() is True   # child is not a bypass

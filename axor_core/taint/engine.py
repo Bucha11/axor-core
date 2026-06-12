@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 
 from axor_core.taint.causal_root import CausalRoot
@@ -13,6 +14,14 @@ from axor_core.contracts.trace import (
     TraceEventKind,
 )
 from axor_core.errors.exceptions import TaintClearanceError
+
+log = logging.getLogger("axor.taint")
+
+# Cap on distinct outstanding sensitive reads tracked by fingerprint. Past it the
+# floor goes STICKY (forced active) instead of growing the map without bound — a
+# flood of distinct secret reads bounds memory while failing CLOSED (the floor
+# stays up). Only governance (clear_by_governance) resets it.
+_MAX_OUTSTANDING_SECRETS = 4096
 
 if TYPE_CHECKING:
     pass
@@ -76,6 +85,11 @@ class TaintEngine:
         # floor (different fingerprint). This decouples the floor from the ledger's
         # derive(), removing the count/ledger desync.
         self._outstanding: dict[str, int] = {}
+        # Sticky fail-closed flag: set once the outstanding map hits the cap, it
+        # forces the floor active regardless of the map, so a flood of distinct
+        # secret reads cannot grow memory without bound and endorsing the few tracked
+        # secrets cannot lower the floor while untracked ones are still outstanding.
+        self._floor_saturated = False
 
     # ── Per-value provenance (ValueProvenance) ────────────────────────────────
 
@@ -90,12 +104,23 @@ class TaintEngine:
             # regardless of whether the ledger stored a fragment (sub-threshold
             # secrets still count, and remain releasable by fingerprint).
             fp = content_fingerprint(content)
-            self._outstanding[fp] = self._outstanding.get(fp, 0) + 1
+            if fp in self._outstanding or len(self._outstanding) < _MAX_OUTSTANDING_SECRETS:
+                self._outstanding[fp] = self._outstanding.get(fp, 0) + 1
+            elif not self._floor_saturated:
+                # Cap reached on a NEW secret: do not grow the map; go sticky so the
+                # floor stays up for this (untracked) read. Fail-closed.
+                self._floor_saturated = True
+                log.warning(
+                    "confidentiality floor saturated at %d distinct outstanding "
+                    "secrets — floor forced active until governance clears it",
+                    _MAX_OUTSTANDING_SECRETS,
+                )
 
     def confidentiality_floor_active(self) -> bool:
         """Sound egress floor: True while a secret read is outstanding (not
-        governance-released). An ENFORCEMENT input — unlike session_shadow."""
-        return bool(self._outstanding)
+        governance-released). An ENFORCEMENT input — unlike session_shadow. Once the
+        outstanding map saturates it stays True (sticky) until governance clears."""
+        return self._floor_saturated or bool(self._outstanding)
 
     def session_shadow(self) -> tuple[bool, bool]:
         """(any_tainted, any_sensitive) for the session-wide shadow model.
@@ -128,6 +153,8 @@ class TaintEngine:
         # not double-count a secret the child already carries.
         for fp, count in parent._outstanding.items():
             self._outstanding[fp] = max(self._outstanding.get(fp, 0), count)
+        # A saturated parent floor is inherited sticky (else the child is a bypass).
+        self._floor_saturated = self._floor_saturated or parent._floor_saturated
 
     def drain_events(self) -> list[TraceEvent]:
         """Return and clear pending trace events for the trace collector."""
@@ -172,6 +199,7 @@ class TaintEngine:
         self._session_any_tainted = False
         self._session_any_sensitive = False
         self._outstanding = {}
+        self._floor_saturated = False
         self._pending_events.append(TaintClearedEvent(
             kind=TraceEventKind.TAINT_CLEARED,
             node_id=self._node_id,
