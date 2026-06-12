@@ -29,7 +29,7 @@ jobs:
           cache: pip
 
       - name: Install
-        run: pip install -e ".[dev]"
+        run: pip install -e ".[dev,config,federation]"
 
       - name: Adversarial suite (attacker scenarios + fuzz-floor)
         # Determinism guard: a fixed hash seed plus the property fuzz floor. The
