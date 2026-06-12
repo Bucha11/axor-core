@@ -27,7 +27,6 @@ from axor_core.kernel.registration import (
     tool_is_classified,
 )
 from axor_core.taint.engine import TaintEngine
-from axor_core.security.carrier import classify_carrier
 from axor_core.policy.sinks import INSTRUCTION_COMPLETE_SINKS
 from axor_core.policy.provenance import output_root
 from axor_core.contracts.result import ExecutorEvent, ExecutorEventKind
@@ -49,7 +48,6 @@ from axor_core.capability.lease_validator import (
     path_matches_allowlist,
 )
 from axor_core.contracts.degradation import DegradationLevel
-from axor_core.contracts.taint import Carrier, TaintSource
 from axor_core.degradation.engine import _LOCKED_ALLOWED_TOOLS
 from axor_core.policy.normalizer import IntentNormalizer
 from axor_core.node.canonicalizer import IntentCanonicalizer
@@ -962,25 +960,21 @@ class IntentLoop:
         )
 
     def _spawn_taint_reason(self, spawn_args: dict) -> str | None:
-        """Carrier/taint gate for spawn_child. The child's `task` is free text the
-        child interprets as instructions — spawn_child is an instruction-following
-        sink (it is in `IMPERATIVE_SINKS`). A tainted FREE_TEXT task is the
-        imperative channel. The regular tool path applies exactly this gate; the
-        spawn branch dispatches before reaching it, so apply it here too.
-
-        Returns a denial reason, or None to allow. (Structured/sensitive values that
-        are not the imperative channel stay gated at the child's own sinks: the
-        child inherits this engine's per-value ledger.)
-        """
+        """Carrier gate for spawn_child, routed through the SHARED gate predicate so
+        the spawn branch and the regular tool path cannot drift. spawn_child is an
+        instruction-following sink (in IMPERATIVE_SINKS), so a tainted FREE_TEXT task
+        is the imperative channel. The driving root is derived over the WHOLE spawn
+        args (spawn is deliberately not narrowed by driving_args). Returns a denial
+        reason, or None to allow — structured/sensitive values that are not the
+        imperative channel stay gated at the child's own sinks (the child inherits
+        this engine's per-value ledger)."""
         if self._taint_engine is None:
             return None
         driving_root = self._taint_engine.derive_value(spawn_args)
-        if driving_root.is_tainted and classify_carrier(spawn_args) == Carrier.FREE_TEXT:
-            return (
-                "carrier gate: untrusted FREE_TEXT value into spawn_child — "
-                "the child task is interpreted as instructions (imperative channel)"
-            )
-        return None
+        gd = carrier_gate(
+            "spawn_child", spawn_args, None, driving_root, self._imperative_sinks
+        )
+        return gd.reason if gd is not None else None
 
     def _record_denial(
         self,
