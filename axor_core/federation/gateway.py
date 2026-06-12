@@ -15,6 +15,7 @@ peer, applying the L1/L2 ladder:
 
 from __future__ import annotations
 
+import time
 from enum import Enum
 
 from axor_core.taint.causal_root import CausalRoot
@@ -48,10 +49,13 @@ class FederationGateway:
         self._peers = dict(peers or {})
         self._compatible_kernels = frozenset(compatible_kernels or ())
         self._federated_domains = frozenset(federated_domains or ())
-        # Nonces of receipts already consumed this session. A signed receipt is a
-        # one-shot attestation; re-presenting the same one (replay) is rejected.
-        # Bounded by the receipt TTL (an expired nonce can be forgotten safely).
-        self._seen_nonces: set[str] = set()
+        # Consumed receipts this session: (peer_id, nonce) -> expires_at. A signed
+        # receipt is a one-shot attestation; re-presenting the same one (replay) is
+        # rejected. Keyed by PEER as well as nonce so one trusted peer cannot burn
+        # another peer's nonce (a targeted DoS), and pruned by expiry on each
+        # receive so the set stays bounded by the live-receipt window, not session
+        # length.
+        self._seen_nonces: dict[tuple[str, str], float] = {}
 
     def receive(
         self,
@@ -80,14 +84,16 @@ class FederationGateway:
 
         # Authentic, unexpired receipt — but a one-shot. Reject a replay of one we
         # have already consumed (a captured receipt re-presented to re-launder a
-        # value's provenance). A receipt with no nonce is legacy/unbound and is not
-        # replay-protected; treat its absence as non-replayable but log nothing.
-        if receipt.nonce:
-            if receipt.nonce in self._seen_nonces:
-                raise FederationError(
-                    f"replayed receipt (nonce already consumed) from peer {peer_id!r}"
-                )
-            self._seen_nonces.add(receipt.nonce)
+        # value's provenance). verify_receipt has already guaranteed a non-empty
+        # nonce and a bounded expiry, so the cache key and prune horizon are sound.
+        now_ts = time.time()
+        self._prune_nonces(now_ts)
+        key = (peer_id, receipt.nonce)
+        if key in self._seen_nonces:
+            raise FederationError(
+                f"replayed receipt (nonce already consumed) from peer {peer_id!r}"
+            )
+        self._seen_nonces[key] = receipt.expires_at
 
         # Authentic receipt. L2 requires BOTH a compatible kernel AND a federated
         # domain; otherwise we trust the peer's identity but not its labels → L1.
@@ -96,3 +102,11 @@ class FederationGateway:
         if kernel_ok and domain_ok:
             return restore_root(receipt), FederationLevel.L2
         return CausalRoot.cross_process_in(), FederationLevel.L1
+
+    def _prune_nonces(self, now_ts: float) -> None:
+        """Forget consumed nonces past their receipt's expiry. An expired receipt
+        is already rejected by verify_receipt, so its nonce can never be replayed
+        and need not be retained — keeping the cache bounded by the live window."""
+        expired = [k for k, exp in self._seen_nonces.items() if exp <= now_ts]
+        for k in expired:
+            del self._seen_nonces[k]

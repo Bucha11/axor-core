@@ -25,6 +25,13 @@ from axor_core.federation.signing import Signer, Verifier
 # token; bounding its validity caps the replay window even if a peer's nonce
 # cache is lost (e.g. a restarted gateway).
 _DEFAULT_TTL_SECONDS = 300.0
+# Receiver-side ceiling on a receipt's remaining validity. The TTL is chosen by
+# the SENDER, so a sloppy or malicious (but trusted-keyed) peer could mint a
+# receipt valid for years — and since the nonce cache is lost on restart, that
+# receipt would be indefinitely replayable. The verifier refuses to honour any
+# receipt whose validity window extends further than this from now, clamping the
+# replay exposure to a bound WE control regardless of what the sender asked for.
+_MAX_RECEIPT_LIFETIME_SECONDS = 3600.0
 
 
 @dataclass(frozen=True)
@@ -137,8 +144,16 @@ def verify_receipt(
         return False  # algorithm-confusion: signed under a different scheme
     if value_hash(value) != receipt.value_hash:
         return False  # receipt detached from / not bound to this value
-    if receipt.expires_at and (time.time() if now is None else now) > receipt.expires_at:
+    # Fail closed on a legacy unbound receipt: a modern receipt always carries a
+    # nonce (replay defence) and an expiry (window bound). One missing either is
+    # not replay-protected, so we refuse it rather than accept it as "unreplayable".
+    if not receipt.nonce or not receipt.expires_at:
+        return False
+    _now = time.time() if now is None else now
+    if _now > receipt.expires_at:
         return False  # stale: outside its validity window
+    if receipt.expires_at - _now > _MAX_RECEIPT_LIFETIME_SECONDS:
+        return False  # sender asked for a window longer than we will honour
     payload = _payload(
         receipt.peer_id, receipt.kernel_version, receipt.domain, receipt.algorithm,
         receipt.value_hash, tuple(receipt.sources), receipt.sensitive,
@@ -148,8 +163,22 @@ def verify_receipt(
 
 
 def restore_root(receipt: FederationReceipt) -> CausalRoot:
-    """Reconstruct the attested causal_root from a (verified) receipt."""
-    sources = frozenset(
+    """Reconstruct the attested causal_root from a (verified) receipt.
+
+    Fail safe on label skew: if the receipt names a source this kernel does not
+    know (a newer peer attesting a source label added after our version), we do not
+    silently drop it — dropping every unknown source would restore an *empty*
+    (clean) root, an under-taint in the trusted L2 path. Instead any unknown label
+    degrades the value to an untrusted cross-process re-mint, preserving sensitivity
+    if the receipt asserted it."""
+    known = frozenset(
         TaintSource(s) for s in receipt.sources if s in TaintSource._value2member_map_
     )
-    return CausalRoot(sources=sources, sensitive=receipt.sensitive)
+    dropped_unknown = len(known) != len(set(receipt.sources))
+    if dropped_unknown:
+        base = CausalRoot.cross_process_in()
+        return CausalRoot(
+            sources=base.sources | known,
+            sensitive=base.sensitive or receipt.sensitive,
+        )
+    return CausalRoot(sources=known, sensitive=receipt.sensitive)

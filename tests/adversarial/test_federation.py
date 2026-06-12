@@ -151,3 +151,78 @@ def test_ed25519_l2_and_forgery():
     forged = mint_receipt(val, CausalRoot.constant(), LocalIdentity("peerB", KERNEL, DOMAIN, Ed25519Signer(priv2)))
     with pytest.raises(FederationError):
         gw.receive(val, forged)
+
+
+# ── replay defence (nonce cache) ──────────────────────────────────────────────
+
+def test_replay_of_consumed_receipt_is_denied():
+    val = "attested value"
+    receipt = mint_receipt(val, CausalRoot.constant(), _identity())
+    gw = _gateway(_peer())
+    gw.receive(val, receipt)                         # first use: accepted
+    with pytest.raises(FederationError, match="replayed"):
+        gw.receive(val, receipt)                     # replay: denied
+
+
+def test_one_peer_cannot_burn_another_peers_nonce():
+    # The nonce cache is keyed by (peer_id, nonce), so peerB reusing a nonce value
+    # peerA already spent does not get peerA's distinct receipt rejected.
+    val = "v"
+    rA = mint_receipt(val, CausalRoot.constant(), _identity(peer_id="peerA"))
+    # peerB signs a DIFFERENT receipt that happens to collide on the nonce string.
+    import dataclasses
+    rB_src = mint_receipt(val, CausalRoot.constant(),
+                          _identity(peer_id="peerB", key=b"peerB-secret-key".ljust(32, b"x")))
+    rB = dataclasses.replace(rB_src, nonce=rA.nonce)  # collide the nonce string
+    # re-sign rB over its (collided) nonce so it still verifies for peerB
+    from axor_core.federation.receipt import _payload
+    from axor_core.federation import HmacSigner
+    signer = HmacSigner(b"peerB-secret-key".ljust(32, b"x"))
+    payload = _payload(rB.peer_id, rB.kernel_version, rB.domain, rB.algorithm,
+                       rB.value_hash, tuple(rB.sources), rB.sensitive, rB.nonce, rB.expires_at)
+    rB = dataclasses.replace(rB, signature=signer.sign(payload))
+
+    gw = FederationGateway(
+        peers={"peerA": _peer(peer_id="peerA"),
+               "peerB": _peer(peer_id="peerB", key=b"peerB-secret-key".ljust(32, b"x"))},
+        compatible_kernels={KERNEL}, federated_domains={DOMAIN},
+    )
+    gw.receive(val, rA, claimed_peer_id="peerA")     # peerA spends the nonce
+    # peerB's distinct receipt with the same nonce string is still accepted.
+    _, level = gw.receive(val, rB, claimed_peer_id="peerB")
+    assert level == FederationLevel.L2
+
+
+def test_receiver_clamps_an_over_long_ttl():
+    from axor_core.federation.receipt import _MAX_RECEIPT_LIFETIME_SECONDS, verify_receipt
+    val = "v"
+    # A trusted-keyed but greedy peer mints a receipt valid for a year.
+    receipt = mint_receipt(val, CausalRoot.constant(), _identity(),
+                           ttl_seconds=_MAX_RECEIPT_LIFETIME_SECONDS * 1000)
+    assert verify_receipt(val, receipt, _peer()) is False
+    with pytest.raises(FederationError):
+        _gateway(_peer()).receive(val, receipt)
+
+
+def test_legacy_nonceless_receipt_is_rejected():
+    import dataclasses
+    from axor_core.federation.receipt import verify_receipt
+    val = "v"
+    receipt = mint_receipt(val, CausalRoot.constant(), _identity())
+    legacy = dataclasses.replace(receipt, nonce="", expires_at=0.0)
+    # Not re-signed, but the nonce/expiry checks fail closed before signature anyway.
+    assert verify_receipt(val, legacy, _peer()) is False
+
+
+def test_unknown_source_label_does_not_restore_clean():
+    # A peer attests a source label this kernel does not know. It must NOT collapse
+    # to an empty (clean) root — that would be an under-taint in the trusted path.
+    import dataclasses
+    from axor_core.federation.receipt import _payload, restore_root
+    from axor_core.federation import HmacSigner
+    val = "v"
+    receipt = mint_receipt(val, CausalRoot.constant(), _identity())
+    tampered = dataclasses.replace(receipt, sources=("some_future_source",))
+    # restore_root on an unknown-only source set degrades to untrusted, not clean.
+    root = restore_root(tampered)
+    assert root.is_tainted is True
