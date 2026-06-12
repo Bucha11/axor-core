@@ -96,6 +96,21 @@ class TestRealisticFormatting:
     def test_compact_account_is_caught(self, doc, arg):
         assert caught(doc, arg)
 
+    # ── Unicode confusion the document hides the identifier behind ──────────────
+    @pytest.mark.parametrize("doc", [
+        f"relay {EMAIL}​ active",                 # zero-width space appended
+        f"relay aud​it-relay@vendor-compliance-svc.com active",  # ZWSP inside
+        f"relay {EMAIL}­ here",                   # soft hyphen (Cf) appended
+    ])
+    def test_zero_width_obfuscated_email_is_caught(self, doc):
+        assert caught(doc, EMAIL)
+
+    def test_fullwidth_account_is_caught(self):
+        # Fullwidth digits (U+FF10..U+FF19) NFKC-fold to ASCII, so a fullwidth-
+        # encoded account in the document still matches the compact form.
+        fullwidth = IBAN.translate({0x30 + i: 0xFF10 + i for i in range(10)})
+        assert caught(f"recipient {fullwidth} eur", IBAN)
+
     # ── a clean argument from the user's prompt is NOT tainted (no over-block) ──
     @pytest.mark.parametrize("arg", [
         "alice.chen@bluesparrowtech.com",

@@ -19,8 +19,26 @@ it.
 from __future__ import annotations
 
 import re
+import unicodedata
 
 from axor_core.taint.causal_root import CausalRoot
+
+
+def _normalize(s: str) -> str:
+    """Fold Unicode confusion that a substring match would otherwise miss.
+
+    NFKC collapses compatibility forms (fullwidth digits/letters, ligatures) to
+    their canonical ASCII, and format/zero-width characters (category ``Cf``: ZWSP,
+    ZWNJ, ZWJ, BOM, the bidi marks, soft hyphen) are stripped — so an identifier a
+    source splits with an invisible char, or writes fullwidth, still matches the
+    plain form the model emits. Applied symmetrically on both register and derive
+    sides, so it can only fold two forms together (over-deny, the safe direction).
+
+    Cross-script *homoglyphs* (a Cyrillic 'а' for a Latin 'a') are a distinct
+    codepoint class NFKC does not fold; they remain in the documented residual
+    alongside base64/paraphrase (closing them needs a confusables map)."""
+    s = unicodedata.normalize("NFKC", s)
+    return "".join(ch for ch in s if unicodedata.category(ch) != "Cf")
 
 # Minimum length of a distinctive fragment to track. Shorter → catches more
 # (safe direction: over-deny) but more coincidental matches; this is a heuristic.
@@ -110,8 +128,9 @@ class ValueTaintLedger:
         """
         if self._saturated:
             return CausalRoot.cross_process_in()
-        # Fold the query side to match the case-folded segments (see _segmentize).
-        text = self._flatten(value).casefold()
+        # Fold the query side to match the normalised, case-folded segments
+        # (see _segmentize): same NFKC + zero-width strip + casefold pipeline.
+        text = _normalize(self._flatten(value)).casefold()
         if not text or not self._segments:
             return CausalRoot.constant()
         root = CausalRoot.constant()
@@ -127,7 +146,7 @@ class ValueTaintLedger:
         # Case-fold so a source-side "X@Y.Z" still matches a sink-side "x@y.z"
         # (an address/identifier is case-insensitive; the model often normalises
         # case). derive() folds the query side to match.
-        s = ValueTaintLedger._flatten(content).casefold()
+        s = _normalize(ValueTaintLedger._flatten(content)).casefold()
         segs: set[str] = set()
         for line in s.splitlines():
             line = line.strip()
@@ -150,7 +169,10 @@ class ValueTaintLedger:
         for tok in _STRUCT_DELIM.split(s):
             if len(tok) >= _MIN_SEGMENT:
                 segs.add(tok)
-        return list(segs)
+        # Deterministic order: register() truncates to _MAX_SEGMENTS_PER_REGISTER,
+        # so *which* fragments survive a large read must not depend on set iteration
+        # order (PYTHONHASHSEED). Sort, matching merge()'s near-cap determinism.
+        return sorted(segs)
 
     @staticmethod
     def _flatten(value: object) -> str:
