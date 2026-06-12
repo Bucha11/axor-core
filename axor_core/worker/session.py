@@ -107,6 +107,7 @@ class GovernedSession:
         untrusted_sources: "set[str] | frozenset[str] | None" = None,
         sensitive_sources: "set[str] | frozenset[str] | None" = None,
         benign_tools: "set[str] | frozenset[str] | None" = None,
+        driving_args: "dict[str, list[str]] | None" = None,
         value_policies: "dict | None" = None,
         detection_floor: float | None = None,
         adjudicator=None,
@@ -122,6 +123,7 @@ class GovernedSession:
         self._egress_sinks = frozenset(egress_sinks or ())
         self._untrusted_sources = frozenset(untrusted_sources or ())
         self._sensitive_sources = frozenset(sensitive_sources or ())
+        self._driving_args = dict(driving_args or {})
         self._value_policies = dict(value_policies or {})
         self._detection_floor = detection_floor  # opt-in; None = detection observe-only
         self._adjudicator = adjudicator          # opt-in advisory layer; None = off
@@ -624,6 +626,7 @@ class GovernedSession:
             egress_sinks=self._egress_sinks,
             untrusted_sources=self._untrusted_sources,
             sensitive_sources=self._sensitive_sources,
+            driving_args=self._driving_args,
             require_egress_allowlist=self._require_egress_allowlist,
             value_policies=self._value_policies,
             adjudicator=self._adjudicator,

@@ -33,6 +33,7 @@ from axor_core.policy.gates import (
     GateDecision,
     carrier_gate,
     consequence_gate,
+    driving_subset,
     positional_gate,
     ssrf_gate,
     taint_gate,
@@ -88,6 +89,7 @@ class ToolCallGovernor:
         sensitive_sources: "set[str] | frozenset[str] | None" = None,
         egress_sinks: "set[str] | frozenset[str] | None" = None,
         imperative_sinks: "set[str] | frozenset[str] | None" = None,
+        driving_args: "dict[str, list[str]] | None" = None,
         require_egress_allowlist: bool = False,
         node_id: str = "",
     ) -> None:
@@ -114,6 +116,11 @@ class ToolCallGovernor:
         self._sensitive_sources = frozenset(sensitive_sources or ())
         self._egress_sinks = frozenset(egress_sinks or ())
         self._imperative_sinks = frozenset(imperative_sinks or ())
+        # Per-sink driving arguments — the fields the taint decision keys on. Empty
+        # = whole-args (safe, coarse). Declaring them narrows to the destination /
+        # instruction field so untrusted content to a trusted destination is not
+        # over-blocked.
+        self._driving_args = {k: frozenset(v) for k, v in (driving_args or {}).items()}
         # STRICT obligation: every egress sink must carry a destination allowlist
         # (an enum value_policy) — the sound, paraphrase-proof control. Fail closed
         # at construction rather than ship an egress sink on content-derivation alone.
@@ -161,7 +168,9 @@ class ToolCallGovernor:
         if gd is not None:
             return _deny(gd)
 
-        driving_root = self._taint.derive_value(args)
+        driving_root = self._taint.derive_value(
+            driving_subset(args, self._driving_args.get(tool_name))
+        )
 
         # 4. positional admission — for declared instruction-incomplete sinks.
         gd = positional_gate(tool_name, args, self._positional_sinks)

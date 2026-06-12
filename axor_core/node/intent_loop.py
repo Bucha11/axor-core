@@ -17,6 +17,7 @@ from axor_core.policy.value_policy import check_value_policies
 from axor_core.policy.gates import (
     carrier_gate,
     consequence_gate,
+    driving_subset,
     positional_gate,
     ssrf_gate,
     taint_gate,
@@ -151,6 +152,7 @@ class IntentLoop:
         egress_sinks: "frozenset[str] | set[str] | None" = None,
         untrusted_sources: "frozenset[str] | set[str] | None" = None,
         sensitive_sources: "frozenset[str] | set[str] | None" = None,
+        driving_args: "dict[str, list[str]] | None" = None,
         require_egress_allowlist: bool = False,
     ) -> None:
         self._executor = capability_executor
@@ -212,6 +214,10 @@ class IntentLoop:
         self._egress_sinks = frozenset(egress_sinks or ())
         self._untrusted_sources = frozenset(untrusted_sources or ())
         self._sensitive_sources = frozenset(sensitive_sources or ())
+        # Per-sink driving arguments — the fields the taint decision keys on
+        # (whole-args by default). Narrows over-blocking of untrusted content sent
+        # to a trusted destination.
+        self._driving_args = {k: frozenset(v) for k, v in (driving_args or {}).items()}
         # STRICT obligation: every egress sink must carry an enum allowlist (the
         # sound, paraphrase-proof destination control). Fail closed at construction.
         if require_egress_allowlist:
@@ -534,7 +540,9 @@ class IntentLoop:
             # only on the record_signal path. Without it derive_source_id falls back
             # to provenance/"unknown" and the narrowing silently misses.
             check_root = (
-                self._taint_engine.derive_value(tool_args)
+                self._taint_engine.derive_value(
+                    driving_subset(tool_args, self._driving_args.get(tool_name))
+                )
                 if self._taint_engine is not None
                 else None
             )
@@ -580,7 +588,9 @@ class IntentLoop:
         # soundly over-tainting opaque model output would collapse this back to
         # session-sticky tainting and needs a sound per-value interpreter backend.
         if self._taint_engine is not None and normalized is not None:
-            driving_root = self._taint_engine.derive_value(tool_args)
+            driving_root = self._taint_engine.derive_value(
+                driving_subset(tool_args, self._driving_args.get(tool_name))
+            )
 
             # Density telemetry: record, per high-stakes sink firing, the per-value
             # taint (both axes) and the session-sticky shadow, split integrity vs

@@ -37,6 +37,25 @@ INTERNAL_TARGETS = ("cloud_metadata", "private_network", "docker_socket")
 EXFIL_DESTINATIONS = ("cloud_metadata", "private_network", "external_domain")
 
 
+def driving_subset(args: dict, keys: "frozenset[str] | set[str] | list[str] | None") -> dict:
+    """The portion of a call's arguments the per-value taint decision keys on.
+
+    By default the whole argument blob drives the decision (safe but coarse: a
+    tainted *body* makes a ``send_email`` look tainted even when the recipient is
+    trusted). When an operator declares a sink's *driving arguments* — the fields
+    that actually carry the destination / instruction (e.g. ``to`` for an email,
+    ``task`` for a spawn) — the taint check narrows to just those, so untrusted
+    *content* flowing to a *trusted* destination is no longer over-blocked.
+
+    Fail-safe: if driving keys are declared but none are present in this call, fall
+    back to the whole blob rather than silently un-gating (a destination smuggled
+    into an undeclared field still gets caught)."""
+    if not keys:
+        return args
+    subset = {k: args[k] for k in keys if k in args}
+    return subset if subset else args
+
+
 @dataclass(frozen=True)
 class GateDecision:
     """A gate's deny. ``reason`` is the operator-facing explanation; ``category``

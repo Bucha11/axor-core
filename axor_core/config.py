@@ -35,6 +35,7 @@ _KNOWN_KEYS = frozenset({
     "untrusted_sources", "sensitive_sources", "egress_sinks",
     "positional_sinks", "benign_tools",
     "value_policies", "consequence_overrides",
+    "driving_args",
     "federation",
 })
 _CONSEQUENCE_BY_NAME = {c.name.lower(): c for c in ConsequenceClass}
@@ -58,6 +59,8 @@ class GovernanceConfig:
     benign_tools: frozenset[str] = frozenset()
     # tool name -> list of decidable predicates over its arguments
     value_policies: dict[str, list[ValuePredicate]] = field(default_factory=dict)
+    # tool name -> argument names the taint decision keys on (whole-args by default)
+    driving_args: dict[str, list[str]] = field(default_factory=dict)
     # tool name -> action-class override (raise/lower how irreversible it is)
     consequence_overrides: dict[str, ConsequenceClass] = field(default_factory=dict)
     # Built opt-in A2A objects (None when no `federation:` section). The gateway is
@@ -100,6 +103,7 @@ class GovernanceConfig:
             positional_sinks=_as_set(data.get("positional_sinks"), "positional_sinks"),
             benign_tools=_as_set(data.get("benign_tools"), "benign_tools"),
             value_policies=_parse_value_policies(data.get("value_policies")),
+            driving_args=_parse_driving_args(data.get("driving_args")),
             consequence_overrides=_parse_consequence_overrides(
                 data.get("consequence_overrides")
             ),
@@ -132,6 +136,7 @@ class GovernanceConfig:
             "positional_sinks": set(self.positional_sinks),
             "benign_tools": set(self.benign_tools),
             "value_policies": dict(self.value_policies),
+            "driving_args": dict(self.driving_args),
             # GovernedSession names the consequence-override table `danger`.
             "danger": dict(self.consequence_overrides),
         }
@@ -152,6 +157,19 @@ def _as_set(value: Any, field_name: str) -> frozenset[str]:
     if not isinstance(value, (list, tuple, set)):
         raise ValueError(f"{field_name} must be a list of tool names, got {type(value).__name__}")
     return frozenset(str(v) for v in value)
+
+
+def _parse_driving_args(raw: Any) -> dict[str, list[str]]:
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise ValueError("driving_args must be a mapping of tool -> [arg name, ...]")
+    out: dict[str, list[str]] = {}
+    for tool, names in raw.items():
+        if not isinstance(names, (list, tuple)):
+            raise ValueError(f"driving_args[{tool!r}] must be a list of argument names")
+        out[str(tool)] = [str(n) for n in names]
+    return out
 
 
 def _parse_value_policies(raw: Any) -> dict[str, list[ValuePredicate]]:

@@ -138,6 +138,33 @@ value_policies:
       allowed: [alice@yourcorp.com, bob@yourcorp.com]
 
 
+# ── Driving arguments: which field of a sink the taint decision keys on ──────────
+#
+# By default the WHOLE argument blob drives the per-value taint decision — safe but
+# coarse. So `send_email(to=alice, body=<an untrusted document>)` is BLOCKED, because
+# the body carries untrusted content, even though the recipient is trusted and
+# "summarise this email and send it to alice" is a legitimate task.
+#
+# Declare a sink's driving argument(s) — the field that actually carries the
+# DESTINATION (or, for an imperative sink, the INSTRUCTION) — and the integrity
+# check narrows to just that field. Then:
+#   - a tainted `to` (recipient came from an untrusted read = exfil to attacker) is
+#     still DENIED;
+#   - untrusted *content* in `body` going to a *trusted* `to` is ALLOWED.
+#
+# This only narrows the INTEGRITY axis. The confidentiality floor is unchanged: once
+# a secret is read, ALL egress is blocked regardless of which field holds it — a
+# secret in `body` to a trusted `alice` is still refused.
+#
+# Tip: list EVERY destination-bearing field (to, cc, bcc), or an unlisted one that
+# carries the destination falls back to whole-args (fail-safe, never a bypass).
+driving_args:
+  send_email: [to, cc, bcc]   # the recipients drive the egress decision, not the body
+  post_webhook: [url]
+  transfer_money: [recipient]
+  share_file: [to]
+
+
 # ── Consequence overrides: raise/lower how irreversible a custom tool is ─────────
 #
 # The kernel ships a default action-class table (read=benign, write=reversible,

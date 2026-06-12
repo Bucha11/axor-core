@@ -297,6 +297,15 @@ its tools. The operator declares their roles so the kernel can govern them:
 - **`egress_sinks`** — calls that leave the trust boundary (send an email, post to a
   URL, move money). Gated when driven by an untrusted/secret value.
 - **`positional_sinks`**, **`value_policies`** — as in §3 and the gate sequence.
+- **`driving_args`** — per sink, the argument(s) the integrity taint check keys on.
+  By default the *whole* argument blob drives the decision, so untrusted *content*
+  (a summarised document) sent to a *trusted* recipient is over-blocked. Declare the
+  field that carries the destination (`to`/`url`/`recipient`) or the instruction, and
+  the integrity check narrows to it: a tainted recipient is still denied, but
+  untrusted content to a trusted destination is allowed. This narrows only the
+  integrity axis — the confidentiality floor stays whole-call, so a secret in any
+  field still cannot leave. Fail-safe: if a declared driving arg is absent from a
+  call, the check falls back to the whole blob (never a bypass).
 
 A declared role takes precedence over the built-in heuristic; undeclared tools still
 get the heuristic. The same declaration is accepted by `GovernedSession` and
