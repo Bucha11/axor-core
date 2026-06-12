@@ -148,6 +148,24 @@ class GovernanceConfig:
             kwargs["federation_gateway"] = self.federation_gateway
         return kwargs
 
+    def as_governor_kwargs(self) -> dict[str, Any]:
+        """The keyword arguments to splat into ``ToolCallGovernor(...)`` — the
+        synchronous enforcement path. Same declaration, same gate engine. The
+        governor has no mode knob; STRICT maps to its fail-closed
+        ``require_egress_allowlist`` construction obligation. Session-only fields
+        (workspace, profile, benign_tools, federation) are not part of the
+        per-call gate sequence and are omitted."""
+        return {
+            "untrusted_sources": set(self.untrusted_sources),
+            "sensitive_sources": set(self.sensitive_sources),
+            "egress_sinks": set(self.egress_sinks),
+            "positional_sinks": set(self.positional_sinks),
+            "value_policies": dict(self.value_policies),
+            "driving_args": dict(self.driving_args),
+            "consequence_overrides": dict(self.consequence_overrides),
+            "require_egress_allowlist": self.mode is ExecutionMode.STRICT,
+        }
+
 
 # ── parsing helpers (each fails closed on a malformed entry) ─────────────────────
 

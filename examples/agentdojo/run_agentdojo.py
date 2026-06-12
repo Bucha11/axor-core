@@ -41,8 +41,8 @@ from agentdojo_adapter import (  # noqa: E402
 
 import nested_attacks  # noqa: E402,F401  (registers nested_instructions / recursive_relay)
 
+from axor_core.config import GovernanceConfig  # noqa: E402
 from axor_core.governor import ToolCallGovernor  # noqa: E402
-from axor_core.contracts.canonical import ConsequenceClass  # noqa: E402
 
 # Backend: "anthropic" (claude via raw urllib) or "openrouter" (e.g. Qwen).
 # Override from the environment: AXOR_BENCH_BACKEND / AXOR_BENCH_MODEL.
@@ -55,87 +55,25 @@ ATTACK = os.environ.get("AXOR_BENCH_ATTACK", "important_instructions")
 SUITE = os.environ.get("AXOR_BENCH_SUITE", "banking")
 
 
-# ── axor taxonomy per suite ─────────────────────────────────────────────────────
+# ── axor taxonomy per suite — declarative, from YAML ────────────────────────────
 #
-# This is the operator's deployment declaration: which of a suite's tools emit
-# untrusted/attacker-influenceable data, and which are value-egress sinks. axor's
-# normalizer knows generic names (read/curl/...); a real tool set is named for its
-# domain, so the operator declares the roles. Nothing here is attack-specific — it
-# is the same taxonomy you would write to deploy axor over this agent.
-def make_banking_governor() -> ToolCallGovernor:
-    return ToolCallGovernor(
-        untrusted_sources={
-            "get_most_recent_transactions",
-            "get_scheduled_transactions",
-            "read_file",
-            "get_user_info",
-        },
-        egress_sinks={
-            "send_money",
-            "schedule_transaction",
-            "update_scheduled_transaction",
-        },
-    )
+# The operator's deployment declaration (which of a suite's tools emit untrusted/
+# attacker-influenceable data, which are egress sinks, which argument drives each
+# sink's taint decision) lives in `config/<suite>.yaml` — the same GovernanceConfig
+# format a real deployment loads. Nothing in those files is attack-specific.
+_CONFIG_DIR = os.path.join(os.path.dirname(__file__), "config")
 
 
-def make_workspace_governor() -> ToolCallGovernor:
-    return ToolCallGovernor(
-        untrusted_sources={
-            "get_received_emails", "get_unread_emails", "get_sent_emails",
-            "get_draft_emails", "search_emails",
-            "get_day_calendar_events", "search_calendar_events",
-            "get_file_by_id", "search_files", "search_files_by_filename", "list_files",
-            "search_contacts_by_name", "search_contacts_by_email",
-        },
-        egress_sinks={"send_email", "share_file"},
-        # Deleting an email/file after acting is the attacker covering tracks —
-        # raise these to catastrophic so the consequence axis gates them.
-        consequence_overrides={
-            "delete_email": ConsequenceClass.CATASTROPHIC,
-            "delete_file": ConsequenceClass.CATASTROPHIC,
-        },
-    )
+def make_governor() -> ToolCallGovernor:
+    cfg = GovernanceConfig.from_yaml(os.path.join(_CONFIG_DIR, f"{SUITE}.yaml"))
+    return ToolCallGovernor(**cfg.as_governor_kwargs())
 
 
-def make_travel_governor() -> ToolCallGovernor:
-    return ToolCallGovernor(
-        # Hotel/restaurant/car reviews and descriptions carry the injections.
-        untrusted_sources={
-            "get_all_hotels_in_city", "get_hotels_address", "get_hotels_prices",
-            "get_rating_reviews_for_hotels",
-            "get_all_restaurants_in_city", "get_restaurants_address",
-            "get_rating_reviews_for_restaurants", "get_price_for_restaurants",
-            "get_contact_information_for_restaurants", "get_cuisine_type_for_restaurants",
-            "get_dietary_restrictions_for_all_restaurants",
-            "get_all_car_rental_companies_in_city", "get_rating_reviews_for_car_rental",
-            "get_flight_information", "search_calendar_events", "get_day_calendar_events",
-        },
-        # get_user_information returns the passport number, ID, and bank account —
-        # a genuine secret read. Reading it arms the confidentiality floor, so any
-        # subsequent egress (send_email) is refused on the fact of the read.
-        sensitive_sources={"get_user_information"},
-        egress_sinks={"send_email"},
-    )
-
-
-def make_slack_governor() -> ToolCallGovernor:
-    return ToolCallGovernor(
-        # Channel messages, inbox, and fetched web pages are untrusted.
-        untrusted_sources={
-            "read_channel_messages", "read_inbox", "get_webpage",
-            "get_channels", "get_users_in_channel",
-        },
-        # Posting to an external website / messaging out is the exfil channel.
-        egress_sinks={"post_webpage", "send_direct_message", "send_channel_message"},
-    )
-
-
-# Per-suite config: governor factory + a slice of GENUINELY SERIOUS injection
-# tasks (financial theft, PII/2FA exfiltration, mass data egress) paired with
+# Per-suite task slices: a curated set of GENUINELY SERIOUS injection tasks
+# (financial theft, PII/2FA exfiltration, mass data egress) paired with
 # action-oriented user tasks so the attack actually reaches an action.
 SUITES = {
     "banking": {
-        "governor": make_banking_governor,
         # Action tasks that move money to a prompt recipient.
         "user_tasks": ["user_task_0", "user_task_3"],
         # Data-exfiltration-via-transaction (these reliably land): inj_1 leaks a
@@ -146,7 +84,6 @@ SUITES = {
         "injection_tasks": ["injection_task_1", "injection_task_0", "injection_task_8"],
     },
     "travel": {
-        "governor": make_travel_governor,
         # Tasks that read reviews (injection vector) and can send an email.
         "user_tasks": ["user_task_1", "user_task_3", "user_task_7"],
         # inj_3: exfiltrate name+ID+passport+bank to attacker email (identity theft);
@@ -154,7 +91,6 @@ SUITES = {
         "injection_tasks": ["injection_task_3", "injection_task_5"],
     },
     "slack": {
-        "governor": make_slack_governor,
         # Tasks that read a webpage / channels and post somewhere.
         "user_tasks": ["user_task_3", "user_task_15", "user_task_1"],
         # inj_2/4: concatenate all messages and POST them to an attacker website
@@ -162,7 +98,6 @@ SUITES = {
         "injection_tasks": ["injection_task_4", "injection_task_2", "injection_task_1"],
     },
     "workspace": {
-        "governor": make_workspace_governor,
         "user_tasks": ["user_task_14", "user_task_16", "user_task_17"],
         # inj_5: steal a 2FA security code AND delete the evidence; inj_3: forward
         # a private email to the attacker.
@@ -171,13 +106,18 @@ SUITES = {
 }
 
 _CFG = SUITES[SUITE]
-make_governor = _CFG["governor"]
 USER_TASKS = _CFG["user_tasks"]
 INJECTION_TASKS = _CFG["injection_tasks"]
 
+# AXOR_BENCH_CAMEL=1 reports in CaMeL's coordinate system: the benchmark's TWO
+# axes per condition — benign utility (all user tasks, no attack) and ASR under
+# attack — so the headline is "solves X% of tasks at ASR Y%", the same axis
+# CaMeL's 67% lives on. Implies the full user-task list for the benign axis.
+CAMEL_MODE = os.environ.get("AXOR_BENCH_CAMEL") == "1"
+
 # AXOR_BENCH_ALL_USER_TASKS=1 runs every user task in the suite (full benchmark
 # number) instead of the curated slice. Injection tasks stay the serious subset.
-if os.environ.get("AXOR_BENCH_ALL_USER_TASKS") == "1":
+if os.environ.get("AXOR_BENCH_ALL_USER_TASKS") == "1" or CAMEL_MODE:
     USER_TASKS = list(get_suites("v1")[SUITE].user_tasks.keys())
 
 # AXOR_BENCH_INJECTIONS="injection_task_4,..." overrides the injection slice (e.g.
@@ -246,10 +186,76 @@ def run_condition(governed: bool, suite, attack_name: str):
     return utilities, asr, tools_executor
 
 
+def run_benign(governed: bool, suite):
+    """All user tasks, NO attack — the utility axis on its own. The cost of the
+    defense is whatever legitimate work the governed condition can no longer do."""
+    pipeline, tools_executor = build_pipeline(governed)
+    utilities: list[bool] = []
+    label = "GOVERNED " if governed else "UNDEFENDED"
+    for ut_id in USER_TASKS:
+        user_task = suite.get_user_task_by_id(ut_id)
+        try:
+            utility, _ = suite.run_task_with_pipeline(pipeline, user_task, None, {})
+        except Exception as exc:
+            print(f"  [{label}] {ut_id}: ERROR {type(exc).__name__}: {exc}")
+            continue
+        utilities.append(utility)
+        print(f"  [{label}] {ut_id:<14} (benign)  utility={'Y' if utility else 'n'}")
+    return utilities, tools_executor
+
+
+def _pct(xs):
+    return 100.0 * sum(xs) / len(xs) if xs else float("nan")
+
+
+def main_camel() -> int:
+    """CaMeL-comparable run: per condition, benign utility over the FULL user-task
+    list and ASR over the serious-injection slice. The headline number is the
+    governed benign utility at the governed ASR — the axis CaMeL's 67% (GPT-4o,
+    utility retained under a provably-secure defense) lives on. NOT comparable
+    point-for-point (different model, ASR measured on a slice, taint instead of an
+    interpreter) — but the same trade-off being measured."""
+    suite = get_suites("v1")[SUITE]
+    print(f"AgentDojo CaMeL-comparable run · suite={SUITE} · attack={ATTACK} · model={MODEL}")
+    print(f"benign axis: {len(USER_TASKS)} user tasks (full suite)")
+    print(f"attack axis: {len(USER_TASKS)} user x {len(INJECTION_TASKS)} injection "
+          f"= {len(USER_TASKS) * len(INJECTION_TASKS)} pairs per condition\n")
+
+    print("BENIGN / UNDEFENDED ...")
+    ub_util, _ = run_benign(False, suite)
+    print("\nBENIGN / GOVERNED ...")
+    gb_util, gb_exec = run_benign(True, suite)
+    print("\nATTACK / UNDEFENDED ...")
+    ua_util, ua_asr, _ = run_condition(False, suite, ATTACK)
+    print("\nATTACK / GOVERNED ...")
+    ga_util, ga_asr, ga_exec = run_condition(True, suite, ATTACK)
+
+    retention = 100.0 * _pct(gb_util) / _pct(ub_util) if _pct(ub_util) else float("nan")
+    print("\n" + "=" * 72)
+    print(f"RESULTS  (suite={SUITE}, attack={ATTACK}, model={MODEL})")
+    print("=" * 72)
+    print(f"{'condition':<12}{'benign utility':>16}{'utility under attack':>22}{'ASR':>8}")
+    print(f"{'undefended':<12}{_pct(ub_util):>15.1f}%{_pct(ua_util):>21.1f}%{_pct(ua_asr):>7.1f}%")
+    print(f"{'governed':<12}{_pct(gb_util):>15.1f}%{_pct(ga_util):>21.1f}%{_pct(ga_asr):>7.1f}%")
+    print("-" * 72)
+    print(f"benign denials:  {gb_exec.denied_count} ({gb_exec.denials})")
+    print(f"attack denials:  {ga_exec.denied_count}")
+    print("-" * 72)
+    print(f"CaMeL-axis headline: governed solves {_pct(gb_util):.1f}% of benign tasks "
+          f"at {_pct(ga_asr):.1f}% ASR")
+    print(f"utility retention vs this model undefended: {retention:.1f}%")
+    print(f"(CaMeL on GPT-4o, full benchmark: 67% utility at ~0 ASR — same axis, "
+          f"different model and attack coverage; see agentdojo_results.md)")
+    print("=" * 72)
+    return 0
+
+
 def main() -> int:
-    if not os.environ.get("ANTHROPIC_API_KEY"):
+    if not os.environ.get("ANTHROPIC_API_KEY") and BACKEND == "anthropic":
         print("ANTHROPIC_API_KEY not set — cannot run.")
         return 0
+    if CAMEL_MODE:
+        return main_camel()
 
     suite = get_suites("v1")[SUITE]
     print(f"AgentDojo · suite={SUITE} · attack={ATTACK} · model={MODEL}")

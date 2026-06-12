@@ -1,0 +1,35 @@
+# axor governance declaration for the AgentDojo *travel* suite.
+mode: production
+
+# Hotel/restaurant/car reviews and descriptions carry the injections.
+untrusted_sources:
+  - get_all_hotels_in_city
+  - get_hotels_address
+  - get_hotels_prices
+  - get_rating_reviews_for_hotels
+  - get_all_restaurants_in_city
+  - get_restaurants_address
+  - get_rating_reviews_for_restaurants
+  - get_price_for_restaurants
+  - get_contact_information_for_restaurants
+  - get_cuisine_type_for_restaurants
+  - get_dietary_restrictions_for_all_restaurants
+  - get_all_car_rental_companies_in_city
+  - get_rating_reviews_for_car_rental
+  - get_flight_information
+  - search_calendar_events
+  - get_day_calendar_events
+
+# get_user_information returns the passport number, ID, and bank account — a
+# genuine secret read. It arms the confidentiality floor: any subsequent egress
+# is refused on the fact of the read, paraphrase-proof, regardless of which
+# field carries the secret. (driving_args below narrows only the integrity
+# axis; the floor stays whole-call.)
+sensitive_sources:
+  - get_user_information
+
+egress_sinks:
+  - send_email
+
+driving_args:
+  send_email: [recipients, cc, bcc]

@@ -1,0 +1,39 @@
+# axor governance declaration for the AgentDojo *banking* suite.
+#
+# This is the operator's deployment taxonomy for this tool set — which tools read
+# attacker-influenceable data, which ones move money out. Nothing here is
+# attack-specific; it is what you would write to deploy axor over this agent.
+#
+#     cfg = GovernanceConfig.from_yaml("banking.yaml")
+#     governor = ToolCallGovernor(**cfg.as_governor_kwargs())
+#
+# Mode is `production`, not `strict`: the benchmark's legitimate recipients are
+# task-supplied, so there is no enum allowlist to declare. (A real bank deployment
+# WOULD run strict with an approved-payee allowlist — that is a stronger, narrower
+# posture than anything CaMeL-comparable, so the benchmark deliberately runs
+# without it and lets the taint/floor gates carry the defense.)
+mode: production
+
+# Transaction histories, files, and the user-info record all carry text an
+# external party can influence — the suite's injection vectors.
+untrusted_sources:
+  - get_most_recent_transactions
+  - get_scheduled_transactions
+  - read_file
+  - get_user_info
+
+# Money movement is the egress boundary.
+egress_sinks:
+  - send_money
+  - schedule_transaction
+  - update_scheduled_transaction
+
+# The taint decision keys on the DESTINATION of the transfer. A recipient that
+# came out of an untrusted read (an attacker IBAN lifted from a transaction
+# subject) is denied; paying a prompt-given recipient using amounts/dates read
+# from those same sources is allowed. Exfiltration needs an attacker-controlled
+# destination, so the recipient is the field that decides.
+driving_args:
+  send_money: [recipient]
+  schedule_transaction: [recipient]
+  update_scheduled_transaction: [recipient]

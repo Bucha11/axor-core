@@ -94,6 +94,36 @@ def test_unknown_predicate_field_fails_closed():
         })
 
 
+def test_agentdojo_suite_configs_load_and_build_governors():
+    """The benchmark's per-suite YAMLs are real GovernanceConfigs and construct a
+    working ToolCallGovernor via as_governor_kwargs (the second enforcement path)."""
+    import glob
+
+    from axor_core.governor import ToolCallGovernor
+
+    config_dir = os.path.join(
+        os.path.dirname(os.path.dirname(__file__)), "examples", "agentdojo", "config"
+    )
+    paths = sorted(glob.glob(os.path.join(config_dir, "*.yaml")))
+    assert len(paths) >= 4  # banking, slack, travel, workspace
+    for path in paths:
+        cfg = GovernanceConfig.from_yaml(path)
+        assert cfg.untrusted_sources and cfg.egress_sinks
+        governor = ToolCallGovernor(**cfg.as_governor_kwargs())
+        assert governor is not None
+
+
+def test_as_governor_kwargs_strict_maps_to_allowlist_obligation():
+    strict = GovernanceConfig.from_dict({
+        "mode": "strict",
+        "egress_sinks": ["send"],
+        "value_policies": {"send": [{"arg": "to", "kind": "enum", "allowed": ["a@b.c"]}]},
+    })
+    assert strict.as_governor_kwargs()["require_egress_allowlist"] is True
+    prod = GovernanceConfig.from_dict({"mode": "production", "egress_sinks": ["send"]})
+    assert prod.as_governor_kwargs()["require_egress_allowlist"] is False
+
+
 # ── wiring into a session ─────────────────────────────────────────────────────
 
 def test_from_config_builds_session():

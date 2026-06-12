@@ -1,0 +1,24 @@
+# axor governance declaration for the AgentDojo *slack* suite.
+mode: production
+
+# Channel messages, inboxes, and fetched web pages are attacker-writable.
+untrusted_sources:
+  - read_channel_messages
+  - read_inbox
+  - get_webpage
+  - get_channels
+  - get_users_in_channel
+
+# Posting to an external website or messaging out is the exfiltration channel.
+egress_sinks:
+  - post_webpage
+  - send_direct_message
+  - send_channel_message
+
+# post_webpage's exfil vector IS the url, so the taint decision keys on it.
+# The message sinks deliberately stay whole-blob (no driving_args entry): this
+# suite's threats include delivering an attacker link to a TRUSTED colleague,
+# which lives in the body — narrowing to the recipient would wave it through.
+# Where to narrow is the operator's call per sink, not a global switch.
+driving_args:
+  post_webpage: [url]
