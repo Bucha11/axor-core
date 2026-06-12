@@ -133,12 +133,15 @@ def _make_llm():
 
 
 # A model-id token AgentDojo's MODEL_NAMES recognises, so important_instructions
-# can address the model by name. Qwen isn't in the map; the Llama id maps to the
-# generic "AI assistant", which is the faithful choice for an open model.
-_MODEL_NAME_TOKEN = (
-    "meta-llama/Llama-3-70b-chat-hf" if BACKEND == "openrouter"
-    else "claude-3-5-sonnet-20241022"
-)
+# can address the model by name. GPT-4o maps to "GPT-4" (what CaMeL's runs saw);
+# Qwen isn't in the map, so the Llama id gives the generic "AI assistant", which
+# is the faithful choice for an open model.
+if "gpt-4o" in MODEL:
+    _MODEL_NAME_TOKEN = "gpt-4o-2024-05-13"
+elif BACKEND == "openrouter":
+    _MODEL_NAME_TOKEN = "meta-llama/Llama-3-70b-chat-hf"
+else:
+    _MODEL_NAME_TOKEN = "claude-3-5-sonnet-20241022"
 
 
 def build_pipeline(governed: bool):
