@@ -203,6 +203,18 @@ tenant cannot tighten another.
 This separation is deliberate: enforcement is driven by structural facts, detection
 informs humans and may only ratchet restrictions.
 
+**Stateful trajectory observers** ride the same tighten-only rule. Some risks are a
+property of the session's *trajectory*, not of one call or value, and need to read
+tool *results*: a stove on too long with no `turn_off`, a patient metric not improving
+after a treatment, an agent stuck retrying. A `TrajectoryObserver` is a stateful,
+domain-supplied object fed every executed `(tool, args, result)`; when its state
+crosses a domain threshold it **tightens** degradation (typically to LOCKED, leaving
+read + escalate so the next step is a human gate). It can never authorise an action,
+because "on too long" is a domain heuristic, not a sound structural fact — putting it
+on the enforcement path would do the opposite. This is the one risk class that is *not*
+configuration but an extension point (code with state), owned by the domain developer.
+It is within-session, distinct from the cross-session reputation graph (`axor-sentinel`).
+
 ---
 
 ## 9. Children and other agents

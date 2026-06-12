@@ -166,6 +166,31 @@ class DegradationEngine:
         self._pending_events.clear()
         return events
 
+    def tighten(
+        self,
+        target_level: "DegradationLevel",
+        *,
+        reason: str,
+        trigger_intent: str = "trajectory",
+        source_id: str | None = None,
+    ) -> None:
+        """Raise the session to at least ``target_level`` (monotone — never lowers).
+
+        The tighten-only entry point for observe-only signals such as a
+        :class:`~axor_core.contracts.trajectory.TrajectoryObserver`. It can narrow
+        the surface; it can never authorise an action. A target at or below the
+        current level is a no-op. Emits a transition event when the level changes;
+        drain it via :meth:`drain_events`.
+        """
+        if self._state.level == DegradationLevel.TERMINAL:
+            return
+        self._transition_to(
+            target_level,
+            source_id=source_id,
+            trigger_intent=trigger_intent,
+            reason=reason,
+        )
+
     # ── Core API ───────────────────────────────────────────────────────────────
 
     def record_signal(

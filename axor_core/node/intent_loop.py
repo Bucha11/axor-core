@@ -154,6 +154,7 @@ class IntentLoop:
         sensitive_sources: "frozenset[str] | set[str] | None" = None,
         driving_args: "dict[str, list[str]] | None" = None,
         require_egress_allowlist: bool = False,
+        trajectory_observers: "list | None" = None,
     ) -> None:
         self._executor = capability_executor
         self._trace_events = trace_events
@@ -218,6 +219,9 @@ class IntentLoop:
         # (whole-args by default). Narrows over-blocking of untrusted content sent
         # to a trusted destination.
         self._driving_args = {k: frozenset(v) for k, v in (driving_args or {}).items()}
+        # Stateful, domain-supplied trajectory observers (tighten-only). Shared
+        # instances so their state persists across the session's runs.
+        self._trajectory_observers = list(trajectory_observers or [])
         # STRICT obligation: every egress sink must carry an enum allowlist (the
         # sound, paraphrase-proof destination control). Fail closed at construction.
         if require_egress_allowlist:
@@ -729,6 +733,10 @@ class IntentLoop:
                 effective_intent, result, normalized, override_root=fed_root
             )
             self._record_degradation_signal(intent, None)
+            # Stateful trajectory observers see the executed (tool, args, result).
+            # They may only TIGHTEN degradation (observe-only), never authorise — a
+            # domain heuristic, not a structural fact.
+            self._run_trajectory_observers(tool_name, effective_args, result)
             return ResolvedIntent(
                 intent=intent,
                 approved=True,
@@ -1181,6 +1189,28 @@ class IntentLoop:
         if self._taint_engine is not None:
             driving_root = self._taint_engine.derive_value(intent.payload.get("args", {}))
         self._degradation_engine.record_signal(ni, denial, driving_root=driving_root)
+        for event in self._degradation_engine.drain_events():
+            self._trace_events.append(event)
+
+    def _run_trajectory_observers(self, tool: str, args: dict, result: "Any") -> None:
+        """Feed each stateful observer the executed (tool, args, result). A returned
+        signal tightens degradation (observe-only, never authorises). Observer
+        exceptions are swallowed — a buggy domain predicate must not break execution."""
+        if not self._trajectory_observers or self._degradation_engine is None:
+            return
+        for observer in self._trajectory_observers:
+            try:
+                signal = observer.observe(tool, args, result)
+            except Exception:
+                log.debug("trajectory observer raised", exc_info=True)
+                continue
+            if signal is None:
+                continue
+            self._degradation_engine.tighten(
+                signal.target_level,
+                reason=signal.reason,
+                trigger_intent=tool,
+            )
         for event in self._degradation_engine.drain_events():
             self._trace_events.append(event)
 

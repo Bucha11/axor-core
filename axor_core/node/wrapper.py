@@ -115,6 +115,7 @@ class GovernedNode:
         sensitive_sources: "frozenset[str] | set[str] | None" = None,
         driving_args: "dict[str, list[str]] | None" = None,
         require_egress_allowlist: bool = False,
+        trajectory_observers: "list | None" = None,
         adjudicator=None,
         federation_gateway=None,
     ) -> None:
@@ -141,6 +142,7 @@ class GovernedNode:
         self._sensitive_sources = frozenset(sensitive_sources or ())
         self._driving_args = dict(driving_args or {})
         self._require_egress_allowlist = require_egress_allowlist
+        self._trajectory_observers = list(trajectory_observers or [])
         self._adjudicator = adjudicator
         self._federation_gateway = federation_gateway
         self._value_policies = value_policies or {}
@@ -322,6 +324,7 @@ class GovernedNode:
             sensitive_sources=self._sensitive_sources,
             driving_args=self._driving_args,
             require_egress_allowlist=self._require_egress_allowlist,
+            trajectory_observers=self._trajectory_observers,
             adjudicator=self._adjudicator,
             federation_gateway=self._federation_gateway,
         )
@@ -517,6 +520,7 @@ class GovernedNode:
             sensitive_sources=self._sensitive_sources,
             driving_args=self._driving_args,
             require_egress_allowlist=self._require_egress_allowlist,
+            trajectory_observers=self._trajectory_observers,
             adjudicator=self._adjudicator,
             federation_gateway=self._federation_gateway,
         )
