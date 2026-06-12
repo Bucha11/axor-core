@@ -49,11 +49,12 @@ leaked entered through an untrusted read (a poisoned web page, a channel message
 a transaction note), so the egress carrying them (`post_webpage`,
 `send_channel_message`, `send_direct_message`, `send_money`) is refused.
 
-The slack row is the cleanest possible outcome: blocking the exfiltration also
-**raised utility from 33.3% to 88.9%**, because an undefended model that follows
-the injection abandons the user's real task — once the attack is denied, the
-agent finishes the legitimate work. Security and utility move the same direction
-here.
+On the full slack suite the result is **utility-neutral (47.6% → 47.6%)**: the
+legitimate post/message recipients come from the user's prompt or channel context,
+not the attacker-tainted payload, so blocking the exfiltration costs no real-task
+completion. (On the smaller 9-pair slice noted above, denial even *raised* utility
+33.3% → 88.9%, because an undefended model that follows the injection abandons the
+user's real task; on the full suite the net effect washes out to zero cost.)
 
 The banking row keeps utility at 0 in both conditions: those user tasks (pay a
 bill / refund) are derailed by the injection and the bill file's content is

@@ -57,23 +57,27 @@ In order. Any denial is final.
    are checked by a decision procedure, not a guess.
 4. **Degradation** — if the session has degraded (see §4), the surface is narrowed;
    a call a quarantined source would drive is refused here.
-5. **Positional admission** (for declared sinks) — a sink whose legitimate input
+5. **SSRF / internal-destination** — a call targeting an internal destination
+   (cloud metadata, a private-network address, the docker socket) is refused
+   independent of taint. Content-blind and provenance-independent. (See §7 for the
+   host-classification residuals: redirects and non-HTTP schemes.)
+6. **Positional admission** (for declared sinks) — a sink whose legitimate input
    *cannot encode an instruction* (a closed schema, an enum, a number) is admitted
    **only** when the driving value's *form* is instruction-incomplete. This decision
    reads the form, never the content, so a paraphrase that hides an injection cannot
    defeat it. (See §3.)
-6. **Carrier** — an untrusted free-text value reaching an instruction-following sink
+7. **Carrier** — an untrusted free-text value reaching an instruction-following sink
    (one that would interpret it as a directive — spawn a sub-agent, send a message,
    run code) is the imperative channel, and is refused. Deterministic and structural.
-7. **Per-value taint** — the driving argument's own provenance is consulted:
+8. **Per-value taint** — the driving argument's own provenance is consulted:
    - *integrity*: an untrusted-derived value flowing into a high-risk operation
      (write outside the workspace, execute generated code, egress to an external
      destination) is refused;
    - *confidentiality*: egress is refused while the **confidentiality floor** is up
      (see §5).
-8. **Adjudicator** (optional) — an advisory second opinion (see §6), consulted only
+9. **Adjudicator** (optional) — an advisory second opinion (see §6), consulted only
    on the would-approve path, so it can only *add* a deny.
-9. **Execute**, then register the output's provenance for later calls. A value
+10. **Execute**, then register the output's provenance for later calls. A value
    produced by an external/web/secret read is recorded with the right labels so a
    later sink carrying it is gated.
 
@@ -173,19 +177,35 @@ Three hard guarantees, enforced in the kernel regardless of what you plug in:
 
 ---
 
-## 7. The one acknowledged gap
+## 7. The acknowledged gaps
 
-The integrity per-value gate is content-derivation: it matches the registered
-untrusted content inside a sink argument. It is sound in the deny direction but
-**incomplete** against an in-process model that paraphrases an untrusted value
-before passing it to a sink that *cannot* be made positional (a generic write or
-exec). On that partition, a paraphrased untrusted influence is not caught.
+**Integrity paraphrase (the main one).** The integrity per-value gate is
+content-derivation: it matches the registered untrusted content inside a sink
+argument. It is sound in the deny direction but **incomplete** against an
+in-process model that paraphrases an untrusted value before passing it to a sink
+that *cannot* be made positional (a generic write or exec). On that partition, a
+paraphrased untrusted influence is not caught. Segmentation normalises case,
+edge-punctuation, structural delimiters, and Unicode (NFKC + zero-width strip), so
+formatting tricks are closed; cross-script homoglyphs, base64/encoding, and
+sub-fragment shredding remain in the residual. This is recorded honestly — there
+are tests that assert the *sound* behaviour and are marked expected-to-fail, so the
+suite trips the moment a sound per-value interpreter backend closes the gap. The
+confidentiality floor (§5) and the positional gate (§3) already close their share;
+this residual is the integrity, non-liftable partition only.
 
-This is recorded honestly — there are tests that assert the *sound* behaviour and
-are marked expected-to-fail, so the suite trips the moment a sound per-value
-interpreter backend closes the gap. The confidentiality floor (§5) and the positional
-gate (§3) already close their share; this residual is the integrity, non-liftable
-partition only.
+**SSRF host classification.** The internal-destination gate (§2, step 5) classifies
+hosts by *literal IP*, decoding the obfuscated forms (dotted/octal/hex/integer,
+IPv4-mapped IPv6, short forms). Three residuals follow from that scope, all
+content-blind by design:
+- *Redirects are not re-checked* — the kernel governs the URL the agent requests,
+  not the hops a fetch tool follows. An allowed host that 30x-redirects to an
+  internal address is the underlying tool's responsibility; pair egress tools with
+  a redirect-pinning HTTP client.
+- *Non-HTTP schemes* (`gopher://`, `dict://`, `ftp://`) are not parsed for an
+  embedded internal IP; restrict the agent's fetch tool to `http(s)`.
+- *DNS rebinding* — a hostname that resolves to an internal IP classifies as
+  external (no resolution at gate time). Use an egress allowlist (the sound,
+  membership-based control) for tools that must reach named hosts.
 
 ---
 

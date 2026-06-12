@@ -24,15 +24,38 @@ The kernel/platform split and one-implementation gate engine.
   import ToolCallGovernor` loads Ring 0 and nothing from the runtime or platform;
   `GovernedSession` lazy-loads the full stack. Regression-tested.
 - **Robust identifier tokenisation** in the taint ledger: case-fold + structural
-  delimiter splitting, so an attacker address written `mailto:x@y.z` / `'x@y.z'` /
-  `cc=x@y.z;` still matches the clean form a model extracts. Exhaustive
+  delimiter splitting + Unicode NFKC/zero-width normalisation, so an attacker
+  address written `mailto:x@y.z` / `'x@y.z'` / `cc=x@y.z;` / fullwidth / split by an
+  invisible char still matches the clean form a model extracts. Exhaustive
   evasion-surface tests; documented residuals (encoding, sub-12-char shredding,
-  semantic paraphrase) marked strict-xfail.
+  cross-script homoglyphs, semantic paraphrase) marked strict-xfail.
+- **Declarative `GovernanceConfig` (YAML)** with fail-closed parsing and key
+  material by reference only (`*_env` / `*_file`), `profiles` presets, and the
+  synchronous `ToolCallGovernor` for framework-owned agent loops.
+- **Federation A2A**: signed provenance receipts (HMAC default, optional ed25519),
+  the L1/L2 trust ladder, replay defence (per-(peer, nonce) cache, pruned by
+  expiry, receiver-side TTL clamp, legacy-receipt reject), and value-hash binding.
+- **STRICT mode obligations**: every egress sink needs a destination allowlist,
+  every tool needs a declared data-flow role, and an egress sink that narrows its
+  taint check to `driving_args` must carry its allowlist on the driving arg.
+- **Extension points**: tightening-only `TrajectoryObserver` and the advisory,
+  projection-only adjudicator.
 
 ### Changed
 
 - `IntentNormalizer` moved `node/normalizer.py → policy/normalizer.py` (Ring-0
   structural classification; it never belonged in the runtime ring).
+- The role→provenance output mapping is now a single shared `policy/provenance.py`
+  (`output_root`), used by both enforcement paths instead of being duplicated.
+- `ValueProvenance` now includes `confidentiality_floor_active`: the kernel gates
+  confidentiality on the sound floor via the contract, not a silent fallback.
+
+### Security
+
+- `restore_root` degrades an unknown federated source label to an untrusted
+  re-mint instead of silently restoring a clean root (under-taint fix).
+- Trace filenames are derived from a sanitised session-id stem (path-injection
+  guard).
 
 ## 0.8.0 — 2026-06-10
 

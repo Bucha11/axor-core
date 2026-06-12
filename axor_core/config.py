@@ -8,7 +8,7 @@ operator can describe it once in a YAML file and load it:
     config = GovernanceConfig.from_yaml("governance.yaml")
     session = GovernedSession.from_config(executor, cap_executor, config)
 
-See ``examples/governance.yaml`` for a fully-commented template.
+See ``examples/config/governance.yaml`` for a fully-commented template.
 
 Design notes:
 

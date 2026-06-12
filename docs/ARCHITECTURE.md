@@ -256,10 +256,11 @@ IntentLoop receives tool_use event
   ├─ 2. consequence      — action-class irreversibility (content-blind; shutdown/wipe)
   ├─ 3. value policies   — decidable predicates on arguments (amount in range, enum)
   ├─ 4. degradation      — refuse a call a quarantined source would drive
-  ├─ 5. positional       — declared sinks: admit only instruction-incomplete forms
-  ├─ 6. carrier          — untrusted free text into an instruction-following sink?
-  ├─ 7. per-value taint  — integrity (untrusted → high-risk) + confidentiality floor
-  ├─ 8. adjudicator      — optional advisory second opinion (tightening-only)
+  ├─ 5. ssrf             — internal destinations (metadata/private net/docker socket)
+  ├─ 6. positional       — declared sinks: admit only instruction-incomplete forms
+  ├─ 7. carrier          — untrusted free text into an instruction-following sink?
+  ├─ 8. per-value taint  — integrity (untrusted → high-risk) + confidentiality floor
+  ├─ 9. adjudicator      — optional advisory second opinion (tightening-only)
   │
   ├─ execute → register the output's provenance (federation ingress decides the
   │            provenance of a value returned from a peer agent)

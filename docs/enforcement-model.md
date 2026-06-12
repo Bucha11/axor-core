@@ -19,8 +19,9 @@ axor-core governs.
 5. DegradationEngine.apply_to_policy()  →  effective policy for this call
    (narrows ExecutionPolicy if the session level is RESTRICTED/LOCKED/TERMINAL)
 6. IntentLoop runs the structural gates, in order — a deny at any gate is final:
-     capability → consequence → value policies → degradation → positional →
-     carrier → per-value taint (integrity) + confidentiality floor → adjudicator
+     capability → consequence → value policies → degradation → ssrf/internal-dest →
+     positional → carrier → per-value taint (integrity) + confidentiality floor →
+     adjudicator
 7. DegradationEngine.record_signal(denial_or_none) → state updated for next intent
    (emits DegradationTransitionEvent / SourceQuarantinedEvent if level changed)
 8. If allowed → executor runs the underlying tool; its output's provenance is
