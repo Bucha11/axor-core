@@ -1,12 +1,21 @@
 # Deferred follow-ups — governance v4 review
 
-These are the findings the review pass intentionally **did not** change, because
-each is either a large refactor, a cross-repo coordination, or an availability-only
-issue where a hasty change carries more risk than the finding. They are recorded
-here with enough context to pick up cold. Ordered by value/effort.
+These were the findings the review pass first left unchanged. Most have since been
+worked through; the status of each is marked below. They are kept here with enough
+context to pick up cold. Ordered by value/effort.
 
 Status legend: severity is from the original review; "blast radius" is what a
 careless fix could break.
+
+## Status summary
+
+- **Done:** item 1 step 1 (EscalationManager extraction), item 2 (dead protocol
+  removal, scoped to classifier-only), item 3 (deferred lease/grant consumption),
+  item 4 (bounded confidentiality-floor map), item 5 (spawn routed through the
+  shared carrier gate).
+- **Deliberately not done:** item 1 step 2 (telemetry extraction) — low value, see
+  note; item 6 (in-core SSRF host residuals) — documented in governance-model §7,
+  the code option stays opt-in by design.
 
 ---
 
@@ -23,103 +32,77 @@ and the shared arming map (`policy/provenance.py`) already pulled logic out; thi
 is the remaining structural debt.
 
 **Plan (incremental, behaviour-preserving — no semantic change in any commit):**
-1. Extract an `EscalationManager` (grants + leases + flood guard): the
-   `_handle_escalation` path (916–1026), the `_GrantState`/lease state, and the
-   `increment_use`/`ops_remaining` bookkeeping. ~250 lines. Unit-test the manager
-   directly (flood, expiry, lease exhaustion) instead of only through the loop.
-2. Extract token/telemetry recording (`_record_token_event`, density
-   `SinkDensityEvent` emission, `_record_degradation_signal`) into a small
-   `_LoopTelemetry` helper that takes the trace list.
-3. Move spawn handling (`resolve_spawn_intent`, `_spawn_taint_reason`) onto the
-   shared gate path (see item 5) so it stops re-implementing carrier ad hoc.
-4. After 1–3, `_resolve_tool_intent` should read as: normalize → run gate sequence
-   → register provenance → telemetry. Target < 700 lines for the file.
+1. **DONE** — `EscalationManager` (`node/escalation.py`): grants + leases + flood
+   guard + `grant_from_intent` + `resolve`/`evaluate` + `covers`. The loop delegates;
+   intent_loop dropped 1369→~1190. Unit-tested directly.
+2. **NOT DONE (low value)** — token/telemetry recording into a `_LoopTelemetry`
+   helper. Skipped on purpose: the trace helpers (`_record_token_event`,
+   `SinkDensityEvent` emission, `_record_degradation_signal`, `_run_trajectory_observers`)
+   are already small cohesive methods, and a helper would have to thread
+   `trace_events` + `normalizer` + `degradation_engine` + `taint_engine` and would
+   pull the genuinely loop-coupled degradation glue into a "telemetry" class — more
+   indirection than cleanup. Revisit only if these grow.
+3. **DONE** — spawn now routes through the shared `carrier_gate` (see item 5).
+4. Target `< 700` lines was **not** reached and is not realistically reachable
+   without splitting `_resolve_tool_intent`'s gate cascade itself — which is high
+   risk for low marginal benefit now that the gate *logic* already lives in
+   `policy/gates.py`. The file is meaningfully better; further splitting is not
+   worth the hot-path risk.
 
-**Guardrail:** the full suite + `lint-imports` after every extraction; the
-determinism sweep (seeds 0/1/42/1337) must stay green. Do **not** combine with any
-behaviour fix.
+**Guardrail (followed):** full suite + `lint-imports` + determinism sweep green
+after each extraction; no behaviour change mixed into the move commits.
 
 **Blast radius:** high (this file is the hot path). Mitigated by doing it as
 pure moves with the suite as the oracle.
 
 ---
 
-## 2. `AnomalyDetector` / `contracts.reputation` / `contracts.normalizer` —
-   prune dead surface — MINOR, but **cross-repo**
+## 2. `AnomalyDetector` / `LLMVerifier` — prune dead surface — **DONE (scoped)**
 
-**Where:** `axor_core/contracts/__init__.py` exports `AnomalyDetector`;
-`contracts/normalizer.py` and `contracts/reputation.py` are at 0% coverage and
-unwired in the loop (the `anomaly_detector` hook was removed).
-
-**Do NOT just delete.** `axor-classifier-simple` *implements* this Protocol:
-`axor_classifier_simple/anomaly_detector.py:32` imports `AnomalyDetector` from
-axor-core, and `intent_loop.py:73` still imports `ReputationEnricher` from
-`contracts.reputation`. So the surface is dead *as enforcement* but live *as a
-published contract*.
-
-**Plan:**
-1. Decide the intent: is observe-only ML anomaly scoring a supported extension
-   point or fully removed? The docs say detection is observe-only telemetry — so
-   the Protocol should stay but be clearly marked "telemetry, never gates".
-2. If keeping: add a docstring + one wiring test that drives a fake
-   `AnomalyDetector` through the observe-only path and asserts it cannot deny.
-   Remove only the genuinely-unreferenced `contracts.normalizer` if nothing (incl.
-   downstream) imports it — re-run the cross-repo grep first.
-3. If removing: coordinate a major-version bump and a PR in
-   `axor-classifier-simple` that drops the import in the same release train.
-
-**Blast radius:** downstream import breakage — must grep all `axor-*` repos before
-any removal.
+**Resolved:** the cross-repo grep showed `AnomalyDetector` and `LLMVerifier` are
+implemented only by `axor-classifier-simple` (being retired), while
+`AnomalyResult` / `AnomalyClass` / `ReputationEnricher` and the
+reputation→degradation path are still imported by the live `axor-sentinel`. So the
+two classifier-only Protocols were removed and their exports dropped; the
+sentinel-facing detection surface was kept. `contracts/normalizer.py`
+(`ProviderNormalizer`) was kept — it is the live provider-normalizer contract used
+by the cross-provider mock-normalizer tests, not dead.
 
 ---
 
-## 3. Lease/grant consumed before the taint gates — MINOR (correctness)
+## 3. Lease/grant consumed before the taint gates — **DONE**
 
-**Where:** `intent_loop.py:879` (`lease.increment_use()`) and `:890`
-(`grant.ops_remaining -= 1`) run inside `_evaluate_tool_intent` *before* the
-carrier/consequence/taint gates decide. A call later denied by taint still burns a
-lease use; and a valid lease with no matching grant falls through to a deny after
-incrementing (latent, currently unreachable since both are created together at the
-grant site).
-
-**Plan:** move the decrement/increment to *after* a decision is known to be ALLOW
-(or roll it back on deny). Cleanest once item 1 lands — the `EscalationManager`
-should expose `try_consume()` that only commits on an allowed decision. Add a test:
-a lease-covered call that is then taint-denied leaves `ops_remaining` unchanged.
-
-**Blast radius:** escalation/lease tests; do after the manager extraction.
+**Resolved:** `EscalationManager.evaluate` now decides without mutating and returns
+a deferred `_PendingConsumption`; the loop commits it only after every gate passes
+(`intent_loop` approval point). A call denied by a later gate burns nothing, and a
+last-op grant stays present (`covers()` True) through the whole cascade. Covered by
+`tests/node/test_escalation_consumption.py`.
 
 ---
 
-## 4. `_outstanding` confidentiality-floor map is unbounded — MINOR (availability)
+## 4. `_outstanding` confidentiality-floor map is unbounded — **DONE**
 
-**Where:** `taint/engine.py:78,93`. One entry per distinct sensitive-read
-fingerprint, never capped (contrast the ledger's `_MAX_TOTAL_SEGMENTS`). Many
-distinct secret reads grow memory unboundedly. It fails **closed** (more entries
-keep the floor up), so this is availability-only, not a bypass.
-
-**Plan:** cap the map; on overflow flip a `_floor_saturated` flag that forces
-`confidentiality_floor_active()` to return `True` unconditionally (stay fail-closed
-— never drop an entry that would lower the floor). Mirror the ledger's saturation
-pattern and emit a trace event so operators see it. Add a flood test asserting the
-floor stays up at the cap.
-
-**Blast radius:** low (additive, fail-closed). The only care: saturation must be
-sticky and only clearable by governance, like the ledger.
+**Resolved:** capped at `_MAX_OUTSTANDING_SECRETS`. Past the cap a new secret read
+does not grow the map but flips a sticky `_floor_saturated` flag that forces the
+floor active (fail-closed), inherited by children, reset only by
+`clear_by_governance`. Logs a warning on the flip. Covered by
+`tests/test_class_b_floor.py`. (A dedicated trace event was *not* added — that needs
+a new `TraceEventKind` + collector whitelist entry, out of scope for the fix; the
+logged warning is the operator signal for now.)
 
 ---
 
-## 5. Spawn path bypasses the shared gate sequence — MINOR (consistency)
+## 5. Spawn path bypasses the shared gate sequence — **DONE (carrier gate)**
 
-**Where:** `intent_loop.py:1102` `_spawn_taint_reason` re-implements `carrier_gate`
-ad hoc; spawn args do not run consequence/value-policy/taint gates.
-
-**Plan:** route spawn through the same `gates.py` predicates (with spawn-specific
-`positional_sinks`/`imperative_sinks` config) so there is genuinely one enforcement
-path. Fold into item 1/step 3. Keep the existing whole-args derivation for spawn
-(it is correctly *not* narrowed by `driving_args`).
-
-**Blast radius:** spawn/federation-spawn tests.
+**Resolved:** `_spawn_taint_reason` now delegates to the shared
+`policy.gates.carrier_gate` (spawn_child is in `IMPERATIVE_SINKS`; `is_imperative_sink`
+is None-safe for the `normalized` arg), with whole-args derivation preserved. The
+spawn branch and the regular tool path can no longer drift on the carrier check.
+(Spawn still does not run the consequence/value-policy gates on its args; that is by
+design — `spawn_child` is a kernel-internal intent with its own capability/flood
+controls, and the child inherits the per-value ledger so its *own* sinks are gated.
+Running the full sink cascade on the spawn intent itself is left as a possible
+future tightening if a spawn arg ever needs value-policy treatment.)
 
 ---
 
