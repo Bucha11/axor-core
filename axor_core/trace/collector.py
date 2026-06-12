@@ -4,10 +4,21 @@ import dataclasses
 import json
 import logging
 import os
+import re
 import threading
 import time
 from pathlib import Path
 from typing import IO
+
+# A trace filename is derived from the session id, which can be host-supplied. Keep
+# only filesystem-safe characters so an id like "../../etc/x" cannot escape the
+# trace directory; the original id is still recorded verbatim in the record body.
+_SAFE_STEM = re.compile(r"[^A-Za-z0-9._-]")
+
+
+def _safe_stem(session_id: str) -> str:
+    stem = _SAFE_STEM.sub("_", session_id).lstrip(".")[:128]
+    return stem or "session"
 
 from axor_core.contracts.trace import (
     DecisionTrace,
@@ -54,6 +65,8 @@ class TraceCollector:
     ) -> None:
         self._config     = config or TraceConfig()
         self._session_id = session_id or f"session_{int(time.time()*1000)}"
+        # Filesystem-safe stem for trace filenames (path-injection guard).
+        self._session_stem = _safe_stem(self._session_id)
         self._lock       = threading.Lock()
         self._seq        = 0
         self._traces: dict[str, DecisionTrace] = {}
@@ -112,7 +125,7 @@ class TraceCollector:
     def _open_if_needed(self) -> None:
         if self._file is not None or not self._persistence_enabled or self._closed:
             return
-        self._file_path = self._trace_dir() / f"{self._session_id}.jsonl"
+        self._file_path = self._trace_dir() / f"{self._session_stem}.jsonl"
         # Create owner-only (0o600) — open() would honour umask and can leave
         # traces group/world-readable. line-buffered so a crash after record()
         # preserves whole lines.
@@ -240,7 +253,7 @@ class TraceCollector:
         """Path to the JSONL file for this session, if persistence is enabled."""
         if not self._persistence_enabled:
             return None
-        return self._trace_dir() / f"{self._session_id}.jsonl"
+        return self._trace_dir() / f"{self._session_stem}.jsonl"
 
     # ── Queries ────────────────────────────────────────────────────────────────
 

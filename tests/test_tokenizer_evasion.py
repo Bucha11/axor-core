@@ -31,6 +31,10 @@ from axor_core.contracts.taint import TaintSource
 from axor_core.taint.causal_root import CausalRoot
 from axor_core.taint.ledger import ValueTaintLedger
 
+# Ledger segmentation soundness is part of the security regression surface, and it
+# must hold under any hash seed — run it in the adversarial / determinism gate.
+pytestmark = pytest.mark.adversarial
+
 EMAIL = "audit-relay@vendor-compliance-svc.com"
 URL = "https://exfil.vendor-compliance-svc.com/collect"
 IBAN = "US133000000121212121212"

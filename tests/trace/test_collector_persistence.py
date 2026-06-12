@@ -59,6 +59,18 @@ def test_trace_file_path_returns_expected_location(tmp_path):
     assert c.trace_file_path() == tmp_path / "sess_abc.jsonl"
 
 
+def test_path_traversal_session_id_stays_in_trace_dir(tmp_path):
+    # A host-supplied session id with path separators must not escape the dir.
+    cfg = TraceConfig(trace_dir=str(tmp_path), persist_to_disk=True)
+    c = TraceCollector(config=cfg, session_id="../../etc/evil")
+    p = c.trace_file_path()
+    assert p.parent == tmp_path                       # stayed inside the trace dir
+    assert p.suffix == ".jsonl" and "/" not in p.stem
+    c.record(_signal_event())
+    c.close()
+    assert p.exists() and not (tmp_path.parent / "etc").exists()
+
+
 def test_persist_disabled_skips_io(tmp_path):
     cfg = TraceConfig(trace_dir=str(tmp_path), persist_to_disk=False)
     c = TraceCollector(config=cfg, session_id="off")
