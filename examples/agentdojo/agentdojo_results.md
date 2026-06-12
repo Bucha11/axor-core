@@ -74,58 +74,79 @@ The injections that *do* land are the subtler **data-exfiltration** ones (leak
 this datum inside an otherwise-plausible action), which is exactly where a model's
 own guardrails are weakest and a structural data-flow gate earns its place.
 
-## The CaMeL axis — utility retained at ASR ≈ 0 (banking, full suite, Qwen)
+## The CaMeL axis — utility retained at ASR ≈ 0 (banking, full suite)
 
 CaMeL's headline ("solves **67%** of AgentDojo tasks with provable security") is
 not a detection number — it is **utility retained while the defense holds ASR at
 ~0**. Driving ASR to zero is trivial (deny all egress); the honest question is
 what it costs. To put axor on the same axis, `AXOR_BENCH_CAMEL=1` runs the full
-banking user-task list benign *and* under attack, undefended *and* governed:
+banking user-task list benign *and* under attack, undefended *and* governed.
+
+**GPT-4o — the model CaMeL's 67% was measured on** (via OpenRouter, attack
+addressed to "GPT-4" as in the original):
+
+| condition | benign utility (16 tasks) | utility under attack (48 pairs) | ASR |
+|---|---|---|---|
+| undefended | 93.8% | 77.1% | 54.2% |
+| governed | **56.2%** | 54.2% | **0.0%** |
+
+**Governed GPT-4o solves 56.2% of benign banking tasks at 0.0% ASR — 60.0%
+retention of its near-perfect (93.8%) undefended baseline.** All six lost tasks
+(user_task_0/3/4/6/12/15) are the same shape: the legitimate recipient/payment
+details are themselves read from an untrusted source (a bill file, the
+transaction history — "pay this bill", "refund the friend who sent this", "pay
+like last month"), so the taint gate that stops the exfiltration also stops the
+job. Six benign `send_money`/`schedule_transaction` denials, 43 attack
+denials, zero attack successes out of 48 pairs against a model that undefended
+falls for **54.2%** of them.
+
+Put side by side on the same model and the same axis: **axor 56.2% (banking
+suite) vs CaMeL 67% (whole benchmark)** at ASR ≈ 0 for both. The remaining gap
+is exactly the shared-channel partition: CaMeL's interpreter passes an
+untrusted-derived recipient through as an opaque capability under a policy
+check, so it can *keep* "pay the bill from this file" while still being secure;
+a gate in front of an unmodified agent loop cannot distinguish that flow from
+exfiltration and pays it. (The numbers are not point-for-point: CaMeL's 67% is
+across all four suites with full injection coverage; ours is banking with the
+three serious exfiltration injections. Same coordinate system, adjacent — not
+identical — measurements.)
+
+**Qwen-2.5-72b** (the susceptible open model the rest of this document uses):
 
 | condition | benign utility (16 tasks) | utility under attack (48 pairs) | ASR |
 |---|---|---|---|
 | undefended | 37.5% | 45.8% | 45.8% |
 | governed | **31.2%** | 37.5% | **0.0%** |
 
-**Governed, the agent solves 31.2% of benign banking tasks at 0.0% ASR — 83.3%
-of the utility this model has undefended (5 of its 6 solvable tasks).** The
-entire benign cost is **one task**: `user_task_0`, paying a bill whose recipient
-IBAN is itself read from a file the taxonomy marks untrusted. That loss is
-structural, not noise — it is the shared-channel case where the *legitimate*
-destination arrives over the same untrusted channel as the attack.
+**Qwen governed: 31.2% benign at 0.0% ASR, 83.3% retention.** The higher
+retention is not the defense working better — Qwen simply fails most of the
+shared-channel tasks on its own (its undefended baseline is 37.5%), so there is
+less for the gate to take away; its single new loss is `user_task_0` (the bill
+file). The GPT-4o run above is the truthful picture of the defense's cost on a
+model capable enough to attempt the whole suite.
 
-What bought the retention is `driving_args` in `config/banking.yaml`: the taint
-decision keys on the transfer's `recipient`, not the whole argument blob. So
-"summarise my transactions, then send Alice the rent amount you found" passes
-(untrusted *content*, prompt-given *destination*), while every exfiltration —
-the attacker's IBAN necessarily lifted from an untrusted read — is denied (51
-denials across the 48 attack pairs, ASR 0). Before this narrowing, whole-blob
-taint blocked every post-read transfer; the cost shrinks to exactly the
-shared-channel partition.
+On both models, what buys the retention is `driving_args` in
+`config/banking.yaml`: the taint decision keys on the transfer's `recipient`,
+not the whole argument blob. So "summarise my transactions, then send Alice the
+rent amount you found" passes (untrusted *content*, prompt-given
+*destination*), while every exfiltration — the attacker's IBAN necessarily
+lifted from an untrusted read — is denied. Before this narrowing, whole-blob
+taint blocked every post-read transfer; with it, the cost shrinks to exactly
+the shared-channel partition.
 
-**How this does and does not compare to CaMeL's 67%:**
+**The remaining caveats against CaMeL's 67%, beyond suite coverage:** ASR here
+is over the three serious data-exfiltration injections × all 16 user tasks (48
+pairs), not the full 9-injection matrix; and the guarantees differ — CaMeL's
+security is by construction, while axor's integrity axis is a
+content-derivation ledger, sound to deny but with documented residuals
+(`examples/attacks/`). The confidentiality floor is the sound, paraphrase-proof
+part. CaMeL buys its stronger guarantee with an interpreter between the model
+and every tool; axor is a gate in front of an unmodified agent loop.
 
-- *Same axis* — utility kept while the defense, not the model, holds ASR at ~0
-  (the undefended model fails 45.8% of the time here, so the headroom is real).
-- *Different model* — CaMeL measured GPT-4o; Qwen-2.5-72b only solves 37.5% of
-  banking undefended, so absolute utility is dominated by model capability.
-  Retention (83.3%) is the defense-cost number; absolute (31.2%) is the
-  CaMeL-format number.
-- *Different attack coverage* — ASR here is over the three serious
-  data-exfiltration injections × all 16 user tasks (48 pairs), not the full
-  9-injection matrix.
-- *Different guarantee* — CaMeL's security is by construction (a planner whose
-  interpreter passes untrusted values as opaque capabilities, so the
-  shared-channel bill task survives); axor's integrity axis is a
-  content-derivation ledger — sound to deny, but with documented residuals
-  (`examples/attacks/`), and it *pays* the bill task. The confidentiality floor
-  is the sound, paraphrase-proof part. CaMeL buys its stronger guarantee with an
-  interpreter between the model and every tool; axor is a gate in front of an
-  unmodified agent loop.
-
-(Per-pair utility deltas between conditions — e.g. governed 37.5% under attack
+(Per-pair utility deltas between conditions — e.g. Qwen's 37.5% under attack
 vs 31.2% benign — are within OpenRouter's provider-routing noise at temperature
-0; the ASR column and the single lost benign task are the stable findings.)
+0; the ASR columns and the identity of the lost benign tasks are the stable
+findings.)
 
 ## Caveat on "claude-haiku is robust" — it's the *bench*, and I couldn't break it here
 
