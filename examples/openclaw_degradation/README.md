@@ -79,27 +79,6 @@ premise is obsolete; the harm is *denied*, not *degraded after the fact*.
    cannot express. This is the genuine remaining problem, and it is exactly the
    stateful `DomainDegradationPredicate` v1's design note proposed.
 
-## For the discussion (reply to Haoyu)
-
-Haoyu's letter raised three things; here is where each stands after the refactor:
-
-- **Trajectory / pressure → harm.** The *action-class* half (restart/shutdown, and any
-  renamed privileged op) is now config: shipped defaults plus `consequence_overrides`,
-  enforced as a deny. The *stateful* half (stove, patient metric) is unchanged and open
-  (finding 5). The pressure-vs-harm split is now concrete: un-denied action-class harm
-  is handled by the consequence axis; stateful pressure is not.
-
-- **Taint "everywhere" in multi-agent.** Three refactor pieces directly answer this and
-  are themselves config: per-value taint (a clean value stays clean, not session-sticky);
-  `driving_args` (the gate keys on the destination field, so untrusted *content* to a
-  *trusted* recipient is not over-blocked); and sink-side declassification via a
-  governance `endorse_value` (the "after canonicalisation/review, reduce taint" Haoyu
-  asked for).
-
-- **Governance never sees the attacker's string.** The canonicaliser feeds the advisory
-  layer a content-free projection only. The mechanism exists; the *formal proof* Haoyu
-  wants does not yet. That remains research, not config.
-
 ## Files
 
 - `scenario.py` — the OpenClaw trace, a renamed variant, and the corpus controls.
