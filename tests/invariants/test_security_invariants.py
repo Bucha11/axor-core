@@ -91,7 +91,7 @@ def test_inv01_positive_layer1_deny_blocks_tool():
     loop = IntentLoop(capability_executor=MagicMock(), trace_events=[])
     intent = Intent(kind=IntentKind.TOOL_CALL,
                     payload={"tool": "bash", "args": {}}, node_id="n")
-    decision = loop._evaluate_tool_intent(intent, _mk_envelope(frozenset()))
+    decision, _ = loop._evaluate_tool_intent(intent, _mk_envelope(frozenset()))
     assert decision.kind == PolicyDecisionKind.DENY
 
 
@@ -109,7 +109,7 @@ def test_inv01_adversarial_ml_allow_cannot_override_layer1():
     loop = IntentLoop(capability_executor=MagicMock(), trace_events=[])
     intent = Intent(kind=IntentKind.TOOL_CALL,
                     payload={"tool": "bash", "args": {}}, node_id="n")
-    decision = loop._evaluate_tool_intent(intent, _mk_envelope(frozenset()))
+    decision, _ = loop._evaluate_tool_intent(intent, _mk_envelope(frozenset()))
     assert decision.kind == PolicyDecisionKind.DENY
     detector.score.assert_not_called()
 
@@ -237,7 +237,7 @@ def test_inv07_positive_ml_deny_blocks_tool():
     intent = Intent(kind=IntentKind.TOOL_CALL,
                     payload={"tool": "bash", "args": {}}, node_id="n")
     # The hard policy blocks first — the scorer is not consulted for an unauthorized tool
-    decision = loop._evaluate_tool_intent(intent, _mk_envelope(frozenset()))
+    decision, _ = loop._evaluate_tool_intent(intent, _mk_envelope(frozenset()))
     assert decision.kind == PolicyDecisionKind.DENY
 
 
@@ -255,7 +255,7 @@ def test_inv07_adversarial_ml_allow_cannot_grant_capability():
     loop = IntentLoop(capability_executor=MagicMock(), trace_events=[])
     intent = Intent(kind=IntentKind.TOOL_CALL,
                     payload={"tool": "execute_shell", "args": {}}, node_id="n")
-    decision = loop._evaluate_tool_intent(intent, _mk_envelope(frozenset()))
+    decision, _ = loop._evaluate_tool_intent(intent, _mk_envelope(frozenset()))
     assert decision.kind == PolicyDecisionKind.DENY
 
 
@@ -273,7 +273,7 @@ def test_inv08_positive_layer1_runs_before_llm():
     loop = IntentLoop(capability_executor=MagicMock(), trace_events=[])
     intent = Intent(kind=IntentKind.TOOL_CALL,
                     payload={"tool": "network_exfil", "args": {}}, node_id="n")
-    decision = loop._evaluate_tool_intent(intent, _mk_envelope(frozenset()))
+    decision, _ = loop._evaluate_tool_intent(intent, _mk_envelope(frozenset()))
     assert decision.kind == PolicyDecisionKind.DENY
     llm.verify.assert_not_called()
 
@@ -287,7 +287,7 @@ def test_inv08_adversarial_llm_cannot_approve_denied_tool():
     loop = IntentLoop(capability_executor=MagicMock(), trace_events=[])
     intent = Intent(kind=IntentKind.TOOL_CALL,
                     payload={"tool": "rm_rf", "args": {}}, node_id="n")
-    decision = loop._evaluate_tool_intent(intent, _mk_envelope(frozenset()))
+    decision, _ = loop._evaluate_tool_intent(intent, _mk_envelope(frozenset()))
     assert decision.kind == PolicyDecisionKind.DENY
 
 
@@ -474,7 +474,7 @@ def test_inv15_positive_intent_loop_catches_executor_exception():
     intent = Intent(kind=IntentKind.TOOL_CALL,
                     payload={"tool": "read", "args": {}}, node_id="n")
     # With an allowed tool, the policy should APPROVE, then the executor is called
-    decision = loop._evaluate_tool_intent(intent, _mk_envelope(frozenset(["read"])))
+    decision, _ = loop._evaluate_tool_intent(intent, _mk_envelope(frozenset(["read"])))
     assert decision.kind == PolicyDecisionKind.APPROVE  # policy allows
 
 
@@ -488,7 +488,7 @@ def test_inv15_adversarial_denied_tool_never_reaches_executor():
     loop = IntentLoop(capability_executor=executor, trace_events=[])
     intent = Intent(kind=IntentKind.TOOL_CALL,
                     payload={"tool": "rm_rf", "args": {}}, node_id="n")
-    decision = loop._evaluate_tool_intent(intent, _mk_envelope(frozenset()))
+    decision, _ = loop._evaluate_tool_intent(intent, _mk_envelope(frozenset()))
     assert decision.kind == PolicyDecisionKind.DENY
     # Executor stream should never have been invoked
     executor.stream.assert_not_called()
@@ -592,7 +592,7 @@ def test_inv20_positive_valid_envelope_accepted():
     intent = Intent(kind=IntentKind.TOOL_CALL,
                     payload={"tool": "read", "args": {}}, node_id="n")
     # Should not raise — returns a PolicyDecision
-    decision = loop._evaluate_tool_intent(intent, _mk_envelope(frozenset(["read"])))
+    decision, _ = loop._evaluate_tool_intent(intent, _mk_envelope(frozenset(["read"])))
     assert decision is not None
 
 
@@ -604,7 +604,7 @@ def test_inv20_adversarial_missing_capabilities_denies():
     loop = IntentLoop(capability_executor=MagicMock(), trace_events=[])
     intent = Intent(kind=IntentKind.TOOL_CALL,
                     payload={"tool": "read", "args": {}}, node_id="n")
-    decision = loop._evaluate_tool_intent(intent, _mk_envelope(frozenset()))
+    decision, _ = loop._evaluate_tool_intent(intent, _mk_envelope(frozenset()))
     assert decision.kind == PolicyDecisionKind.DENY
 
 

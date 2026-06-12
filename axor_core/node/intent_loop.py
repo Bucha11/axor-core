@@ -53,7 +53,7 @@ from axor_core.contracts.taint import Carrier, TaintSource
 from axor_core.degradation.engine import _LOCKED_ALLOWED_TOOLS
 from axor_core.policy.normalizer import IntentNormalizer
 from axor_core.node.canonicalizer import IntentCanonicalizer
-from axor_core.node.escalation import EscalationManager
+from axor_core.node.escalation import EscalationManager, _PendingConsumption
 from axor_core.kernel.adjudicator import (
     Adjudicator,
     MemoizingAdjudicator,
@@ -467,7 +467,7 @@ class IntentLoop:
                 result=_denial_result(tool_name, reason),
             )
 
-        decision = self._evaluate_tool_intent(intent, envelope)
+        decision, pending_consumption = self._evaluate_tool_intent(intent, envelope)
 
         if decision.kind == PolicyDecisionKind.DENY:
             self._record_denial(intent, decision.reason, envelope)
@@ -716,6 +716,13 @@ class IntentLoop:
                     result=denial_resp.to_tool_result(),
                 )
 
+        # Every gate (capability, consequence, value-policy, degradation, ssrf,
+        # positional, carrier, taint, adjudicator) has passed: the call is approved
+        # and about to execute. NOW consume the lease use / grant op — a call denied
+        # by any gate above returned earlier and burned nothing.
+        if pending_consumption is not None:
+            pending_consumption.commit()
+
         # approved or transformed — emit the appropriate trace event
         is_transform = decision.kind == PolicyDecisionKind.TRANSFORM
         self._trace_events.append(
@@ -815,15 +822,20 @@ class IntentLoop:
         self,
         intent: Intent,
         envelope: ExecutionEnvelope,
-    ) -> PolicyDecision:
+    ) -> tuple[PolicyDecision, "_PendingConsumption | None"]:
         """
         Evaluate a tool_call intent against capabilities.
 
+        Returns ``(decision, pending)``. ``pending`` is a not-yet-applied lease/grant
+        consumption: the caller commits it only when the whole call is finally
+        approved, so a call denied by a later data-flow gate burns no lease use /
+        grant op. (Decisions that do not arise from a lease/grant carry ``None``.)
+
         Resolution order:
-        1. Active escalation grant covers the tool?  → approve (decrement ops)
-        2. Is the tool in allowed_tools?             → approve
-        3. Is the tool in extra_denied?              → deny
-        4. Not in capabilities at all                → deny
+        1. Active escalation grant/lease covers the tool?  → approve (consume on commit)
+        2. Is the tool in allowed_tools?                   → approve
+        3. Is the tool in extra_denied?                    → deny
+        4. Not in capabilities at all                      → deny
         """
         tool_name: str = intent.payload.get("tool", "")
         caps = envelope.capabilities
@@ -841,29 +853,29 @@ class IntentLoop:
                         f"path {candidate_path!r} is outside policy "
                         f"allowed_paths {tuple(policy_paths)!r}"
                     ),
-                )
+                ), None
 
         # Lease/grant resolution (authoritative — validates TTL + max_uses + path).
-        escalation_decision = self._escalation.resolve(tool_name, tool_args)
+        escalation_decision, pending = self._escalation.evaluate(tool_name, tool_args)
         if escalation_decision is not None:
-            return escalation_decision
+            return escalation_decision, pending
 
         if tool_name in caps.allowed_tools:
             return PolicyDecision(
                 kind=PolicyDecisionKind.APPROVE,
                 reason="tool in allowed_tools",
-            )
+            ), pending
 
         if tool_name in envelope.policy.tool_policy.extra_denied:
             return PolicyDecision(
                 kind=PolicyDecisionKind.DENY,
                 reason=f"tool '{tool_name}' is explicitly denied by policy",
-            )
+            ), pending
 
         return PolicyDecision(
             kind=PolicyDecisionKind.DENY,
             reason=f"tool '{tool_name}' is not in capabilities for policy '{envelope.policy.name}'",
-        )
+        ), pending
 
     async def _handle_escalation(
         self,

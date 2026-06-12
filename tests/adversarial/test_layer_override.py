@@ -37,9 +37,9 @@ def _envelope_without_tool():
 
 def test_capability_gate_denies_unauthorized_tool():
     loop = IntentLoop(capability_executor=MagicMock(), trace_events=[])
-    assert loop._evaluate_tool_intent(_intent("bash"), _envelope_without_tool()).kind == PolicyDecisionKind.DENY
+    assert loop._evaluate_tool_intent(_intent("bash"), _envelope_without_tool())[0].kind == PolicyDecisionKind.DENY
 
 
 def test_capability_gate_is_authoritative_for_any_tool():
     loop = IntentLoop(capability_executor=MagicMock(), trace_events=[])
-    assert loop._evaluate_tool_intent(_intent("execute_code"), _envelope_without_tool()).kind == PolicyDecisionKind.DENY
+    assert loop._evaluate_tool_intent(_intent("execute_code"), _envelope_without_tool())[0].kind == PolicyDecisionKind.DENY

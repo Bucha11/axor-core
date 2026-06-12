@@ -55,6 +55,26 @@ class _GrantedEscalation:
     ops_remaining: int
 
 
+@dataclass
+class _PendingConsumption:
+    """A lease/grant consumption decided but not yet applied. The loop commits it
+    only when the whole call is finally approved, so a call denied by a later
+    data-flow gate does not burn a lease use or a grant op."""
+
+    manager: "EscalationManager"
+    lease: "CapabilityLease | None"
+    grant: "_GrantedEscalation | None"
+    grant_tool: str | None
+
+    def commit(self) -> None:
+        if self.lease is not None:
+            self.lease.increment_use()
+        if self.grant is not None:
+            self.grant.ops_remaining -= 1
+            if self.grant.ops_remaining <= 0:
+                self.manager._granted_escalations.pop(self.grant_tool, None)
+
+
 class EscalationManager:
     """Owns escalation grants + capability leases for one session."""
 
@@ -74,15 +94,23 @@ class EscalationManager:
             or tool_name in self._capability_leases
         )
 
-    def resolve(self, tool_name: str, tool_args: dict) -> PolicyDecision | None:
-        """The lease/grant branch of policy resolution.
+    def evaluate(
+        self, tool_name: str, tool_args: dict
+    ) -> tuple[PolicyDecision | None, "_PendingConsumption | None"]:
+        """The lease/grant branch of policy resolution — decided WITHOUT consuming.
 
-        Returns a :class:`PolicyDecision` when a lease or grant applies (APPROVE via
-        a grant, or DENY on an expired/exhausted lease or a path violation), else
-        ``None`` — no lease/grant for this tool, so the caller falls through to the
-        policy's ``allowed_tools``.
+        Returns ``(decision, pending)``:
+          • ``decision`` is a DENY on an expired/exhausted lease or a path violation
+            (``pending=None`` — nothing to consume), an APPROVE when a grant covers
+            the tool, or ``None`` when no grant applies and the caller should fall
+            through to the policy's ``allowed_tools``.
+          • ``pending`` carries the lease use / grant op to apply *only* once the
+            whole call is finally approved (see :class:`_PendingConsumption`), so a
+            call denied by a later data-flow gate burns nothing. An expired lease is
+            still cleaned up here (that is not a consumption).
         """
         lease = self._capability_leases.get(tool_name)
+        pending_lease: "CapabilityLease | None" = None
         if lease is not None:
             if not self._lease_validator.is_valid(lease):
                 del self._capability_leases[tool_name]
@@ -91,14 +119,14 @@ class EscalationManager:
                 return PolicyDecision(
                     kind=PolicyDecisionKind.DENY,
                     reason=f"capability lease for '{tool_name}' has expired or been exhausted",
-                )
+                ), None
             tool_path = extract_path_arg(tool_args)
             if not self._lease_validator.check_path_allowed(lease, tool_path):
                 return PolicyDecision(
                     kind=PolicyDecisionKind.DENY,
                     reason=f"lease for '{tool_name}' restricts to paths {lease.allowed_paths!r}",
-                )
-            lease.increment_use()
+                ), None
+            pending_lease = lease  # consume on commit, not now
 
         grant = self._granted_escalations.get(tool_name)
         if grant is not None:
@@ -108,17 +136,24 @@ class EscalationManager:
                     return PolicyDecision(
                         kind=PolicyDecisionKind.DENY,
                         reason=f"escalation grant for '{tool_name}' restricts to paths {grant.paths!r}",
-                    )
-            grant.ops_remaining -= 1
-            remaining = grant.ops_remaining
-            if remaining <= 0:
-                del self._granted_escalations[tool_name]
+                    ), None
+            remaining_after = grant.ops_remaining - 1
+            pending = _PendingConsumption(
+                manager=self, lease=pending_lease, grant=grant, grant_tool=tool_name
+            )
             return PolicyDecision(
                 kind=PolicyDecisionKind.APPROVE,
-                reason=f"approved via escalation grant ({remaining} ops remaining)",
+                reason=f"approved via escalation grant ({remaining_after} ops remaining)",
+            ), pending
+
+        if pending_lease is not None:
+            # Valid lease, no grant: fall through to allowed_tools, but the lease use
+            # is still consumed on final approval.
+            return None, _PendingConsumption(
+                manager=self, lease=pending_lease, grant=None, grant_tool=None
             )
 
-        return None
+        return None, None
 
     async def grant_from_intent(
         self,

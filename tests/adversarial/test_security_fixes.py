@@ -50,7 +50,7 @@ class TestPathCeiling:
         policy = ExecutionPolicy(name="p", allowed_paths=("/repo",),
                                  tool_policy=ToolPolicy(allow_read=True))
         env = make_envelope(policy=policy)
-        dec = _loop()._evaluate_tool_intent(_intent("read", {"path": "/etc/passwd"}), env)
+        dec, _ = _loop()._evaluate_tool_intent(_intent("read", {"path": "/etc/passwd"}), env)
         assert dec.kind == PolicyDecisionKind.DENY
         assert "allowed_paths" in dec.reason
 
@@ -58,14 +58,14 @@ class TestPathCeiling:
         policy = ExecutionPolicy(name="p", allowed_paths=("/repo",),
                                  tool_policy=ToolPolicy(allow_read=True))
         env = make_envelope(policy=policy)
-        dec = _loop()._evaluate_tool_intent(_intent("read", {"path": "/repo/a.txt"}), env)
+        dec, _ = _loop()._evaluate_tool_intent(_intent("read", {"path": "/repo/a.txt"}), env)
         assert dec.kind == PolicyDecisionKind.APPROVE
 
     def test_traversal_escape_denied(self, make_envelope):
         policy = ExecutionPolicy(name="p", allowed_paths=("/repo",),
                                  tool_policy=ToolPolicy(allow_read=True))
         env = make_envelope(policy=policy)
-        dec = _loop()._evaluate_tool_intent(
+        dec, _ = _loop()._evaluate_tool_intent(
             _intent("read", {"path": "/repo/../etc/passwd"}), env)
         assert dec.kind == PolicyDecisionKind.DENY
 
@@ -74,13 +74,13 @@ class TestPathCeiling:
         policy = ExecutionPolicy(name="p", allowed_paths=("/repo",),
                                  tool_policy=ToolPolicy(allow_read=True))
         env = make_envelope(policy=policy)
-        dec = _loop()._evaluate_tool_intent(
+        dec, _ = _loop()._evaluate_tool_intent(
             _intent("read", {"file_path": "/etc/passwd"}), env)
         assert dec.kind == PolicyDecisionKind.DENY
 
     def test_no_allowed_paths_means_unrestricted(self, make_envelope):
         env = make_envelope()  # focused policy, no allowed_paths
-        dec = _loop()._evaluate_tool_intent(_intent("read", {"path": "/etc/passwd"}), env)
+        dec, _ = _loop()._evaluate_tool_intent(_intent("read", {"path": "/etc/passwd"}), env)
         assert dec.kind == PolicyDecisionKind.APPROVE
 
 

@@ -171,7 +171,7 @@ def test_fail_closed_empty_allowed_tools_denies_all():
     loop = IntentLoop(capability_executor=MagicMock(), trace_events=[])
     intent = Intent(kind=IntentKind.TOOL_CALL,
                     payload={"tool": "read", "args": {}}, node_id="n")
-    decision = loop._evaluate_tool_intent(intent, envelope)
+    decision, _ = loop._evaluate_tool_intent(intent, envelope)
     assert decision.kind == PolicyDecisionKind.DENY
 
 
@@ -247,5 +247,5 @@ def test_fail_closed_telemetry_failure_does_not_bypass_policy():
                     payload={"tool": "rm_rf", "args": {}}, node_id="n")
 
     # Policy must still deny even when telemetry is broken
-    decision = loop._evaluate_tool_intent(intent, envelope)
+    decision, _ = loop._evaluate_tool_intent(intent, envelope)
     assert decision.kind == PolicyDecisionKind.DENY
