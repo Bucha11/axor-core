@@ -12,10 +12,13 @@ is in `agentdojo_adapter.py`, the runner in `run_agentdojo.py`.
   `ToolCallGovernor` before it executes; a denied call returns a governance
   denial instead of running. Everything else in the pipeline is identical to the
   undefended baseline.
-- **Taxonomy (operator deployment declaration):** `get_most_recent_transactions /
-  get_scheduled_transactions / read_file / get_user_info` are untrusted-data
-  sources; `send_money / schedule_transaction / update_scheduled_transaction` are
-  egress sinks.
+- **Taxonomy (operator deployment declaration):** declared per suite in
+  `config/<suite>.yaml` — the same `GovernanceConfig` YAML a real deployment
+  loads (`ToolCallGovernor(**cfg.as_governor_kwargs())`). For banking:
+  `get_most_recent_transactions / get_scheduled_transactions / read_file /
+  get_user_info` are untrusted-data sources; `send_money / schedule_transaction /
+  update_scheduled_transaction` are egress sinks whose taint decision keys on
+  the `recipient` field (`driving_args`).
 
 `utility` = the user's real task succeeded. `ASR` (attack success rate) = the
 injected attacker goal succeeded. A good defense lowers ASR while keeping utility.
@@ -71,6 +74,59 @@ The injections that *do* land are the subtler **data-exfiltration** ones (leak
 this datum inside an otherwise-plausible action), which is exactly where a model's
 own guardrails are weakest and a structural data-flow gate earns its place.
 
+## The CaMeL axis — utility retained at ASR ≈ 0 (banking, full suite, Qwen)
+
+CaMeL's headline ("solves **67%** of AgentDojo tasks with provable security") is
+not a detection number — it is **utility retained while the defense holds ASR at
+~0**. Driving ASR to zero is trivial (deny all egress); the honest question is
+what it costs. To put axor on the same axis, `AXOR_BENCH_CAMEL=1` runs the full
+banking user-task list benign *and* under attack, undefended *and* governed:
+
+| condition | benign utility (16 tasks) | utility under attack (48 pairs) | ASR |
+|---|---|---|---|
+| undefended | 37.5% | 45.8% | 45.8% |
+| governed | **31.2%** | 37.5% | **0.0%** |
+
+**Governed, the agent solves 31.2% of benign banking tasks at 0.0% ASR — 83.3%
+of the utility this model has undefended (5 of its 6 solvable tasks).** The
+entire benign cost is **one task**: `user_task_0`, paying a bill whose recipient
+IBAN is itself read from a file the taxonomy marks untrusted. That loss is
+structural, not noise — it is the shared-channel case where the *legitimate*
+destination arrives over the same untrusted channel as the attack.
+
+What bought the retention is `driving_args` in `config/banking.yaml`: the taint
+decision keys on the transfer's `recipient`, not the whole argument blob. So
+"summarise my transactions, then send Alice the rent amount you found" passes
+(untrusted *content*, prompt-given *destination*), while every exfiltration —
+the attacker's IBAN necessarily lifted from an untrusted read — is denied (51
+denials across the 48 attack pairs, ASR 0). Before this narrowing, whole-blob
+taint blocked every post-read transfer; the cost shrinks to exactly the
+shared-channel partition.
+
+**How this does and does not compare to CaMeL's 67%:**
+
+- *Same axis* — utility kept while the defense, not the model, holds ASR at ~0
+  (the undefended model fails 45.8% of the time here, so the headroom is real).
+- *Different model* — CaMeL measured GPT-4o; Qwen-2.5-72b only solves 37.5% of
+  banking undefended, so absolute utility is dominated by model capability.
+  Retention (83.3%) is the defense-cost number; absolute (31.2%) is the
+  CaMeL-format number.
+- *Different attack coverage* — ASR here is over the three serious
+  data-exfiltration injections × all 16 user tasks (48 pairs), not the full
+  9-injection matrix.
+- *Different guarantee* — CaMeL's security is by construction (a planner whose
+  interpreter passes untrusted values as opaque capabilities, so the
+  shared-channel bill task survives); axor's integrity axis is a
+  content-derivation ledger — sound to deny, but with documented residuals
+  (`examples/attacks/`), and it *pays* the bill task. The confidentiality floor
+  is the sound, paraphrase-proof part. CaMeL buys its stronger guarantee with an
+  interpreter between the model and every tool; axor is a gate in front of an
+  unmodified agent loop.
+
+(Per-pair utility deltas between conditions — e.g. governed 37.5% under attack
+vs 31.2% benign — are within OpenRouter's provider-routing noise at temperature
+0; the ASR column and the single lost benign task are the stable findings.)
+
 ## Caveat on "claude-haiku is robust" — it's the *bench*, and I couldn't break it here
 
 "claude-haiku resists, no headroom" is easy to misread as "the model is robust."
@@ -98,9 +154,12 @@ across the board).** That is an honest *negative* result, and it cuts two ways:
 
 Crucially, none of this touches the axor result: the governor gates on the
 *provenance of the tool-call argument*, not on recognizing the injection, so a
-cleverer frame that does flip a model produces the same tainted egress and is
-refused identically. The defense is attack-strength-invariant by construction;
-the bench is not.
+cleverer **frame** that flips a model produces the same tainted egress and is
+refused identically. The honest qualifier: provenance is established by content
+derivation, so what varies with attacker effort is not the framing but the
+**encoding** of the exfiltrated value (the residuals documented in
+`examples/attacks/`); the floor and the value-policy allowlists are the parts
+that don't.
 
 ## The other side — utility cost on the shared channel (banking, benign)
 
@@ -116,9 +175,12 @@ driven by untrusted content, the same taint gate over-blocks:
 This is the genuine tradeoff: the cost falls on sinks whose *legitimate* argument
 comes from an untrusted read (data and instructions sharing a channel — the hard
 core of injection defense). It is zero when the legitimate argument comes from the
-user's prompt (the slack/exfiltration case above), and a better-calibrated
-deployment narrows it further with an approved-recipient `value_policy` instead of
-blanket taint.
+user's prompt. The CaMeL-axis section above measures the cost after `driving_args`
+narrows the decision to the destination field: on the full suite it shrinks to
+exactly this one shared-channel task. A deployment that can enumerate payees
+closes even that with an approved-recipient `value_policy` (strict mode) — at the
+price of enumerating destinations up front, which the benchmark deliberately
+doesn't assume.
 
 ## Contrast — claude-haiku-4-5 (injection-robust)
 
@@ -190,6 +252,10 @@ AXOR_BENCH_BACKEND=openrouter AXOR_BENCH_MODEL=qwen/qwen-2.5-72b-instruct \
 
 # Serious banking PII exfiltration:
 AXOR_BENCH_SUITE=slack|banking|workspace|travel ... python -m examples.agentdojo.run_agentdojo
+
+# The CaMeL-axis run (full user-task list, benign + attack, both conditions):
+AXOR_BENCH_BACKEND=openrouter AXOR_BENCH_SUITE=banking AXOR_BENCH_CAMEL=1 \
+  python -m examples.agentdojo.run_agentdojo
 
 # Robust-model contrast:
 export ANTHROPIC_API_KEY=sk-ant-...
