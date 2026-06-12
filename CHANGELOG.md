@@ -49,6 +49,13 @@ The kernel/platform split and one-implementation gate engine.
   (`output_root`), used by both enforcement paths instead of being duplicated.
 - `ValueProvenance` now includes `confidentiality_floor_active`: the kernel gates
   confidentiality on the sound floor via the contract, not a silent fallback.
+- Escalation grants, capability leases, and the flood guard moved into
+  `node/escalation.py` (`EscalationManager`); the intent loop delegates instead of
+  implementing them inline.
+- spawn's carrier check routes through the shared `policy.gates.carrier_gate`
+  instead of an ad-hoc reimplementation.
+- Removed the unused `AnomalyDetector` / `LLMVerifier` protocols (their only
+  implementer is retired); the sentinel-facing detection surface is unchanged.
 
 ### Security
 
@@ -56,6 +63,10 @@ The kernel/platform split and one-implementation gate engine.
   re-mint instead of silently restoring a clean root (under-taint fix).
 - Trace filenames are derived from a sanitised session-id stem (path-injection
   guard).
+- Lease use / grant op is consumed only when a call is finally approved, so a call
+  denied by a later data-flow gate no longer burns a use.
+- The confidentiality-floor map is bounded: a flood of distinct secret reads flips
+  a sticky fail-closed flag instead of growing memory without bound.
 
 ## 0.8.0 — 2026-06-10
 
