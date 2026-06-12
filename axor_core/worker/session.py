@@ -106,6 +106,7 @@ class GovernedSession:
         egress_sinks: "set[str] | frozenset[str] | None" = None,
         untrusted_sources: "set[str] | frozenset[str] | None" = None,
         sensitive_sources: "set[str] | frozenset[str] | None" = None,
+        imperative_sinks: "set[str] | frozenset[str] | None" = None,
         benign_tools: "set[str] | frozenset[str] | None" = None,
         driving_args: "dict[str, list[str]] | None" = None,
         trajectory_observers: "list | None" = None,
@@ -124,6 +125,7 @@ class GovernedSession:
         self._egress_sinks = frozenset(egress_sinks or ())
         self._untrusted_sources = frozenset(untrusted_sources or ())
         self._sensitive_sources = frozenset(sensitive_sources or ())
+        self._imperative_sinks = frozenset(imperative_sinks or ())
         self._driving_args = dict(driving_args or {})
         self._trajectory_observers = list(trajectory_observers or [])
         self._value_policies = dict(value_policies or {})
@@ -151,6 +153,10 @@ class GovernedSession:
         # sound, paraphrase-proof control) — fail closed at session construction,
         # not deferred to the first run.
         self._require_egress_allowlist = (mode == ExecutionMode.STRICT)
+        # STRICT also enforces role completeness. The session validates it at
+        # construction below (it knows the registered-tool universe); the flag also
+        # rides into the loop so the lazy per-call check is consistent across paths.
+        self._require_tool_roles = (mode == ExecutionMode.STRICT)
         self._benign_tools = frozenset(benign_tools or ())
         if self._require_egress_allowlist:
             from axor_core.kernel.registration import (
@@ -628,9 +634,12 @@ class GovernedSession:
             egress_sinks=self._egress_sinks,
             untrusted_sources=self._untrusted_sources,
             sensitive_sources=self._sensitive_sources,
+            imperative_sinks=self._imperative_sinks,
+            benign_tools=self._benign_tools,
             driving_args=self._driving_args,
             trajectory_observers=self._trajectory_observers,
             require_egress_allowlist=self._require_egress_allowlist,
+            require_tool_roles=self._require_tool_roles,
             value_policies=self._value_policies,
             adjudicator=self._adjudicator,
             federation_gateway=self._federation_gateway,

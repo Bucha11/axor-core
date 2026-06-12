@@ -28,6 +28,7 @@ source_modules =
     axor_core.policy
     axor_core.kernel
     axor_core.degradation
+    axor_core.governor
 forbidden_modules =
     axor_core.capability
     axor_core.node

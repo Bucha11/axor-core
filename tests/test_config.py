@@ -154,8 +154,8 @@ def test_from_config_strict_egress_without_allowlist_fails():
 # ── federation (A2A) — keys by reference only, fail closed ────────────────────────
 
 def _fed_cfg(monkeypatch):
-    monkeypatch.setenv("FED_OURS", b"our-shared-secret-key".hex())
-    monkeypatch.setenv("FED_PEER", b"peer-shared-secret-ab".hex())
+    monkeypatch.setenv("FED_OURS", b"our-shared-secret-key".ljust(32, b"x").hex())
+    monkeypatch.setenv("FED_PEER", b"peer-shared-secret-ab".ljust(32, b"x").hex())
     return GovernanceConfig.from_dict({
         "federation": {
             "compatible_kernels": ["0.8.0"],
@@ -186,7 +186,7 @@ def test_federation_ingress_restores_known_peer(monkeypatch):
     from axor_core.taint.causal_root import CausalRoot
     peer = LocalIdentity(
         peer_id="fulfilment", kernel_version="0.8.0", domain="payments.corp",
-        signer=HmacSigner(b"peer-shared-secret-ab"),
+        signer=HmacSigner(b"peer-shared-secret-ab".ljust(32, b"x")),
     )
     receipt = mint_receipt("order ok", CausalRoot.constant(), peer)
     _root, level = cfg.federation_gateway.receive("order ok", receipt, "fulfilment")

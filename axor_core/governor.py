@@ -40,7 +40,7 @@ from axor_core.policy.gates import (
     value_policy_gate,
 )
 from axor_core.policy.sinks import INSTRUCTION_COMPLETE_SINKS
-from axor_core.kernel.registration import validate_egress_allowlists
+from axor_core.kernel.registration import validate_egress_allowlists, tool_is_classified
 from axor_core.taint.causal_root import CausalRoot
 from axor_core.taint.engine import TaintEngine
 
@@ -89,8 +89,10 @@ class ToolCallGovernor:
         sensitive_sources: "set[str] | frozenset[str] | None" = None,
         egress_sinks: "set[str] | frozenset[str] | None" = None,
         imperative_sinks: "set[str] | frozenset[str] | None" = None,
+        benign_tools: "set[str] | frozenset[str] | None" = None,
         driving_args: "dict[str, list[str]] | None" = None,
         require_egress_allowlist: bool = False,
+        require_tool_roles: bool = False,
         node_id: str = "",
     ) -> None:
         self._positional_sinks = frozenset(positional_sinks or ())
@@ -116,6 +118,17 @@ class ToolCallGovernor:
         self._sensitive_sources = frozenset(sensitive_sources or ())
         self._egress_sinks = frozenset(egress_sinks or ())
         self._imperative_sinks = frozenset(imperative_sinks or ())
+        # Explicitly-benign reads (trusted output that need not be tainted). Kept so
+        # the per-call STRICT role check can tell "declared benign" from "forgot to
+        # classify" — without it, both would fail open to a clean read.
+        self._benign_tools = frozenset(benign_tools or ())
+        # STRICT role obligation, enforced LAZILY per call: the governor never sees
+        # the full tool universe (it is asked one (tool, args) at a time), so it
+        # cannot validate completeness at construction the way GovernedSession does.
+        # Instead it denies any unclassified tool the moment it is used — closing the
+        # fail-open default where a renamed, undeclared tool normalises to a benign
+        # no-op and slips past every gate.
+        self._require_tool_roles = require_tool_roles
         # Per-sink driving arguments — the fields the taint decision keys on. Empty
         # = whole-args (safe, coarse). Declaring them narrows to the destination /
         # instruction field so untrusted content to a trusted destination is not
@@ -147,6 +160,31 @@ class ToolCallGovernor:
         def _deny(gd: GateDecision) -> GovernanceDecision:
             return GovernanceDecision(
                 allowed=False, reason=gd.reason, category=gd.category,
+                _normalized=normalized,
+            )
+
+        # 0. STRICT role completeness (lazy): an unclassified tool fails closed
+        #    rather than defaulting to a clean benign read. This is the fix for the
+        #    fail-open-on-unknown-tool default — without an explicit role the kernel
+        #    cannot know a renamed tool exfiltrates or reads a secret.
+        if self._require_tool_roles and not tool_is_classified(
+            tool_name,
+            untrusted_sources=self._untrusted_sources,
+            sensitive_sources=self._sensitive_sources,
+            egress_sinks=self._egress_sinks,
+            positional_sinks=self._positional_sinks,
+            benign_tools=self._benign_tools,
+            value_policies=self._value_policies,
+        ):
+            return GovernanceDecision(
+                allowed=False,
+                reason=(
+                    f"tool {tool_name!r} has no declared data-flow role; STRICT mode "
+                    "refuses an unclassified tool (it would default to a clean read "
+                    "and arm no floor). Declare it as a source/sink/positional/"
+                    "value_policy or explicitly benign."
+                ),
+                category="unclassified_tool",
                 _normalized=normalized,
             )
 

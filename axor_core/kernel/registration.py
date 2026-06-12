@@ -97,13 +97,66 @@ def validate_egress_allowlists(
     pol = policies or {}
     for sink in sorted(sinks):
         preds = pol.get(sink, [])
-        if not any(p.kind == "enum" for p in preds):
+        # Require a NON-EMPTY enum: an enum with an empty allowlist denies every
+        # value, so it would satisfy a presence-only check while permanently
+        # blocking the sink — structure without substance is not an allowlist.
+        if not any(p.kind == "enum" and len(p.allowed) > 0 for p in preds):
             errors.append(
                 f"egress sink {sink!r} has no allowlist: STRICT mode requires an "
-                f"enum value_policy on its destination argument (the sound, "
+                f"enum value_policy with at least one allowed destination (the sound, "
                 f"paraphrase-proof control); content-derivation alone is not enough"
             )
     return errors
+
+
+# Kernel-internal intents, not data-flow tools — always exempt from role checks.
+_ROLE_EXEMPT = frozenset({"spawn_child", "escalate_policy"})
+
+
+def _classified_tools(
+    *,
+    untrusted_sources: "frozenset[str] | set[str] | None" = None,
+    sensitive_sources: "frozenset[str] | set[str] | None" = None,
+    egress_sinks: "frozenset[str] | set[str] | None" = None,
+    positional_sinks: "frozenset[str] | set[str] | None" = None,
+    benign_tools: "frozenset[str] | set[str] | None" = None,
+    value_policies: "dict[str, list[ValuePredicate]] | None" = None,
+) -> frozenset[str]:
+    """The set of tools that carry an explicit data-flow role (any taxonomy set, a
+    value policy, explicitly benign, or kernel-exempt)."""
+    return (
+        frozenset(untrusted_sources or ())
+        | frozenset(sensitive_sources or ())
+        | frozenset(egress_sinks or ())
+        | frozenset(positional_sinks or ())
+        | frozenset(benign_tools or ())
+        | frozenset((value_policies or {}).keys())
+        | _ROLE_EXEMPT
+    )
+
+
+def tool_is_classified(
+    tool: str,
+    *,
+    untrusted_sources: "frozenset[str] | set[str] | None" = None,
+    sensitive_sources: "frozenset[str] | set[str] | None" = None,
+    egress_sinks: "frozenset[str] | set[str] | None" = None,
+    positional_sinks: "frozenset[str] | set[str] | None" = None,
+    benign_tools: "frozenset[str] | set[str] | None" = None,
+    value_policies: "dict[str, list[ValuePredicate]] | None" = None,
+) -> bool:
+    """True iff ``tool`` has an explicit data-flow role. Used for the per-call
+    STRICT obligation on the governor/loop paths, which (unlike GovernedSession) do
+    not know the full tool universe at construction time, so they enforce the same
+    completeness rule lazily — denying an unclassified tool the moment it is used."""
+    return tool in _classified_tools(
+        untrusted_sources=untrusted_sources,
+        sensitive_sources=sensitive_sources,
+        egress_sinks=egress_sinks,
+        positional_sinks=positional_sinks,
+        benign_tools=benign_tools,
+        value_policies=value_policies,
+    )
 
 
 def validate_role_completeness(
@@ -131,15 +184,13 @@ def validate_role_completeness(
     unclassified tool (empty == valid). ``spawn_child`` and ``escalate_policy`` are
     kernel-internal intents, not data-flow tools, and are always exempt.
     """
-    _EXEMPT = frozenset({"spawn_child", "escalate_policy"})
-    classified = (
-        frozenset(untrusted_sources or ())
-        | frozenset(sensitive_sources or ())
-        | frozenset(egress_sinks or ())
-        | frozenset(positional_sinks or ())
-        | frozenset(benign_tools or ())
-        | frozenset((value_policies or {}).keys())
-        | _EXEMPT
+    classified = _classified_tools(
+        untrusted_sources=untrusted_sources,
+        sensitive_sources=sensitive_sources,
+        egress_sinks=egress_sinks,
+        positional_sinks=positional_sinks,
+        benign_tools=benign_tools,
+        value_policies=value_policies,
     )
     unclassified = sorted(frozenset(allowed_tools) - classified)
     if not unclassified:

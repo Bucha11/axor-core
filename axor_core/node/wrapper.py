@@ -113,8 +113,11 @@ class GovernedNode:
         egress_sinks: "frozenset[str] | set[str] | None" = None,
         untrusted_sources: "frozenset[str] | set[str] | None" = None,
         sensitive_sources: "frozenset[str] | set[str] | None" = None,
+        imperative_sinks: "frozenset[str] | set[str] | None" = None,
+        benign_tools: "frozenset[str] | set[str] | None" = None,
         driving_args: "dict[str, list[str]] | None" = None,
         require_egress_allowlist: bool = False,
+        require_tool_roles: bool = False,
         trajectory_observers: "list | None" = None,
         adjudicator=None,
         federation_gateway=None,
@@ -140,8 +143,11 @@ class GovernedNode:
         self._egress_sinks = frozenset(egress_sinks or ())
         self._untrusted_sources = frozenset(untrusted_sources or ())
         self._sensitive_sources = frozenset(sensitive_sources or ())
+        self._imperative_sinks = frozenset(imperative_sinks or ())
+        self._benign_tools = frozenset(benign_tools or ())
         self._driving_args = dict(driving_args or {})
         self._require_egress_allowlist = require_egress_allowlist
+        self._require_tool_roles = require_tool_roles
         self._trajectory_observers = list(trajectory_observers or [])
         self._adjudicator = adjudicator
         self._federation_gateway = federation_gateway
@@ -322,8 +328,11 @@ class GovernedNode:
             egress_sinks=self._egress_sinks,
             untrusted_sources=self._untrusted_sources,
             sensitive_sources=self._sensitive_sources,
+            imperative_sinks=self._imperative_sinks,
+            benign_tools=self._benign_tools,
             driving_args=self._driving_args,
             require_egress_allowlist=self._require_egress_allowlist,
+            require_tool_roles=self._require_tool_roles,
             trajectory_observers=self._trajectory_observers,
             adjudicator=self._adjudicator,
             federation_gateway=self._federation_gateway,
@@ -518,8 +527,11 @@ class GovernedNode:
             egress_sinks=self._egress_sinks,
             untrusted_sources=self._untrusted_sources,
             sensitive_sources=self._sensitive_sources,
+            imperative_sinks=self._imperative_sinks,
+            benign_tools=self._benign_tools,
             driving_args=self._driving_args,
             require_egress_allowlist=self._require_egress_allowlist,
+            require_tool_roles=self._require_tool_roles,
             trajectory_observers=self._trajectory_observers,
             adjudicator=self._adjudicator,
             federation_gateway=self._federation_gateway,

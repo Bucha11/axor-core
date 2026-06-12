@@ -23,6 +23,7 @@ Design notes:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from numbers import Real
 from typing import Any
 
 from axor_core.contracts.canonical import ConsequenceClass
@@ -33,7 +34,7 @@ from axor_core.policy.value_policy import ValuePredicate, enum, numeric_range
 _KNOWN_KEYS = frozenset({
     "mode", "workspace", "profile",
     "untrusted_sources", "sensitive_sources", "egress_sinks",
-    "positional_sinks", "benign_tools",
+    "positional_sinks", "imperative_sinks", "benign_tools",
     "value_policies", "consequence_overrides",
     "driving_args",
     "federation",
@@ -56,6 +57,7 @@ class GovernanceConfig:
     sensitive_sources: frozenset[str] = frozenset()
     egress_sinks: frozenset[str] = frozenset()
     positional_sinks: frozenset[str] = frozenset()
+    imperative_sinks: frozenset[str] = frozenset()
     benign_tools: frozenset[str] = frozenset()
     # tool name -> list of decidable predicates over its arguments
     value_policies: dict[str, list[ValuePredicate]] = field(default_factory=dict)
@@ -101,6 +103,7 @@ class GovernanceConfig:
             sensitive_sources=_as_set(data.get("sensitive_sources"), "sensitive_sources"),
             egress_sinks=_as_set(data.get("egress_sinks"), "egress_sinks"),
             positional_sinks=_as_set(data.get("positional_sinks"), "positional_sinks"),
+            imperative_sinks=_as_set(data.get("imperative_sinks"), "imperative_sinks"),
             benign_tools=_as_set(data.get("benign_tools"), "benign_tools"),
             value_policies=_parse_value_policies(data.get("value_policies")),
             driving_args=_parse_driving_args(data.get("driving_args")),
@@ -134,6 +137,7 @@ class GovernanceConfig:
             "sensitive_sources": set(self.sensitive_sources),
             "egress_sinks": set(self.egress_sinks),
             "positional_sinks": set(self.positional_sinks),
+            "imperative_sinks": set(self.imperative_sinks),
             "benign_tools": set(self.benign_tools),
             "value_policies": dict(self.value_policies),
             "driving_args": dict(self.driving_args),
@@ -160,10 +164,13 @@ class GovernanceConfig:
             "sensitive_sources": set(self.sensitive_sources),
             "egress_sinks": set(self.egress_sinks),
             "positional_sinks": set(self.positional_sinks),
+            "imperative_sinks": set(self.imperative_sinks),
+            "benign_tools": set(self.benign_tools),
             "value_policies": dict(self.value_policies),
             "driving_args": dict(self.driving_args),
             "consequence_overrides": dict(self.consequence_overrides),
             "require_egress_allowlist": self.mode is ExecutionMode.STRICT,
+            "require_tool_roles": self.mode is ExecutionMode.STRICT,
         }
 
 
@@ -216,6 +223,15 @@ def _parse_predicate(tool: Any, p: Any) -> ValuePredicate:
             raise ValueError(
                 f"value_policies[{tool!r}].{arg}: enum predicate needs an 'allowed' list"
             )
+        if len(allowed) == 0:
+            # A vacuous allowlist denies every value — almost always a typo (a YAML
+            # anchor that resolved to nothing), and it would silently satisfy the
+            # STRICT egress-allowlist obligation while permanently self-DoSing the
+            # sink. Fail closed at load instead.
+            raise ValueError(
+                f"value_policies[{tool!r}].{arg}: enum 'allowed' is empty — an empty "
+                "allowlist denies every value; declare at least one member or remove it"
+            )
         extra = set(p) - {"arg", "kind", "allowed"}
         if extra:
             raise ValueError(f"value_policies[{tool!r}].{arg}: unknown enum field(s) {sorted(extra)}")
@@ -228,7 +244,22 @@ def _parse_predicate(tool: Any, p: Any) -> ValuePredicate:
         extra = set(p) - {"arg", "kind", "lo", "hi"}
         if extra:
             raise ValueError(f"value_policies[{tool!r}].{arg}: unknown numeric_range field(s) {sorted(extra)}")
-        return numeric_range(str(arg), p["lo"], p["hi"])
+        lo, hi = p["lo"], p["hi"]
+        # Bounds must be numbers and ordered, checked at LOAD — otherwise a
+        # non-numeric bound defers to a TypeError on the enforcement hot path, and
+        # an inverted range (lo>hi) silently rejects every value at runtime.
+        if not isinstance(lo, Real) or isinstance(lo, bool) \
+                or not isinstance(hi, Real) or isinstance(hi, bool):
+            raise ValueError(
+                f"value_policies[{tool!r}].{arg}: numeric_range 'lo'/'hi' must be "
+                f"numbers, got lo={lo!r}, hi={hi!r}"
+            )
+        if lo > hi:
+            raise ValueError(
+                f"value_policies[{tool!r}].{arg}: numeric_range is inverted "
+                f"(lo={lo} > hi={hi}) — it would reject every value"
+            )
+        return numeric_range(str(arg), lo, hi)
     raise ValueError(
         f"value_policies[{tool!r}].{arg}: unknown predicate kind {kind!r} "
         f"(expected 'enum' or 'numeric_range')"

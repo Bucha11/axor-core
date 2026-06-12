@@ -46,6 +46,8 @@ def receipt_to_dict(receipt: FederationReceipt) -> dict:
         "algorithm": receipt.algorithm,
         "sources": list(receipt.sources),
         "sensitive": receipt.sensitive,
+        "nonce": receipt.nonce,
+        "expires_at": receipt.expires_at,
         "signature": receipt.signature.hex(),
     }
 
@@ -60,6 +62,8 @@ def receipt_from_dict(d: dict) -> FederationReceipt:
         algorithm=d.get("algorithm", ""),
         sources=tuple(d.get("sources", ())),
         sensitive=bool(d.get("sensitive", False)),
+        nonce=d.get("nonce", ""),
+        expires_at=float(d.get("expires_at", 0.0)),
         signature=bytes.fromhex(d["signature"]),
     )
 

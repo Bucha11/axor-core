@@ -27,13 +27,13 @@ KERNEL = "axor-core/4.12"
 DOMAIN = "trusted.example"
 
 
-def _identity(peer_id="peerA", key=b"shared-secret-key", kernel=KERNEL, domain=DOMAIN):
+def _identity(peer_id="peerA", key=b"shared-secret-key".ljust(32, b"x"), kernel=KERNEL, domain=DOMAIN):
     """The peer's OWN identity (signs its receipts)."""
     return LocalIdentity(peer_id=peer_id, kernel_version=kernel, domain=domain,
                          signer=HmacSigner(key))
 
 
-def _peer(peer_id="peerA", key=b"shared-secret-key", kernel=KERNEL, domain=DOMAIN):
+def _peer(peer_id="peerA", key=b"shared-secret-key".ljust(32, b"x"), kernel=KERNEL, domain=DOMAIN):
     """Local view of a trusted peer (verifies its receipts)."""
     return FederationPeer(peer_id=peer_id, verifier=HmacSigner(key),
                           kernel_version=kernel, domain=domain)
@@ -97,15 +97,15 @@ def test_l1_degrade_on_non_federated_domain():
 def test_forged_receipt_is_denied():
     val = "attacker data dressed as clean"
     forged = mint_receipt(val, CausalRoot.constant(),
-                          _identity(key=b"the-wrong-key"))     # signed with wrong key
+                          _identity(key=b"the-wrong-key".ljust(32, b"x")))     # signed with wrong key
     with pytest.raises(FederationError, match="forged"):
-        _gateway(_peer(key=b"the-real-key")).receive(val, forged)
+        _gateway(_peer(key=b"the-real-key".ljust(32, b"x"))).receive(val, forged)
 
 
 def test_receipt_cannot_be_detached_to_another_value():
     # A valid receipt for value A must not validate value B (the value hash is signed).
     receipt_for_a = mint_receipt("value A (clean)", CausalRoot.constant(), _identity())
-    with pytest.raises(FederationError, match="forged or value-mismatched"):
+    with pytest.raises(FederationError, match="value-mismatched"):
         _gateway(_peer()).receive("value B (attacker)", receipt_for_a)
 
 
@@ -121,9 +121,9 @@ def test_lateral_peer_cannot_launder_attacker_data_as_clean():
     # as clean without the signing key. Without it, the receipt fails verification →
     # deny; so the only accepted clean values are those a key-holding peer attested.
     payload = "rm -rf / disguised as a clean config value"
-    mitm_receipt = mint_receipt(payload, CausalRoot.constant(), _identity(key=b"mitm-key"))
+    mitm_receipt = mint_receipt(payload, CausalRoot.constant(), _identity(key=b"mitm-key".ljust(32, b"x")))
     with pytest.raises(FederationError):
-        _gateway(_peer(key=b"real-key")).receive(payload, mitm_receipt)
+        _gateway(_peer(key=b"real-key".ljust(32, b"x"))).receive(payload, mitm_receipt)
 
 
 # ── asymmetric ed25519 path (optional backend) ────────────────────────────────

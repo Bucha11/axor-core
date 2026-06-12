@@ -25,7 +25,9 @@ from axor_core.policy.gates import (
 from axor_core.kernel.registration import (
     validate_value_policies,
     validate_egress_allowlists,
+    tool_is_classified,
 )
+from axor_core.taint.engine import TaintEngine
 from axor_core.security.carrier import classify_carrier
 from axor_core.policy.sinks import INSTRUCTION_COMPLETE_SINKS
 from axor_core.contracts.result import ExecutorEvent, ExecutorEventKind
@@ -152,8 +154,11 @@ class IntentLoop:
         egress_sinks: "frozenset[str] | set[str] | None" = None,
         untrusted_sources: "frozenset[str] | set[str] | None" = None,
         sensitive_sources: "frozenset[str] | set[str] | None" = None,
+        imperative_sinks: "frozenset[str] | set[str] | None" = None,
+        benign_tools: "frozenset[str] | set[str] | None" = None,
         driving_args: "dict[str, list[str]] | None" = None,
         require_egress_allowlist: bool = False,
+        require_tool_roles: bool = False,
         trajectory_observers: "list | None" = None,
     ) -> None:
         self._executor = capability_executor
@@ -162,7 +167,12 @@ class IntentLoop:
         self._tool_result_callback = tool_result_callback
         self._spawn_callback = spawn_callback
         self._escalation_callback = escalation_callback
-        self._taint_engine = taint_engine
+        # Default to a real engine when none is supplied: the per-value/carrier/
+        # taint/floor cascade is guarded on `self._taint_engine is not None`, so a
+        # None engine would silently disable the entire data-flow core (fail-open).
+        # Constructing a default makes the absence of an engine impossible, so that
+        # cascade always runs (fail-closed).
+        self._taint_engine = taint_engine if taint_engine is not None else TaintEngine()
         self._degradation_engine = degradation_engine
         self._reputation_enricher = reputation_enricher
         self._normalizer = IntentNormalizer()
@@ -215,6 +225,13 @@ class IntentLoop:
         self._egress_sinks = frozenset(egress_sinks or ())
         self._untrusted_sources = frozenset(untrusted_sources or ())
         self._sensitive_sources = frozenset(sensitive_sources or ())
+        # Operator-declared instruction-following sinks (renamed spawn/send/exec).
+        # Threaded into carrier_gate so a renamed imperative sink is honoured here,
+        # matching the synchronous governor (previously this path ignored it).
+        self._imperative_sinks = frozenset(imperative_sinks or ())
+        # Explicitly-benign reads, kept for the lazy STRICT role check below.
+        self._benign_tools = frozenset(benign_tools or ())
+        self._require_tool_roles = require_tool_roles
         # Per-sink driving arguments — the fields the taint decision keys on
         # (whole-args by default). Narrows over-blocking of untrusted content sent
         # to a trusted destination.
@@ -497,6 +514,34 @@ class IntentLoop:
                 for ev in self._degradation_engine.drain_events():
                     self._trace_events.append(ev)
 
+        # STRICT role completeness (lazy, per call): an unclassified tool fails
+        # closed instead of defaulting to a clean benign read. Mirrors the governor;
+        # closes the fail-open-on-unknown-tool default on the streaming path too.
+        if self._require_tool_roles and tool_name not in _LOCKED_ALLOWED_TOOLS \
+                and not tool_is_classified(
+                    tool_name,
+                    untrusted_sources=self._untrusted_sources,
+                    sensitive_sources=self._sensitive_sources,
+                    egress_sinks=self._egress_sinks,
+                    positional_sinks=self._positional_sinks,
+                    benign_tools=self._benign_tools,
+                    value_policies=self._value_policies,
+                ):
+            role_denial = (
+                f"tool {tool_name!r} has no declared data-flow role; STRICT mode "
+                "refuses an unclassified tool (it would default to a clean read and "
+                "arm no floor)"
+            )
+            self._record_denial(intent, role_denial, envelope)
+            denial_resp = _make_denial_response(role_denial, "unclassified_tool")
+            self._record_degradation_signal(intent, denial_resp)
+            return ResolvedIntent(
+                intent=intent,
+                approved=False,
+                reason=role_denial,
+                result=denial_resp.to_tool_result(),
+            )
+
         # consequence axis — content-blind structural gate on the action class, part
         # of the pure allow decision. Catches a destructive/irreversible action
         # issued under trusted provenance that the provenance axes cannot see (e.g.
@@ -591,7 +636,7 @@ class IntentLoop:
         # Known gap: content-derivation misses paraphrased / re-encoded influence;
         # soundly over-tainting opaque model output would collapse this back to
         # session-sticky tainting and needs a sound per-value interpreter backend.
-        if self._taint_engine is not None and normalized is not None:
+        if normalized is not None:
             driving_root = self._taint_engine.derive_value(
                 driving_subset(tool_args, self._driving_args.get(tool_name))
             )
@@ -638,7 +683,9 @@ class IntentLoop:
             # an instruction-following sink (spawn a sub-agent, send a message,
             # execute) is the imperative channel. Complements per-value: catches
             # free-text-as-directive the risky-op list below does not.
-            gd = carrier_gate(tool_name, tool_args, normalized, driving_root)
+            gd = carrier_gate(
+                tool_name, tool_args, normalized, driving_root, self._imperative_sinks
+            )
             if gd is not None:
                 return _gate_denial(gd)
 

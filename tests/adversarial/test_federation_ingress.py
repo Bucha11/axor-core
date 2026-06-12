@@ -34,7 +34,7 @@ from axor_core.taint.engine import TaintEngine
 
 pytestmark = pytest.mark.adversarial
 
-KEY = b"peer-shared-key"
+KEY = b"peer-shared-key".ljust(32, b"x")
 KERNEL = "axor-core/4.12"
 DOMAIN = "trusted.example"
 PEER_VALUE = "a result the peer computed cleanly"
@@ -124,7 +124,7 @@ async def test_peer_tainted_provenance_is_preserved():
 
 @pytest.mark.asyncio
 async def test_forged_receipt_is_rejected_as_denial():
-    eng_loop = _loop(_PeerTool(signing_key=b"WRONG-KEY"), gateway=_gateway())
+    eng_loop = _loop(_PeerTool(signing_key=b"WRONG-KEY".ljust(32, b"x")), gateway=_gateway())
     r = await _resolve(eng_loop, _env())
     assert r.approved is False
     assert r.result.get("category") == "federation_gate"

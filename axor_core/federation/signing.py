@@ -45,11 +45,23 @@ class Verifier(Protocol):
 
 # ── Symmetric default: HMAC-SHA256 (stdlib, zero-dependency) ───────────────────
 
+# A MAC key shorter than the hash output buys nothing and is brute-forceable; a
+# 1-byte "key" would make receipts forgeable. RFC 2104 recommends a key at least
+# the hash length — 32 bytes for SHA-256. Fail closed below that.
+_MIN_HMAC_KEY_BYTES = 32
+
+
 class HmacSigner:
     """Symmetric signer/verifier — the same shared key signs and verifies."""
     algorithm = "hmac-sha256"
 
     def __init__(self, shared_key: bytes) -> None:
+        if len(shared_key) < _MIN_HMAC_KEY_BYTES:
+            raise ValueError(
+                f"hmac-sha256 shared key is {len(shared_key)} bytes; a federation "
+                f"key must be at least {_MIN_HMAC_KEY_BYTES} bytes (a short key is "
+                "brute-forceable and makes receipts forgeable)"
+            )
         self._key = shared_key
 
     def sign(self, payload: bytes) -> bytes:

@@ -48,6 +48,10 @@ class FederationGateway:
         self._peers = dict(peers or {})
         self._compatible_kernels = frozenset(compatible_kernels or ())
         self._federated_domains = frozenset(federated_domains or ())
+        # Nonces of receipts already consumed this session. A signed receipt is a
+        # one-shot attestation; re-presenting the same one (replay) is rejected.
+        # Bounded by the receipt TTL (an expired nonce can be forgotten safely).
+        self._seen_nonces: set[str] = set()
 
     def receive(
         self,
@@ -71,8 +75,19 @@ class FederationGateway:
 
         if not verify_receipt(value, receipt, peer):
             raise FederationError(
-                f"forged or value-mismatched receipt from peer {peer_id!r}"
+                f"forged, stale, or value-mismatched receipt from peer {peer_id!r}"
             )
+
+        # Authentic, unexpired receipt — but a one-shot. Reject a replay of one we
+        # have already consumed (a captured receipt re-presented to re-launder a
+        # value's provenance). A receipt with no nonce is legacy/unbound and is not
+        # replay-protected; treat its absence as non-replayable but log nothing.
+        if receipt.nonce:
+            if receipt.nonce in self._seen_nonces:
+                raise FederationError(
+                    f"replayed receipt (nonce already consumed) from peer {peer_id!r}"
+                )
+            self._seen_nonces.add(receipt.nonce)
 
         # Authentic receipt. L2 requires BOTH a compatible kernel AND a federated
         # domain; otherwise we trust the peer's identity but not its labels → L1.

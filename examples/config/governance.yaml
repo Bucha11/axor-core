@@ -90,6 +90,15 @@ positional_sinks:
   - set_thermostat
   - rate_item
 
+# imperative_sinks — sinks that FOLLOW their argument as an instruction (spawn a
+# sub-agent, send a chat message, dispatch a task). A tainted FREE-TEXT value into
+# one of these is the "imperative channel" — injected text becoming a command. The
+# kernel recognises the generic names (spawn/send/...); declare your RENAMED ones
+# here so the carrier gate covers them on both enforcement paths.
+imperative_sinks:
+  - dispatch_agent
+  - send_chat_message
+
 
 # ── Allowlists & predicates: decidable constraints on a sink's arguments ─────────
 #

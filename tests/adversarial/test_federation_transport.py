@@ -30,7 +30,7 @@ from axor_core.taint.engine import TaintEngine
 
 pytestmark = pytest.mark.adversarial
 
-KEY = b"shared"
+KEY = b"shared".ljust(32, b"x")
 KERNEL = "axor-core/4.12"
 DOMAIN = "org"
 
@@ -119,7 +119,7 @@ async def test_e2e_forging_peer_is_denied():
     # The peer signs with a key our gateway does not trust → the receipt fails
     # verification on arrival → the value is rejected, never fed to the agent.
     net = InMemoryPeerNetwork()
-    net.register(_id(key=b"WRONG"), TaintEngine(), lambda req: _coro("attacker data"))
+    net.register(_id(key=b"WRONG".ljust(32, b"z")), TaintEngine(), lambda req: _coro("attacker data"))
     sess, result = await _run(net, "ask_b", _gateway())
     assert "denied" in result.output
 
