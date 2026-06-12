@@ -149,3 +149,46 @@ consequence_overrides:
   drop_database: catastrophic       # irreversible — force a human gate
   delete_workspace: catastrophic
   send_invoice: consequential       # real-world side effect, hard to undo
+
+
+# ── Federation (agent-to-agent trust) — OPTIONAL ─────────────────────────────────
+#
+# When agents talk to each other, a value arriving from a peer carries a SIGNED
+# provenance receipt. The gateway decides: a valid receipt from a known peer on a
+# compatible kernel in a federated domain RESTORES the peer's provenance (trust its
+# labels); an authentic but incompatible/foreign one is RE-MINTED untrusted; a
+# forged / tampered / unknown-peer receipt is REJECTED outright.
+#
+# CRITICAL: key material is NEVER written inline here. Every key is a REFERENCE —
+# an environment variable (hex-encoded bytes) or a file path (raw bytes) — resolved
+# at load time. A shared HMAC secret or an ed25519 private key in a committed config
+# would be a disaster; there is deliberately no field to inline one, and a missing
+# reference fails closed at load.
+#
+# Remove this whole section if your agent does not federate.
+#
+# federation:
+#   compatible_kernels: ["0.8.0"]          # peer kernels we accept
+#   federated_domains: [payments.corp]     # domains whose provenance we restore
+#
+#   # OUR identity — used to mint receipts for values WE send to peers (send side).
+#   identity:
+#     peer_id: billing-agent
+#     domain: payments.corp
+#     kernel_version: "0.8.0"
+#     algorithm: ed25519                   # ed25519 (asymmetric) or hmac-sha256
+#     private_key_env: AXOR_FED_PRIVATE_KEY   # hex in env — NEVER inline
+#
+#   # PEERS we trust — used to verify receipts on values they send us (receive side).
+#   peers:
+#     - peer_id: fulfilment-agent
+#       domain: payments.corp
+#       kernel_version: "0.8.0"
+#       algorithm: ed25519
+#       public_key_file: /etc/axor/peers/fulfilment.pub   # public key — file or env
+#
+#     - peer_id: legacy-agent              # a peer still on symmetric HMAC
+#       domain: payments.corp
+#       kernel_version: "0.8.0"
+#       algorithm: hmac-sha256
+#       shared_key_env: AXOR_FED_SHARED_LEGACY            # shared secret — NEVER inline

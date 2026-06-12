@@ -119,3 +119,70 @@ def test_from_config_strict_egress_without_allowlist_fails():
             EchoExecutor(), CapabilityExecutor(), cfg,
             trace_config=TraceConfig(local_only=True, persist_inputs=False),
         )
+
+
+# ── federation (A2A) — keys by reference only, fail closed ────────────────────────
+
+def _fed_cfg(monkeypatch):
+    monkeypatch.setenv("FED_OURS", b"our-shared-secret-key".hex())
+    monkeypatch.setenv("FED_PEER", b"peer-shared-secret-ab".hex())
+    return GovernanceConfig.from_dict({
+        "federation": {
+            "compatible_kernels": ["0.8.0"],
+            "federated_domains": ["payments.corp"],
+            "identity": {
+                "peer_id": "billing", "domain": "payments.corp", "kernel_version": "0.8.0",
+                "algorithm": "hmac-sha256", "shared_key_env": "FED_OURS",
+            },
+            "peers": [
+                {"peer_id": "fulfilment", "domain": "payments.corp", "kernel_version": "0.8.0",
+                 "algorithm": "hmac-sha256", "shared_key_env": "FED_PEER"},
+            ],
+        }
+    })
+
+
+def test_federation_builds_gateway_and_identity(monkeypatch):
+    cfg = _fed_cfg(monkeypatch)
+    assert cfg.federation_gateway is not None
+    assert cfg.federation_identity is not None
+    assert "federation_gateway" in cfg.as_session_kwargs()
+
+
+def test_federation_ingress_restores_known_peer(monkeypatch):
+    cfg = _fed_cfg(monkeypatch)
+    from axor_core.federation.receipt import LocalIdentity, mint_receipt
+    from axor_core.federation.signing import HmacSigner
+    from axor_core.taint.causal_root import CausalRoot
+    peer = LocalIdentity(
+        peer_id="fulfilment", kernel_version="0.8.0", domain="payments.corp",
+        signer=HmacSigner(b"peer-shared-secret-ab"),
+    )
+    receipt = mint_receipt("order ok", CausalRoot.constant(), peer)
+    _root, level = cfg.federation_gateway.receive("order ok", receipt, "fulfilment")
+    assert level.name == "L2"  # provenance restored for a trusted, compatible peer
+
+
+def test_federation_missing_key_fails_closed():
+    with pytest.raises(ValueError, match="unset or empty"):
+        GovernanceConfig.from_dict({"federation": {"peers": [
+            {"peer_id": "x", "domain": "d", "kernel_version": "0.8.0",
+             "algorithm": "hmac-sha256", "shared_key_env": "DEFINITELY_UNSET_VAR"}
+        ]}})
+
+
+def test_federation_inline_key_is_impossible():
+    # there is no field to inline a key — an attempt is an unknown-field error
+    with pytest.raises(ValueError, match="unknown field"):
+        GovernanceConfig.from_dict({"federation": {"peers": [
+            {"peer_id": "x", "domain": "d", "kernel_version": "0.8.0",
+             "algorithm": "hmac-sha256", "shared_key": "deadbeef"}
+        ]}})
+
+
+def test_federation_unknown_algorithm_fails_closed():
+    with pytest.raises(ValueError, match="unknown algorithm"):
+        GovernanceConfig.from_dict({"federation": {"peers": [
+            {"peer_id": "x", "domain": "d", "kernel_version": "0.8.0",
+             "algorithm": "rsa-9000", "shared_key_env": "X"}
+        ]}})
