@@ -47,9 +47,25 @@ def driving_subset(args: dict, keys: "frozenset[str] | set[str] | list[str] | No
     ``task`` for a spawn) — the taint check narrows to just those, so untrusted
     *content* flowing to a *trusted* destination is no longer over-blocked.
 
+    Soundness boundary — narrowing trades coverage for precision, and it is sound
+    only when the driving field is itself constrained:
+      • The confidentiality floor is unaffected (content-blind, session-wide), so a
+        *secret* still cannot leak through a non-driving field.
+      • An attacker-chosen *destination* is still caught: it lands in a driving
+        field, which the gate does check.
+      • What narrowing gives up is the integrity/carrier check on *non-driving*
+        fields, so untrusted (non-secret) content can reach the sink through, e.g.,
+        an email ``body`` while ``to`` is clean. That is acceptable only when the
+        driving destination is allowlisted (the recipient cannot be attacker-
+        chosen) — which STRICT mode enforces via
+        :func:`~axor_core.kernel.registration.validate_driving_arg_allowlists`.
+        In production mode without an allowlist it is a documented residual.
+
     Fail-safe: if driving keys are declared but none are present in this call, fall
-    back to the whole blob rather than silently un-gating (a destination smuggled
-    into an undeclared field still gets caught)."""
+    back to the whole blob rather than silently un-gating, so a destination smuggled
+    into a *wholly undeclared* field still gets caught. (This does not cover the
+    case above, where a declared driving key IS present and clean while a different
+    field carries the content — hence the allowlist obligation in STRICT.)"""
     if not keys:
         return args
     subset = {k: args[k] for k in keys if k in args}

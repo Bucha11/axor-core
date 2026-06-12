@@ -35,12 +35,16 @@ def test_whole_args_over_blocks_untrusted_body():
     assert not out.allowed
 
 
-def test_driving_args_allows_untrusted_content_to_trusted_destination():
+def test_driving_args_allows_untrusted_content_to_unconstrained_destination_in_production():
+    # PRODUCTION-mode residual (documented): narrowing to `to` admits untrusted
+    # NON-secret content in `body` to a recipient that is merely not-tainted. This
+    # is the deliberate CaMeL-comparable posture; STRICT closes it by requiring the
+    # destination to be allowlisted (see the strict tests below).
     g = _gov(driving_args={"send_email": ["to"]})
     d = g.evaluate("read_doc", {"id": 1})
     g.register_output(d, f"note {_TOK} from an untrusted document")
     out = g.evaluate("send_email", {"to": "alice@corp.com", "body": f"summary: {_TOK}"})
-    assert out.allowed  # the fix: content to a trusted destination is fine
+    assert out.allowed
 
 
 def test_driving_args_still_blocks_attacker_destination():
@@ -62,6 +66,36 @@ def test_driving_args_does_not_relax_the_confidentiality_floor():
     # secret in the body, trusted recipient — floor is content-blind, still blocks
     out = g.evaluate("send_email", {"to": "alice@corp.com", "body": "AWS_SECRET=wJalr"})
     assert not out.allowed
+
+
+def test_strict_requires_allowlist_on_the_driving_arg():
+    import pytest
+    from axor_core.policy.value_policy import enum
+    # STRICT + driving_args narrowed to `to`, but the allowlist is on a DIFFERENT
+    # arg (`cc`): the field the gate keys on is unconstrained → fail closed.
+    with pytest.raises(ValueError, match="must carry the allowlist"):
+        ToolCallGovernor(
+            untrusted_sources={"read_doc"}, egress_sinks={"send_email"},
+            driving_args={"send_email": ["to"]},
+            value_policies={"send_email": [enum("cc", {"audit@corp.com"})]},
+            require_egress_allowlist=True,
+        )
+
+
+def test_strict_driving_arg_with_matching_allowlist_constructs_and_blocks_attacker():
+    from axor_core.policy.value_policy import enum
+    g = ToolCallGovernor(
+        untrusted_sources={"read_doc"}, egress_sinks={"send_email"},
+        driving_args={"send_email": ["to"]},
+        value_policies={"send_email": [enum("to", {"alice@corp.com"})]},
+        require_egress_allowlist=True,
+    )
+    d = g.evaluate("read_doc", {"id": 1})
+    g.register_output(d, f"relay to {_TOK}@evil.com")
+    # allowlist constrains the destination: untrusted content to the approved
+    # recipient is fine, but any non-allowlisted recipient is denied.
+    assert g.evaluate("send_email", {"to": "alice@corp.com", "body": f"x {_TOK}"}).allowed
+    assert not g.evaluate("send_email", {"to": f"{_TOK}@evil.com", "body": "x"}).allowed
 
 
 def test_config_parses_driving_args():

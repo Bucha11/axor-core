@@ -25,6 +25,7 @@ from axor_core.policy.gates import (
 from axor_core.kernel.registration import (
     validate_value_policies,
     validate_egress_allowlists,
+    validate_driving_arg_allowlists,
     tool_is_classified,
 )
 from axor_core.taint.engine import TaintEngine
@@ -243,6 +244,9 @@ class IntentLoop:
         # sound, paraphrase-proof destination control). Fail closed at construction.
         if require_egress_allowlist:
             _eg_errors = validate_egress_allowlists(self._egress_sinks, self._value_policies)
+            _eg_errors += validate_driving_arg_allowlists(
+                self._egress_sinks, self._driving_args, self._value_policies
+            )
             if _eg_errors:
                 raise ValueError("strict egress allowlist: " + "; ".join(_eg_errors))
         _illegal = {s for s in self._positional_sinks if s.lower() in INSTRUCTION_COMPLETE_SINKS}

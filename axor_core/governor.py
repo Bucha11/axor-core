@@ -40,7 +40,11 @@ from axor_core.policy.gates import (
     value_policy_gate,
 )
 from axor_core.policy.sinks import INSTRUCTION_COMPLETE_SINKS
-from axor_core.kernel.registration import validate_egress_allowlists, tool_is_classified
+from axor_core.kernel.registration import (
+    validate_driving_arg_allowlists,
+    validate_egress_allowlists,
+    tool_is_classified,
+)
 from axor_core.taint.causal_root import CausalRoot
 from axor_core.taint.engine import TaintEngine
 
@@ -139,6 +143,9 @@ class ToolCallGovernor:
         # at construction rather than ship an egress sink on content-derivation alone.
         if require_egress_allowlist:
             errors = validate_egress_allowlists(self._egress_sinks, self._value_policies)
+            errors += validate_driving_arg_allowlists(
+                self._egress_sinks, self._driving_args, self._value_policies
+            )
             if errors:
                 raise ValueError("strict egress allowlist: " + "; ".join(errors))
         self._normalizer = IntentNormalizer()

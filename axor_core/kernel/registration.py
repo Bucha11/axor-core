@@ -109,6 +109,48 @@ def validate_egress_allowlists(
     return errors
 
 
+def validate_driving_arg_allowlists(
+    egress_sinks: "frozenset[str] | set[str] | None",
+    driving_args: "dict[str, list[str] | frozenset[str] | set[str]] | None",
+    policies: "dict[str, list[ValuePredicate]] | None",
+) -> list[str]:
+    """STRICT-mode obligation: when an egress sink narrows its taint check to
+    declared driving arguments, its destination allowlist (an ``enum`` predicate)
+    must sit on one of those driving args.
+
+    Driving-arg narrowing keys the per-value integrity and carrier gates on the
+    declared fields only, so untrusted content in a *non*-driving field reaches the
+    sink ungated. That is sound only when the driving field is itself constrained by
+    an allowlist (the destination cannot then be attacker-chosen). If the enum
+    allowlist sits on a *different* arg than the one driving the decision, the
+    narrowed field is unconstrained and the narrowing is unsound — and the same
+    check catches the arg-name typo where the allowlist names a field the sink does
+    not actually drive on. Egress sinks with no ``driving_args`` (whole-blob) are
+    covered by :func:`validate_egress_allowlists`; returns one error per offending
+    sink (empty == valid).
+    """
+    errors: list[str] = []
+    sinks = frozenset(egress_sinks or ())
+    pol = policies or {}
+    da = driving_args or {}
+    for sink in sorted(sinks):
+        drivers = frozenset(da.get(sink, ()) or ())
+        if not drivers:
+            continue  # whole-blob: presence is validated by validate_egress_allowlists
+        enum_args = {
+            p.arg for p in pol.get(sink, ()) if p.kind == "enum" and len(p.allowed) > 0
+        }
+        if not (enum_args & drivers):
+            errors.append(
+                f"egress sink {sink!r} narrows its taint check to driving args "
+                f"{sorted(drivers)} but its enum allowlist is on "
+                f"{sorted(enum_args) or 'no arg'} — the destination field the gate "
+                f"keys on must carry the allowlist, else untrusted content reaches "
+                f"the sink through an unconstrained field"
+            )
+    return errors
+
+
 # Kernel-internal intents, not data-flow tools — always exempt from role checks.
 _ROLE_EXEMPT = frozenset({"spawn_child", "escalate_policy"})
 

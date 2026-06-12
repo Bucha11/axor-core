@@ -161,9 +161,13 @@ class GovernedSession:
         if self._require_egress_allowlist:
             from axor_core.kernel.registration import (
                 validate_egress_allowlists,
+                validate_driving_arg_allowlists,
                 validate_role_completeness,
             )
             _eg_errors = validate_egress_allowlists(self._egress_sinks, self._value_policies)
+            _eg_errors += validate_driving_arg_allowlists(
+                self._egress_sinks, self._driving_args, self._value_policies
+            )
             if _eg_errors:
                 raise ValueError("strict egress allowlist: " + "; ".join(_eg_errors))
             # STRICT role completeness: every registered tool needs an explicit
