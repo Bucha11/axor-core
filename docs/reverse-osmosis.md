@@ -63,36 +63,42 @@ The defense cascade never sees raw content. It operates on two derived schemas.
 class NormalizedIntent:
     # Identity
     tool: str                         # "write", "bash", "spawn_child", ...
-    sequence: int                     # position in the intent stream
+    operation: str                    # file_read | file_write | network_request | ...
 
-    # Structural args — shape only, never values
-    args_schema: dict[str, str]       # {"path": "str", "content": "str"} — no content
-    target_path: str | None           # normalized path if applicable
+    # Structural target / destination — kind only, never values
+    target_kind: str                  # workdir | system_path | secret | external_url
+    destination_kind: str             # none | localhost | external_domain | private_network
+    provenance: str                   # user | repo | official_docs | external_web | unknown
 
     # Causal signals — derived from intent history, not content
-    preceded_by_external_read: bool   # True if recent tool return came from outside
-    executes_generated_code: bool     # True if write→execute sequence detected
-    cross_origin_export: bool         # True if exporting data read from external source
+    reads_secret_like_data: bool      # target looks like a credential/secret read
+    writes_outside_workdir: bool      # write escapes the working directory
+    executes_generated_code: bool     # write→execute sequence detected
+    after_external_read: bool         # a recent tool return came from outside
+    after_secret_access: bool         # a secret was read earlier this session
+    data_flow: str                    # none | local_to_local | local_to_external | external_to_shell
 
-    # Context
-    depth: int                        # node depth in federation tree
-    escalation_active: bool           # True if an escalation grant is in effect
-    intents_since_last_external: int  # turns since last external tool return
+    # Observe-only enrichment (telemetry; never gates a decision)
+    target_resource_reputation: float = 0.0
+    target_container_reputation: float = 0.0
 ```
 
-`preceded_by_external_read` is the key signal. It captures causality without
+`after_external_read` is the key causal signal. It captures causality without
 inspecting content: the agent read something external, and now it wants to act.
-That pattern is the attack surface.
+That pattern is the attack surface. (Reputation fields are observe-only — they
+feed degradation signals, never a gate; see governance-model.md §8.)
 
 **`CanonicalizedIntent`** — the content-free projection the adjudicator and detection see. All raw strings stripped by `IntentCanonicalizer`:
 
 ```python
 CanonicalizedIntent(
-    tool_name="read",
-    path_extension=".py",         # extension only — never the full path
-    arg_count=1,
+    tool_category=ToolCategory.READ,
+    path_extension=".py",            # extension only — never the full path
+    path_hash="…",                   # sha256[:16] of path, for dedup not content
+    argument_shape="path",           # sorted arg key names, no values
+    argument_length_bucket=1,        # 0=empty 1=<256 2=medium 3=>4096
     taint_state_summary="tainted:web",   # per-value provenance summary
-    escalation_count=2,
+    after_external_read=True,
     # raw task text:  gone
     # raw file path:  gone
     # raw tool args:  gone
@@ -195,9 +201,12 @@ assert engine.derive_value("unrelated text").is_tainted is False
 child_engine.inherit_value_ledger(parent_engine)
 
 # Workers cannot release taint — raises TaintClearanceError. Only governance can,
-# per value (endorse_value) or wholesale (clear_by_governance).
-engine.endorse_value(value, authority=..., authority_type=..., reason_code=...)
-engine.clear_by_governance(authority=..., authority_type=..., reason_code=...)
+# per value (endorse_value) or wholesale (clear_by_governance). The clearance
+# capability is the GovernanceAuthority value object (its authority_type / reason_code
+# are fields of that object), not loose kwargs.
+authority = GovernanceAuthority(authority_id=..., authority_type=..., reason_code=...)
+engine.endorse_value(content, authority)
+engine.clear_by_governance(authority)
 ```
 
 A value's causal root carries its source set and the confidentiality (`sensitive`) label.
@@ -406,8 +415,8 @@ Governance is a defense layer, not a guarantee of safety. Operators are responsi
 | **Govern intent sequence** | Attack surface is behavior, not content ✓ |
 
 An agent that read a malicious README is designed to be prevented from exfiltrating your `.env` when:
-- `export` is `RESTRICTED`
-- `bash` is denied when `preceded_by_external_read=True`
+- the confidentiality floor is armed by the secret read, so egress is denied until governance endorses it
+- a value whose driving root carries the README's content (`after_external_read`) cannot reach an instruction-following or code-executing sink (carrier / taint gates)
 - `write` is path-restricted
 
 The content of the README is irrelevant. The behavioral constraint is the defense.

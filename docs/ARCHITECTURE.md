@@ -303,15 +303,17 @@ ReputationSnapshot (loaded at startup)
   │
   ▼
 SnapshotIntentEnricher.enrich(intent)
-  └─ populates NormalizedIntent.target_resource_reputation
+  └─ annotates the intent with the source's reputation signal
        │
        ▼
-  IntentLoop Phase 1 check:
-    score ≥ 0.8 AND after_external_read → deterministic deny
-    decision recorded before any LLM inference
+  IntentLoop: recorded into the observe-only detection register
+    reputation is NOT a gate — it never denies an intent directly.
+    With detection→degradation opt-in (`detection_floor`), a high score
+    can only *tighten* the session's degradation level (monotone),
+    never loosen a decision. See governance-model.md §8.
 ```
 
-The snapshot is swapped atomically in the background. The hot path reads a flat dict — no lock contention, no graph queries per intent.
+The snapshot is swapped atomically in the background. The hot path reads a flat dict — no lock contention, no graph queries per intent. Enrichment is telemetry; the gate sequence above (capability … taint … adjudicator) is the only thing that can deny.
 
 ---
 
@@ -386,10 +388,11 @@ axor-core  -X→ axor-probe   (core does not depend on probe)
         │   Core gates     │  │   Sentinel   │  │     Probe     │
         │  (per-intent)    │  │  (cross-     │  │  (behavioral  │
         │                  │  │   session)   │  │   drift)      │
-        │  L1 rule         │  │              │  │               │
-        │  L2 anomaly      │◄─┤ reputation   │  │ shadow compare│
-        │  L3 verifier     │  │ enrichment   │  │ drift signal  │
-        │  DegradationEng  │  │              │  │               │
+        │  consequence     │  │              │  │               │
+        │  value policies  │  │ reputation   │  │ shadow compare│
+        │  ssrf/positional │  │ enrichment   │  │ drift signal  │
+        │  carrier/taint   │  │ (observe →   │  │ (observe →    │
+        │  + DegradationEng│◄─┤  tighten)    │  │  tighten)     │
         └────────┬─────────┘  └──────┬───────┘  └──────┬────────┘
                  │                   │                  │
                  └───────────────────┴──────────────────┘
