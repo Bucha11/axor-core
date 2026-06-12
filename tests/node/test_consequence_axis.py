@@ -15,7 +15,8 @@ from axor_core.contracts.context import ContextView, LineageSummary
 from axor_core.contracts.envelope import Capabilities, ExecutionEnvelope, ExportContract
 from axor_core.contracts.policy import ExecutionPolicy, ExportMode, ToolPolicy
 from axor_core.contracts.result import ExecutorEvent, ExecutorEventKind
-from axor_core.node.intent_loop import IntentLoop, _GrantedEscalation
+from axor_core.node.intent_loop import IntentLoop
+from axor_core.node.escalation import _GrantedEscalation
 from axor_core.policy.consequence import consequence_class
 
 
@@ -91,7 +92,7 @@ def test_governance_gate_admits_catastrophic(cap_executor):
     loop = _loop(cap_executor)
     env = _envelope({"shutdown"})
     assert loop._check_consequence("shutdown", env) is not None
-    loop._granted_escalations["shutdown"] = _GrantedEscalation(tool="shutdown", paths=[], ops_remaining=1)
+    loop._escalation._granted_escalations["shutdown"] = _GrantedEscalation(tool="shutdown", paths=[], ops_remaining=1)
     assert loop._check_consequence("shutdown", env) is None
 
 
@@ -137,7 +138,7 @@ async def test_benign_admin_restart_is_the_accepted_structural_fp(cap_executor):
     # Benign or malicious — same structural verdict.
     assert loop._check_consequence("restart_gateway", env) is not None
     # Relief is structural/governed, never content-based:
-    loop._granted_escalations["restart_gateway"] = _GrantedEscalation(
+    loop._escalation._granted_escalations["restart_gateway"] = _GrantedEscalation(
         tool="restart_gateway", paths=[], ops_remaining=1
     )
     assert loop._check_consequence("restart_gateway", env) is None

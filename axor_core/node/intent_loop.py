@@ -2,11 +2,9 @@ from __future__ import annotations
 
 import logging
 import traceback
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, AsyncIterator, Awaitable, Callable
 
 from axor_core.capability.executor import CapabilityExecutor
-from axor_core.capability.flood import EscalationFloodGuard
 from axor_core.contracts.anomaly import NormalizedIntent
 from axor_core.contracts.envelope import ExecutionEnvelope
 from axor_core.contracts.intent import Intent, IntentKind, ResolvedIntent
@@ -35,8 +33,6 @@ from axor_core.policy.provenance import output_root
 from axor_core.contracts.result import ExecutorEvent, ExecutorEventKind
 from axor_core.contracts.trace import (
     CancelledEvent,
-    EscalationDeniedEvent,
-    EscalationGrantedEvent,
     IntentDeniedEvent,
     SinkDensityEvent,
     TokensSpentEvent,
@@ -49,16 +45,15 @@ from axor_core.errors.exceptions import (
     ToolNotFoundError,
 )
 from axor_core.capability.lease_validator import (
-    LeaseValidator,
     extract_path_arg,
     path_matches_allowlist,
 )
-from axor_core.contracts.lease import LeaseAuthorityType
 from axor_core.contracts.degradation import DegradationLevel
 from axor_core.contracts.taint import Carrier, TaintSource
 from axor_core.degradation.engine import _LOCKED_ALLOWED_TOOLS
 from axor_core.policy.normalizer import IntentNormalizer
 from axor_core.node.canonicalizer import IntentCanonicalizer
+from axor_core.node.escalation import EscalationManager
 from axor_core.kernel.adjudicator import (
     Adjudicator,
     MemoizingAdjudicator,
@@ -69,7 +64,6 @@ from axor_core.federation.gateway import FederationError
 from axor_core.taint.causal_root import CausalRoot
 
 if TYPE_CHECKING:
-    from axor_core.contracts.lease import CapabilityLease
     from axor_core.contracts.reputation import ReputationEnricher
     from axor_core.degradation.engine import DegradationEngine
     from axor_core.contracts.provenance import ValueProvenance
@@ -104,13 +98,6 @@ SpawnCallback = Callable[[str, str, str], Awaitable[str]]
 # Optional callback for ESCALATE_POLICY intents requiring human approval.
 # Signature: (tool_use_id, tool, paths, max_ops) → approved bool
 EscalationCallback = Callable[[str, str, list[str], int], Awaitable[bool]]
-
-
-@dataclass
-class _GrantedEscalation:
-    tool: str
-    paths: list[str]  # empty = no path restriction
-    ops_remaining: int
 
 
 class IntentLoop:
@@ -168,7 +155,9 @@ class IntentLoop:
         self._depth = current_depth
         self._tool_result_callback = tool_result_callback
         self._spawn_callback = spawn_callback
-        self._escalation_callback = escalation_callback
+        # Escalation grants + capability leases + flood guard live in their own
+        # manager; the loop only asks it to resolve/grant/cover.
+        self._escalation = EscalationManager(escalation_callback=escalation_callback)
         # Default to a real engine when none is supplied: the per-value/carrier/
         # taint/floor cascade is guarded on `self._taint_engine is not None`, so a
         # None engine would silently disable the entire data-flow core (fail-open).
@@ -180,11 +169,6 @@ class IntentLoop:
         self._normalizer = IntentNormalizer()
         self._intent_sequence = 0
         self._token_totals = _TokenAccumulator()
-        self._granted_escalations: dict[str, _GrantedEscalation] = {}
-        self._capability_leases: dict[str, "CapabilityLease"] = {}
-        self._lease_validator = LeaseValidator()
-        self._escalation_count = 0
-        self._flood_guard = EscalationFloodGuard()
         # DoS guards — opt-in (None = unlimited). GovernedSession sets prod defaults.
         self._max_intents_per_session = max_intents_per_session
         self._max_total_spawns = max_total_spawns
@@ -859,42 +843,10 @@ class IntentLoop:
                     ),
                 )
 
-        # Check CapabilityLease first (authoritative — validates TTL + max_uses)
-        lease = self._capability_leases.get(tool_name)
-        if lease is not None:
-            if not self._lease_validator.is_valid(lease):
-                del self._capability_leases[tool_name]
-                if tool_name in self._granted_escalations:
-                    del self._granted_escalations[tool_name]
-                return PolicyDecision(
-                    kind=PolicyDecisionKind.DENY,
-                    reason=f"capability lease for '{tool_name}' has expired or been exhausted",
-                )
-            tool_path = extract_path_arg(tool_args)
-            if not self._lease_validator.check_path_allowed(lease, tool_path):
-                return PolicyDecision(
-                    kind=PolicyDecisionKind.DENY,
-                    reason=f"lease for '{tool_name}' restricts to paths {lease.allowed_paths!r}",
-                )
-            lease.increment_use()
-
-        grant = self._granted_escalations.get(tool_name)
-        if grant is not None:
-            if grant.paths and not lease:
-                tool_path = extract_path_arg(tool_args)
-                if not path_matches_allowlist(tool_path, grant.paths):
-                    return PolicyDecision(
-                        kind=PolicyDecisionKind.DENY,
-                        reason=f"escalation grant for '{tool_name}' restricts to paths {grant.paths!r}",
-                    )
-            grant.ops_remaining -= 1
-            remaining = grant.ops_remaining
-            if remaining <= 0:
-                del self._granted_escalations[tool_name]
-            return PolicyDecision(
-                kind=PolicyDecisionKind.APPROVE,
-                reason=f"approved via escalation grant ({remaining} ops remaining)",
-            )
+        # Lease/grant resolution (authoritative — validates TTL + max_uses + path).
+        escalation_decision = self._escalation.resolve(tool_name, tool_args)
+        if escalation_decision is not None:
+            return escalation_decision
 
         if tool_name in caps.allowed_tools:
             return PolicyDecision(
@@ -918,111 +870,9 @@ class IntentLoop:
         event: ExecutorEvent,
         envelope: ExecutionEnvelope,
     ) -> dict:
-        args = event.payload.get("args", {})
-        tool = args.get("tool", "")
-        reason = args.get("reason", "")
-        paths = args.get("paths", [])
-        max_ops = min(
-            _safe_int(args.get("max_ops", 10), default=10),
-            envelope.policy.escalation_policy.max_ops_per_grant,
+        return await self._escalation.grant_from_intent(
+            event, envelope, self._trace_events
         )
-        ep = envelope.policy.escalation_policy
-        node_id = envelope.node_id
-        tool_use_id = event.payload.get("tool_use_id", "")
-
-        def _deny(deny_reason: str) -> dict:
-            self._trace_events.append(
-                EscalationDeniedEvent(
-                    kind=TraceEventKind.ESCALATION_DENIED,
-                    node_id=node_id,
-                    sequence=len(self._trace_events),
-                    tool=tool,
-                    reason=deny_reason,
-                )
-            )
-            return {"error": "escalation_denied", "reason": deny_reason}
-
-        if not ep.allow_escalation:
-            return _deny("escalation not allowed by policy")
-
-        if tool not in ep.grantable_tools:
-            return _deny(f"tool '{tool}' is not in grantable_tools")
-
-        if max_ops <= 0:
-            return _deny("escalation max_ops must be a positive integer")
-
-        if self._escalation_count >= ep.max_escalations:
-            return _deny(f"max escalations reached ({ep.max_escalations})")
-
-        flood_denial = self._flood_guard.check(
-            tool=tool,
-            paths=paths,
-            reason=reason,
-            session_id=envelope.node_id,
-            node_id=envelope.node_id,
-        )
-        if flood_denial is not None:
-            return _deny(flood_denial)
-
-        auto_approved = True
-        if ep.require_human:
-            if self._escalation_callback is None:
-                return _deny(
-                    "escalation requires human approval but no callback is configured"
-                )
-            approved = await self._escalation_callback(
-                tool_use_id, tool, paths, max_ops
-            )
-            auto_approved = False
-            if not approved:
-                return _deny("human denied escalation request")
-
-        # Create the CapabilityLease first — if it fails the grant is not stored,
-        # preventing a grant-without-TTL bypass.
-        lease, lease_err = self._lease_validator.create_lease(
-            granted_by="operator" if ep.require_human else "auto_policy",
-            authority_type=(
-                LeaseAuthorityType.HUMAN_OPERATOR
-                if ep.require_human
-                else LeaseAuthorityType.AUTOMATED_POLICY
-            ),
-            allowed_tools=[tool],
-            parent_policy=envelope.policy,
-            allowed_paths=paths,
-            ttl_seconds=300.0,
-            max_uses=max_ops,
-            reason_code=reason,
-        )
-        if lease_err is not None:
-            return _deny(f"escalation rejected: lease creation failed ({lease_err})")
-
-        self._capability_leases[tool] = lease
-        self._granted_escalations[tool] = _GrantedEscalation(
-            tool=tool,
-            paths=paths,
-            ops_remaining=max_ops,
-        )
-        self._escalation_count += 1
-        self._flood_guard.record_approval()
-
-        self._trace_events.append(
-            EscalationGrantedEvent(
-                kind=TraceEventKind.ESCALATION_GRANTED,
-                node_id=node_id,
-                sequence=len(self._trace_events),
-                tool=tool,
-                paths=paths,
-                max_ops=max_ops,
-                reason=reason,
-                auto_approved=auto_approved,
-            )
-        )
-        return {
-            "granted": True,
-            "tool": tool,
-            "max_ops": max_ops,
-            "paths": paths,
-        }
 
     def resolve_spawn_intent(
         self,
@@ -1190,9 +1040,7 @@ class IntentLoop:
         )
         # over-ceiling is admissible only through a governance gate (an active
         # escalation grant or capability lease for the tool).
-        has_gate = (
-            tool_name in self._granted_escalations or tool_name in self._capability_leases
-        )
+        has_gate = self._escalation.covers(tool_name)
         gd = consequence_gate(
             tool_name, operation, ceiling, self._consequence_overrides,
             has_governance_gate=has_gate,
@@ -1306,14 +1154,6 @@ def _denial_result(tool_name: str, reason: str) -> dict:
     Full reason is in the trace (operator-only access).
     """
     return _make_denial_response(reason).to_tool_result()
-
-
-def _safe_int(value: Any, default: int) -> int:
-    """Parse an int from untrusted args without raising on bad input."""
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return default
 
 
 def _make_denial_response(reason: str, category: str | None = None) -> DenialResponse:
