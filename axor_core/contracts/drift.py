@@ -13,13 +13,14 @@ class BehavioralDriftObserver(Protocol):
     Core never imports axor-probe — dependency direction is strictly one-way (P-34).
 
     Wiring:
-        observer = TaintEngineDriftObserver(session._taint_engine)
+        observer = BehavioralDriftWatcher()
         # pass observer to ProbePipeline integrations via CoreDriftSink callback
         await notify_core(drift_signal, observer)
 
-    action values mirror DriftAction.value:
-        "elevated_review"  — repeated pattern; propagates NODE-scoped taint
-        "restricted_mode"  — strong longitudinal signal; propagates SESSION-scoped taint
+    action values mirror DriftAction.value and are telemetry severity labels only —
+    the observer records them and MUST NOT affect any live allow/deny decision:
+        "elevated_review"  — repeated pattern
+        "restricted_mode"  — strong longitudinal signal
     """
 
     async def on_drift(self, session_id: str, agent_id: str, action: str) -> None:

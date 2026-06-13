@@ -156,8 +156,8 @@ class GovernedSession:
             _overlay_escalation = prof.escalation_policy
             self._positional_sinks = self._positional_sinks | prof.positional_sinks
             if behavioral_drift_observer is None and prof.attach_watcher:
-                from axor_core.node.drift_observer import TaintEngineDriftObserver
-                behavioral_drift_observer = TaintEngineDriftObserver()
+                from axor_core.node.drift_observer import BehavioralDriftWatcher
+                behavioral_drift_observer = BehavioralDriftWatcher()
         self._overlay_allowed_paths = (workspace,) if workspace else None
 
         self._session_id     = f"session_{uuid.uuid4().hex[:12]}"
@@ -537,8 +537,9 @@ class GovernedSession:
         Notify the session that axor-probe detected behavioral drift.
 
         Called by the caller who wires ProbePipeline to GovernedSession.
-        Propagates taint via TaintEngineDriftObserver if one is configured.
-        Failures are logged and swallowed — governance path is not interrupted.
+        Forwards the signal to a telemetry-only watcher if one is attached; it
+        never mutates governance state. Failures are logged and swallowed —
+        the governance path is not interrupted.
 
         action: "elevated_review" | "restricted_mode"
         """
