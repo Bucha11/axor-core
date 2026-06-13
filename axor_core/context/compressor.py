@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from axor_core.tokens import estimate_tokens
+
 import re
 from dataclasses import dataclass
 
@@ -299,7 +301,7 @@ class ContextCompressor:
             result.append(ContextFragment(
                 kind="fact",
                 content=summary,
-                token_estimate=len(summary) // 4,
+                token_estimate=estimate_tokens(summary),
                 source="compressor:error_collapse",
                 relevance=0.6,
             ))
@@ -342,7 +344,7 @@ class ContextCompressor:
             result.insert(0, ContextFragment(
                 kind="fact",
                 content=summary,
-                token_estimate=len(summary) // 4,
+                token_estimate=estimate_tokens(summary),
                 source="compressor:prose_summary",
                 relevance=0.7,
             ))

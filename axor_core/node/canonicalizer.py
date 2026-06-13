@@ -100,7 +100,7 @@ class IntentCanonicalizer:
     """
     Converts NormalizedIntent → CanonicalizedIntent.
 
-    Strips all raw strings so that Layer 3 (LLMVerifier) receives only
+    Strips all raw strings so that any downstream verifier receives only
     canonical feature representations. Prevents prompt injection via
     tool outputs, filenames, or web content reaching the verifier prompt.
     """

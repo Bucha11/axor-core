@@ -15,17 +15,26 @@ external content.  Policy enforcement must remain valid even under compromise.
 | Operator configuration | Trusted | Source of all policy authority |
 | `axor-core` governance process | Trusted | Policy evaluation, taint engine |
 | `PolicyComposer` / `PolicySelector` | Trusted | Compile and select execution policy |
-| `ToolInterceptor` / `IntentLoop` | Trusted | Intercepts all tool calls |
+| `ToolInterceptor` / `IntentLoop` | Trusted | Intercepts all tool calls (streaming path) |
+| `ToolCallGovernor` | Trusted | Synchronous per-call gate engine (same gates) |
+| `policy/gates.py` | Trusted | The shared gate decision logic both paths call |
 | `ProviderNormalizer` | Trusted | Converts raw provider events |
 | `TaintEngine` | Trusted | Tracks taint; workers cannot clear |
 | `DegradationEngine` | Trusted | Monotonically degrades session level; workers cannot clear |
 | `LeaseValidator` | Trusted | Validates CapabilityLease claims |
 | `TraceCollector` | Trusted | Out-of-band audit trail |
-| `IntentCanonicalizer` | Trusted | Strips raw content before Layer 3 |
+| `IntentCanonicalizer` | Trusted | Strips raw content before any advisory/detection layer |
 | `LockedExecutor` | Trusted | Blocks direct executor bypass |
-| Layer 2 ML scorer | Conditionally trusted | Advisory; cannot expand capability |
-| Layer 3 LLM verifier | Conditionally trusted | Advisory; cannot override Layer 1 |
+| Detection layer (reputation / behavioral drift) | Conditionally trusted | Observe-only; cannot expand capability or allow |
+| Advisory adjudicator | Conditionally trusted | Tightening-only; cannot override a structural gate |
 | Provider adapters post-normalization | Conditionally trusted | After NormalizedIntent is produced |
+
+The minimal **trusted computing base** is the kernel ring (the gate logic in
+`policy/gates.py`, `TaintEngine`, `DegradationEngine`, the policy decision tables,
+the normalizer, the adjudicator interface) — the subset whose correctness is
+load-bearing for an allow/deny. CI enforces that this kernel cannot import the
+runtime or the platform, so a budget/context/trace bug is outside the TCB by
+construction.
 
 ---
 
@@ -96,7 +105,7 @@ raises `DegradationClearanceError`.  At `TERMINAL` level,
 Child nodes share the parent's `DegradationEngine` instance — a child cannot
 start below the parent's current `DegradationLevel`.
 
-### Canonicalization Boundary (Layer 3)
+### Canonicalization Boundary (advisory/detection layers)
 
 `IntentCanonicalizer` strips all raw content from `NormalizedIntent` before
 producing `CanonicalizedIntent` for the LLM verifier.  File paths, tool
@@ -137,7 +146,7 @@ of 30 invariants and their executable tests.
 
 Key invariants:
 
-1. Layer 1 hard deny cannot be overridden by ML or LLM layers.
+1. A structural gate deny cannot be overridden by a detection or advisory layer.
 2. Worker cannot read `DecisionTrace` without operator token.
 3. External taint persists until governance clears it.
 4. Worker cannot initiate taint clearance.
@@ -165,7 +174,7 @@ Axor does **not** guarantee:
 ## Known Limitations
 
 - LIBRARY mode does not provide strong process isolation — only PRODUCTION/STRICT mode does.
-- Layer 2 and Layer 3 are advisory; they cannot expand capabilities but they also
+- Detection is observe-only and the adjudicator is tightening-only; they cannot expand capabilities but they also
   cannot guarantee detection of all adversarial patterns.
 - Taint clearance by governance is auditable but depends on operator judgment.
 - Cross-provider parity is tested against three normalizers; unlisted providers

@@ -160,19 +160,23 @@ class SymbolTable:
     def symbol(self, name: str) -> Symbol | None:
         return self._symbols.get(name)
 
+    @staticmethod
+    def _mentions(name: str, text: str) -> bool:
+        """Whole-word match: a deprecated `foo` must not fire on `foobar`/`food`.
+        Substring matching produced false relevance penalties."""
+        return re.search(rf"\b{re.escape(name)}\b", text) is not None
+
     def text_contains_deprecated(self, text: str) -> bool:
-        """Check if text references any deprecated symbol names."""
-        deprecated = self.deprecated_names()
-        return any(name in text for name in deprecated)
+        """Check if text references any deprecated symbol names (whole-word)."""
+        return any(self._mentions(name, text) for name in self.deprecated_names())
 
     def relevance_penalty(self, text: str) -> float:
         """
         Penalty to apply to a context fragment's relevance score
-        if it contains deprecated symbol names.
+        if it contains deprecated symbol names (whole-word match).
         Higher = more penalised.
         """
-        deprecated = self.deprecated_names()
-        hits = sum(1 for name in deprecated if name in text)
+        hits = sum(1 for name in self.deprecated_names() if self._mentions(name, text))
         return min(1.0, hits * 0.3)
 
     def pending_summary(self) -> str:

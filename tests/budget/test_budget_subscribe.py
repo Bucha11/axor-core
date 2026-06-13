@@ -1,7 +1,6 @@
 """Tests for BudgetTracker.subscribe() / tier_summary() (0.5.0)."""
 from __future__ import annotations
 
-import pytest
 
 from axor_core.budget.tracker import BudgetTracker
 

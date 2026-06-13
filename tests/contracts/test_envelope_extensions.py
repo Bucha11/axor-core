@@ -1,7 +1,6 @@
 """Tests for ExecutionEnvelope 0.5.0+ fields."""
 from __future__ import annotations
 
-import pytest
 
 from axor_core.contracts.envelope import CacheHints
 

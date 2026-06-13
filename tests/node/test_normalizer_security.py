@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from axor_core.contracts.intent import Intent, IntentKind
-from axor_core.node.normalizer import IntentNormalizer
+from axor_core.policy.normalizer import IntentNormalizer
 
 
 def _tool_intent(tool: str, args: dict) -> Intent:

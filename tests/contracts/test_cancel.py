@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import pytest
-from axor_core.contracts.cancel import CancelToken, CancelReason, make_token
+from axor_core.contracts.cancel import CancelReason, make_token
 
 
 class TestCancelToken:

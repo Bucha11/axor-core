@@ -1,12 +1,12 @@
 """
 Adversarial tests for DegradationEngine.
 
-Categories (from spec):
-  A) Degradation monotonicity — 3 variants
-  B) Source isolation — 4 variants
-  C) Cross-origin export → LOCKED — 2 variants
-  D) LOCKED_TTL auto-terminal — 2 variants
-  E) Child floor inheritance — 3 variants
+Grouped by the behavior under test:
+  A) The degradation level only ever rises, never falls on its own.
+  B) Quarantining one source does not affect unrelated sources.
+  C) An attempted cross-origin export jumps straight to the LOCKED level.
+  D) A session that stays LOCKED eventually becomes terminal.
+  E) A child node cannot start below its parent's degradation level.
 """
 from __future__ import annotations
 
@@ -66,19 +66,18 @@ def _authority():
     )
 
 
-# ── A) Degradation monotonicity ───────────────────────────────────────────────
+# ── A) The level only ever rises ──────────────────────────────────────────────
 
 def test_degrad_mono_a1_level_only_increases():
     """Level is non-decreasing across 20 mixed deny/approve signals."""
     from axor_core.contracts.degradation import DegradationLevel
     engine = _engine()
-    ts = _taint()
     ni = _ni()
     denial = _deny()
     prev = DegradationLevel.NORMAL
     for i in range(20):
         d = denial if i % 2 == 0 else None
-        engine.record_signal(ni, d, ts)
+        engine.record_signal(ni, d)
         assert engine.state.level >= prev, (
             f"level dropped from {prev.name} to {engine.state.level.name} at step {i}"
         )
@@ -99,18 +98,17 @@ def test_degrad_mono_a2_governance_can_decrease_level():
 def test_degrad_mono_a3_approved_signals_cannot_lower_level():
     """Flooding approved signals after quarantine cannot reduce the level."""
     engine = _engine()
-    ts = _taint()
     ni = _ni()
     engine.quarantine_source("evil", "test")
     locked_at = engine.state.level
 
     for _ in range(50):
-        engine.record_signal(ni, None, ts)  # all approved
+        engine.record_signal(ni, None)  # all approved
 
     assert engine.state.level >= locked_at
 
 
-# ── B) Source isolation ───────────────────────────────────────────────────────
+# ── B) Quarantining one source leaves others untouched ────────────────────────
 
 def test_degrad_iso_b1_clean_source_unaffected_while_malicious_quarantined():
     """
@@ -152,7 +150,6 @@ def test_degrad_iso_b2_quarantine_does_not_leak_to_other_source_records():
 def test_degrad_iso_b3_multiple_sources_tracked_independently():
     """Two sources can accumulate pressure independently."""
     engine = _engine()
-    ts = _taint()
     denial = _deny()
 
     # Source A: provenance external_web
@@ -160,8 +157,8 @@ def test_degrad_iso_b3_multiple_sources_tracked_independently():
     # Source B: provenance official_docs
     ni_b = _ni(tool="bash", provenance="official_docs")
 
-    engine.record_signal(ni_a, denial, ts)
-    engine.record_signal(ni_b, denial, ts)
+    engine.record_signal(ni_a, denial)
+    engine.record_signal(ni_b, denial)
 
     # Both should be tracked separately
     assert len(engine.state.sources) >= 1  # at least one source record exists
@@ -170,12 +167,11 @@ def test_degrad_iso_b3_multiple_sources_tracked_independently():
 def test_degrad_iso_b4_source_pressure_counts_correct():
     """tool_pressure_count increments only for the triggering source."""
     engine = _engine()
-    ts = _taint()
     denial = _deny()
     ni = _ni(tool="bash", provenance="external_web")
 
-    engine.record_signal(ni, denial, ts)
-    engine.record_signal(ni, denial, ts)
+    engine.record_signal(ni, denial)
+    engine.record_signal(ni, denial)
 
     # Source should have accumulated pressure
     sources = engine.state.sources
@@ -184,17 +180,16 @@ def test_degrad_iso_b4_source_pressure_counts_correct():
     assert src.tool_pressure_count >= 1
 
 
-# ── C) Cross-origin export → LOCKED ──────────────────────────────────────────
+# ── C) Cross-origin export jumps straight to LOCKED ───────────────────────────
 
 def test_degrad_cross_c1_file_write_to_external_locks_immediately():
     """file_write to external_domain immediately escalates to LOCKED."""
     from axor_core.contracts.degradation import DegradationLevel
     engine = _engine()
-    ts = _taint()
     ni = _ni(tool="write", operation="file_write", destination_kind="external_domain")
     denial = _deny()
 
-    transition = engine.record_signal(ni, denial, ts)
+    transition = engine.record_signal(ni, denial)
     assert engine.state.level == DegradationLevel.LOCKED
     assert transition is not None
     assert transition.reason == "cross_origin_export_denied"
@@ -204,64 +199,68 @@ def test_degrad_cross_c2_network_request_to_private_network_locks():
     """network_request to private_network deny escalates to LOCKED."""
     from axor_core.contracts.degradation import DegradationLevel
     engine = _engine()
-    ts = _taint()
     ni = _ni(tool="curl", operation="network_request", destination_kind="private_network")
     denial = _deny()
 
-    engine.record_signal(ni, denial, ts)
+    engine.record_signal(ni, denial)
     assert engine.state.level == DegradationLevel.LOCKED
 
 
-# ── D) LOCKED_TTL auto-terminal ───────────────────────────────────────────────
+# ── D) A session left LOCKED becomes terminal ─────────────────────────────────
 
 def test_degrad_ttl_d1_auto_terminal_after_ttl_expires():
     """After LOCKED_TTL seconds in LOCKED state, next signal triggers TERMINAL."""
     from axor_core.contracts.degradation import DegradationLevel
     # Use a very short TTL
     engine = _engine(ttl=0.01)
-    ts = _taint()
     ni = _ni(tool="curl", operation="network_request", destination_kind="private_network")
     denial = _deny()
 
     # Escalate to LOCKED
-    engine.record_signal(ni, denial, ts)
+    engine.record_signal(ni, denial)
     assert engine.state.level == DegradationLevel.LOCKED
 
     # Wait for TTL to expire
     time.sleep(0.05)
 
     # Next signal should trigger TERMINAL
-    transition = engine.record_signal(_ni(), _deny(), ts)
+    transition = engine.record_signal(_ni(), _deny())
     assert engine.state.level == DegradationLevel.TERMINAL
     assert transition is not None
     assert transition.new_level == DegradationLevel.TERMINAL
 
 
-def test_degrad_ttl_d2_no_auto_terminal_before_ttl():
-    """LOCKED state before TTL expiry does not auto-terminal."""
+def test_degrad_ttl_d2_locked_stable_under_benign_but_terminal_on_dangerous_fact():
+    """While LOCKED, a benign signal keeps the level LOCKED, but a further
+    dangerous operation rooted in untrusted input escalates to TERMINAL —
+    independent of any timer. (The TTL is only an orchestrator hook.)
+    """
     from axor_core.contracts.degradation import DegradationLevel
-    # Long TTL — should not expire during test
-    engine = _engine(ttl=3600.0)
-    ts = _taint()
-    ni = _ni(tool="curl", operation="network_request", destination_kind="private_network")
-    denial = _deny()
-
-    engine.record_signal(ni, denial, ts)
+    engine = _engine(ttl=3600.0)  # TTL won't fire during the test
+    # Escalate to LOCKED via a cross-origin export of an untrusted-root value.
+    engine.record_signal(
+        _ni(tool="curl", operation="network_request", destination_kind="private_network"),
+        _deny(),
+    )
     assert engine.state.level == DegradationLevel.LOCKED
 
-    # Immediately send more signals — should stay LOCKED, not go TERMINAL
-    for _ in range(5):
-        engine.record_signal(_ni(), _deny(), ts)
-
+    # A benign, clean, non-dangerous denial does NOT escalate — stays LOCKED.
+    benign = _ni(tool="read", operation="file_read", provenance="repo")
+    engine.record_signal(benign, _deny())
     assert engine.state.level == DegradationLevel.LOCKED
 
+    # A further dangerous operation rooted in untrusted input → TERMINAL.
+    transition = engine.record_signal(_ni(tool="bash"), _deny())
+    assert engine.state.level == DegradationLevel.TERMINAL
+    assert transition is not None and transition.new_level == DegradationLevel.TERMINAL
 
-# ── E) Child floor inheritance ────────────────────────────────────────────────
+
+# ── E) A child cannot start below its parent's level ──────────────────────────
 
 def test_degrad_child_e1_child_node_receives_same_engine_instance():
     """
-    GovernedNode passes the same DegradationEngine instance to child nodes.
-    This ensures child starts at exactly the parent's current level (D-6 floor).
+    GovernedNode passes the same DegradationEngine instance to child nodes,
+    so a child starts at exactly the parent's current level.
     """
     from axor_core.node.wrapper import GovernedNode
     parent_engine = _engine()

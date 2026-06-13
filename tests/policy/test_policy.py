@@ -5,8 +5,8 @@ import pytest
 from axor_core.policy import TaskAnalyzer, PolicySelector, PolicyComposer, presets
 from axor_core.policy.heuristic import HeuristicClassifier
 from axor_core.contracts.policy import (
-    TaskComplexity, TaskNature, ChildMode, ContextMode,
-    ExportMode, ExecutionPolicy, ToolPolicy,
+    TaskComplexity, TaskNature, ChildMode, ExportMode,
+    ExecutionPolicy, ToolPolicy,
 )
 from axor_core.contracts.extension import ExtensionFragment
 

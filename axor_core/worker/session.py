@@ -11,7 +11,6 @@ if TYPE_CHECKING:
 from axor_core.contracts.cancel import make_token, CancelReason
 from axor_core.contracts.context import RawExecutionState, LineageSummary
 from axor_core.contracts.extension import ExtensionLoader
-from axor_core.contracts.anomaly import AnomalyDetector
 from axor_core.contracts.drift import BehavioralDriftObserver
 from axor_core.contracts.invokable import Invokable
 from axor_core.contracts.mode import ExecutionMode
@@ -39,6 +38,7 @@ from axor_core.extensions.registry import ExtensionRegistry
 from axor_core.extensions.sanitizer import ExtensionSanitizer
 from axor_core.worker.commands import SlashCommandRouter
 from axor_core.taint.engine import TaintEngine
+from axor_core.tokens import estimate_tokens
 
 _log = logging.getLogger("axor.session")
 
@@ -87,7 +87,6 @@ class GovernedSession:
         executor: Invokable,
         capability_executor: CapabilityExecutor,
         classifier: SignalClassifier | None = None,
-        anomaly_detector: AnomalyDetector | None = None,
         behavioral_drift_observer: BehavioralDriftObserver | None = None,
         extension_loaders: list[ExtensionLoader] | None = None,
         trace_config: TraceConfig | None = None,
@@ -100,10 +99,97 @@ class GovernedSession:
         telemetry: "Any | None" = None,
         mode: ExecutionMode = ExecutionMode.LIBRARY,
         require_isolation: bool = False,
+        profile: "str | Any | None" = None,
+        workspace: str | None = None,
+        danger: "dict | None" = None,
+        positional_sinks: "set[str] | frozenset[str] | None" = None,
+        egress_sinks: "set[str] | frozenset[str] | None" = None,
+        untrusted_sources: "set[str] | frozenset[str] | None" = None,
+        sensitive_sources: "set[str] | frozenset[str] | None" = None,
+        imperative_sinks: "set[str] | frozenset[str] | None" = None,
+        benign_tools: "set[str] | frozenset[str] | None" = None,
+        driving_args: "dict[str, list[str]] | None" = None,
+        trajectory_observers: "list | None" = None,
+        value_policies: "dict | None" = None,
+        detection_floor: float | None = None,
+        adjudicator=None,
+        federation_gateway=None,
     ) -> None:
+        # Profile = a named bundle of existing knobs (no new mechanism); it
+        # pre-fills mode / isolation / escalation / consequence-ceiling / watcher.
+        self._consequence_overrides = dict(danger or {})
+        self._positional_sinks = frozenset(positional_sinks or ())
+        # Operator tool taxonomy — which tools exfiltrate / produce untrusted or
+        # secret data. Lets the kernel govern a deployment's renamed tools that the
+        # normalizer's generic heuristics do not recognise.
+        self._egress_sinks = frozenset(egress_sinks or ())
+        self._untrusted_sources = frozenset(untrusted_sources or ())
+        self._sensitive_sources = frozenset(sensitive_sources or ())
+        self._imperative_sinks = frozenset(imperative_sinks or ())
+        self._driving_args = dict(driving_args or {})
+        self._trajectory_observers = list(trajectory_observers or [])
+        self._value_policies = dict(value_policies or {})
+        self._detection_floor = detection_floor  # opt-in; None = detection observe-only
+        self._adjudicator = adjudicator          # opt-in advisory layer; None = off
+        self._federation_gateway = federation_gateway  # opt-in A2A trust; None = off
+        _overlay_ceiling = None
+        _overlay_escalation = None
+        if profile is not None:
+            from axor_core.profiles import resolve_profile
+            prof = resolve_profile(profile)
+            mode = prof.mode
+            require_isolation = require_isolation or prof.require_isolation
+            _overlay_ceiling = prof.consequence_ceiling
+            _overlay_escalation = prof.escalation_policy
+            self._positional_sinks = self._positional_sinks | prof.positional_sinks
+            if behavioral_drift_observer is None and prof.attach_watcher:
+                from axor_core.node.drift_observer import TaintEngineDriftObserver
+                behavioral_drift_observer = TaintEngineDriftObserver()
+        self._overlay_allowed_paths = (workspace,) if workspace else None
+
         self._session_id     = f"session_{uuid.uuid4().hex[:12]}"
         self._mode           = mode
+        # STRICT requires every egress sink to carry a destination allowlist (the
+        # sound, paraphrase-proof control) — fail closed at session construction,
+        # not deferred to the first run.
+        self._require_egress_allowlist = (mode == ExecutionMode.STRICT)
+        # STRICT also enforces role completeness. The session validates it at
+        # construction below (it knows the registered-tool universe); the flag also
+        # rides into the loop so the lazy per-call check is consistent across paths.
+        self._require_tool_roles = (mode == ExecutionMode.STRICT)
+        self._benign_tools = frozenset(benign_tools or ())
+        if self._require_egress_allowlist:
+            from axor_core.kernel.registration import (
+                validate_egress_allowlists,
+                validate_driving_arg_allowlists,
+                validate_role_completeness,
+            )
+            _eg_errors = validate_egress_allowlists(self._egress_sinks, self._value_policies)
+            _eg_errors += validate_driving_arg_allowlists(
+                self._egress_sinks, self._driving_args, self._value_policies
+            )
+            if _eg_errors:
+                raise ValueError("strict egress allowlist: " + "; ".join(_eg_errors))
+            # STRICT role completeness: every registered tool needs an explicit
+            # data-flow role — no silent clean-read default. Validated against the
+            # registered handler universe (empty for the daemon path, which carries
+            # its own taxonomy server-side).
+            _tools = capability_executor.registered_tools()
+            if _tools:
+                _role_errors = validate_role_completeness(
+                    _tools,
+                    untrusted_sources=self._untrusted_sources,
+                    sensitive_sources=self._sensitive_sources,
+                    egress_sinks=self._egress_sinks,
+                    positional_sinks=self._positional_sinks,
+                    benign_tools=self._benign_tools,
+                    value_policies=self._value_policies,
+                )
+                if _role_errors:
+                    raise ValueError("strict role completeness: " + "; ".join(_role_errors))
         self._behavioral_drift_observer = behavioral_drift_observer
+        self._overlay_ceiling = _overlay_ceiling
+        self._overlay_escalation = _overlay_escalation
 
         # STRICT mode is a superset of PRODUCTION.
         # Apply all STRICT-only restrictions here before anything else is wired.
@@ -121,7 +207,7 @@ class GovernedSession:
         self._deny_on_ambiguity: bool = (mode == ExecutionMode.STRICT)
         self._strict_escalation: bool = (mode == ExecutionMode.STRICT)
 
-        # Process-isolation gate (Phase 1). In PRODUCTION/STRICT an untrusted
+        # Process-isolation gate. In PRODUCTION/STRICT an untrusted
         # agent should execute tools out-of-process (DaemonCapabilityClient);
         # an in-process CapabilityExecutor is not a hard boundary against a
         # compromised agent process. LockedExecutor only blocks the in-process
@@ -147,7 +233,6 @@ class GovernedSession:
 
         self._child_executor = child_executor
         self._cap_executor   = capability_executor
-        self._anomaly_detector = anomaly_detector
         self._agent_def      = agent_def
         self._memory_provider = memory_provider
         self._trace_config   = trace_config or TraceConfig()
@@ -168,7 +253,11 @@ class GovernedSession:
             agent_domain=agent_domain,
         )
         self._selector  = PolicySelector()
-        self._composer  = PolicyComposer()
+        self._composer  = PolicyComposer(
+            consequence_ceiling=self._overlay_ceiling,
+            escalation_policy=self._overlay_escalation,
+            allowed_paths=self._overlay_allowed_paths,
+        )
 
         # budget subsystem — shared across all nodes
         self._tracker       = BudgetTracker()
@@ -213,7 +302,10 @@ class GovernedSession:
         # degradation engine — persists across turns; level is monotonically increasing
         from axor_core.degradation.engine import DegradationEngine
         from axor_core.contracts.degradation import DegradationPolicy
-        self._degradation_engine = DegradationEngine(DegradationPolicy(), node_id=self._session_id)
+        self._degradation_engine = DegradationEngine(
+            DegradationPolicy(), node_id=self._session_id,
+            detection_floor=self._detection_floor,
+        )
 
     @staticmethod
     def _enforce_isolation_policy(
@@ -263,6 +355,30 @@ class GovernedSession:
             self._registry.register(sanitized)
         self._started = True
 
+    @classmethod
+    def from_config(
+        cls,
+        executor: Invokable,
+        capability_executor: CapabilityExecutor,
+        config: "Any",
+        **overrides,
+    ) -> "GovernedSession":
+        """Build a session from a :class:`~axor_core.config.GovernanceConfig`.
+
+        The config supplies the declarative governance taxonomy (mode, sources,
+        sinks, allowlists, consequence overrides). ``overrides`` are extra keyword
+        arguments — the executor-side wiring that does not belong in a YAML file
+        (``telemetry``, ``memory_provider``, ``trace_config``, ``child_executor``,
+        ...) — and take precedence over the config.
+        """
+        kwargs = config.as_session_kwargs()
+        kwargs.update(overrides)
+        return cls(
+            executor=executor,
+            capability_executor=capability_executor,
+            **kwargs,
+        )
+
     async def run(
         self,
         task: str,
@@ -271,8 +387,9 @@ class GovernedSession:
         parent_export: str | None = None,
         lineage: LineageSummary | None = None,
     ) -> ExecutionResult:
-        # D-2 invariant: TERMINAL session raises before any intent evaluation.
-        # Also check LOCKED_TTL so idle sessions that hit LOCKED eventually reach TERMINAL.
+        # A session at the TERMINAL degradation level raises before any intent
+        # evaluation. Check the time-to-live first so an idle session sitting at
+        # LOCKED eventually advances to TERMINAL.
         from axor_core.contracts.degradation import DegradationLevel
         from axor_core.errors.exceptions import SessionTerminatedError
         self._degradation_engine.check_ttl()
@@ -296,6 +413,17 @@ class GovernedSession:
             query = MemoryQuery(namespaces=namespaces, max_results=20)
             fragments = await self._memory_provider.load(query)
             memory_fragments = [f.content for f in fragments]
+            # Re-mint on read-back, per value: a value persisted to memory and
+            # re-read is re-marked as tainted — writing to memory does not launder
+            # it. We do not assume in-session memory is clean. Register each memory
+            # fragment in the per-value ledger so a sink later carrying a
+            # memory-derived value is gated at the value level.
+            if memory_fragments:
+                from axor_core.contracts.taint import TaintSource
+                from axor_core.taint.causal_root import CausalRoot
+                root = CausalRoot.external_read(TaintSource.MEMORY)
+                for frag in memory_fragments:
+                    self._taint_engine.register_value(frag, root)
 
         raw_state = RawExecutionState(
             task=task,
@@ -313,7 +441,7 @@ class GovernedSession:
                 self._context_manager.pin_fragment(ContextFragment(
                     kind="skill",
                     content=self._agent_def.personality,
-                    token_estimate=len(self._agent_def.personality) // 4,
+                    token_estimate=estimate_tokens(self._agent_def.personality),
                     source=f"agent:{self._agent_def.name}:personality",
                     relevance=1.0,
                     value="pinned",
@@ -365,7 +493,10 @@ class GovernedSession:
         )
         self._active_token = None
 
-        # record tokens in session-level tracker
+        # record tokens in session-level tracker. Register lineage first so
+        # depth-/subtree-aware accounting is correct rather than warn-and-default to
+        # depth=0/parent=None. The top-level node is depth 0, no parent. Idempotent.
+        self._tracker.register_node(result.node_id, None, 0)
         self._tracker.record(
             node_id=result.node_id,
             input_tokens=result.token_usage.input_tokens,
@@ -500,9 +631,22 @@ class GovernedSession:
             trace_collector=self._collector,
             trace_config=self._trace_config,
             child_executor=self._child_executor,
-            anomaly_detector=self._anomaly_detector,
             taint_engine=self._taint_engine,
             degradation_engine=self._degradation_engine,
+            consequence_overrides=self._consequence_overrides,
+            positional_sinks=self._positional_sinks,
+            egress_sinks=self._egress_sinks,
+            untrusted_sources=self._untrusted_sources,
+            sensitive_sources=self._sensitive_sources,
+            imperative_sinks=self._imperative_sinks,
+            benign_tools=self._benign_tools,
+            driving_args=self._driving_args,
+            trajectory_observers=self._trajectory_observers,
+            require_egress_allowlist=self._require_egress_allowlist,
+            require_tool_roles=self._require_tool_roles,
+            value_policies=self._value_policies,
+            adjudicator=self._adjudicator,
+            federation_gateway=self._federation_gateway,
         )
 
     async def _handle_command(self, raw: str) -> ExecutionResult:

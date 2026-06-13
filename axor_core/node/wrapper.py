@@ -7,7 +7,6 @@ from axor_core import trace as trace_mod
 from axor_core.budget.policy_engine import BudgetPolicyEngine, OptimizationAction
 from axor_core.capability.executor import CapabilityExecutor
 from axor_core.context.manager import ContextManager
-from axor_core.contracts.anomaly import AnomalyDetector
 from axor_core.contracts.cancel import CancelToken, make_token
 from axor_core.contracts.context import (
     ContextView,
@@ -18,7 +17,26 @@ from axor_core.contracts.envelope import ExecutionEnvelope
 from axor_core.contracts.extension import ExtensionBundle
 from axor_core.contracts.intent import Intent, IntentKind
 from axor_core.contracts.invokable import Invokable
-from axor_core.contracts.policy import ExecutionPolicy
+from axor_core.contracts.policy import ExecutionPolicy, ExportMode
+
+# Export restrictiveness ordering (least → most leakage-restrictive). Used to narrow
+# the export contract toward less leakage without ever widening it.
+_EXPORT_RANK = {
+    ExportMode.FULL: 0,
+    ExportMode.SUMMARY: 1,
+    ExportMode.FILTERED: 2,
+    ExportMode.RESTRICTED: 3,
+}
+
+
+def _more_restrictive_export(a: "ExportMode | None", b: "ExportMode | None") -> "ExportMode | None":
+    """Return whichever export mode leaks less (higher rank). None is treated as
+    'no constraint'."""
+    if a is None:
+        return b
+    if b is None:
+        return a
+    return a if _EXPORT_RANK[a] >= _EXPORT_RANK[b] else b
 from axor_core.contracts.result import (
     ExecutionResult,
     ExecutorEventKind,
@@ -27,6 +45,8 @@ from axor_core.contracts.result import (
 from axor_core.contracts.trace import TraceConfig, TraceEventKind
 from axor_core.capability.locked import governance_context
 from axor_core.taint.engine import TaintEngine
+from axor_core.taint.causal_root import CausalRoot
+from axor_core.tokens import estimate_tokens
 from axor_core.degradation.engine import DegradationEngine
 from axor_core.node.envelope import EnvelopeBuilder
 from axor_core.node.export import ExportFilter
@@ -82,12 +102,25 @@ class GovernedNode:
         trace_config: TraceConfig | None = None,
         current_depth: int = 0,
         child_executor: Invokable | None = None,
-        anomaly_detector: AnomalyDetector | None = None,
         escalation_callback=None,
         taint_engine: TaintEngine | None = None,
         degradation_engine: "DegradationEngine | None" = None,
         max_intents_per_session: int | None = 1000,
         max_total_spawns: int | None = 200,
+        consequence_overrides: "dict | None" = None,
+        value_policies: "dict | None" = None,
+        positional_sinks: "frozenset[str] | set[str] | None" = None,
+        egress_sinks: "frozenset[str] | set[str] | None" = None,
+        untrusted_sources: "frozenset[str] | set[str] | None" = None,
+        sensitive_sources: "frozenset[str] | set[str] | None" = None,
+        imperative_sinks: "frozenset[str] | set[str] | None" = None,
+        benign_tools: "frozenset[str] | set[str] | None" = None,
+        driving_args: "dict[str, list[str]] | None" = None,
+        require_egress_allowlist: bool = False,
+        require_tool_roles: bool = False,
+        trajectory_observers: "list | None" = None,
+        adjudicator=None,
+        federation_gateway=None,
     ) -> None:
         self._executor = executor
         self._child_executor = child_executor  # None → reuse parent executor
@@ -100,12 +133,25 @@ class GovernedNode:
         self._trace_collector = trace_collector  # None → events not persisted
         self._trace_config = trace_config or TraceConfig()
         self._depth = current_depth
-        self._anomaly_detector = anomaly_detector  # None → no anomaly scoring
         self._escalation_callback = escalation_callback  # None → auto-deny escalation
         self._taint_engine = taint_engine if taint_engine is not None else TaintEngine()
         self._degradation_engine = degradation_engine
         self._max_intents_per_session = max_intents_per_session
         self._max_total_spawns = max_total_spawns
+        self._consequence_overrides = consequence_overrides or {}
+        self._positional_sinks = frozenset(positional_sinks or ())
+        self._egress_sinks = frozenset(egress_sinks or ())
+        self._untrusted_sources = frozenset(untrusted_sources or ())
+        self._sensitive_sources = frozenset(sensitive_sources or ())
+        self._imperative_sinks = frozenset(imperative_sinks or ())
+        self._benign_tools = frozenset(benign_tools or ())
+        self._driving_args = dict(driving_args or {})
+        self._require_egress_allowlist = require_egress_allowlist
+        self._require_tool_roles = require_tool_roles
+        self._trajectory_observers = list(trajectory_observers or [])
+        self._adjudicator = adjudicator
+        self._federation_gateway = federation_gateway
+        self._value_policies = value_policies or {}
 
         self._envelope_builder = EnvelopeBuilder()
         self._export_filter = ExportFilter()
@@ -272,14 +318,27 @@ class GovernedNode:
             tool_result_callback=tool_result_callback,
             spawn_callback=_spawn_child_callback,
             escalation_callback=self._escalation_callback,
-            anomaly_detector=self._anomaly_detector,
             taint_engine=self._taint_engine,
             degradation_engine=self._degradation_engine,
             max_intents_per_session=self._max_intents_per_session,
             max_total_spawns=self._max_total_spawns,
+            consequence_overrides=self._consequence_overrides,
+            value_policies=self._value_policies,
+            positional_sinks=self._positional_sinks,
+            egress_sinks=self._egress_sinks,
+            untrusted_sources=self._untrusted_sources,
+            sensitive_sources=self._sensitive_sources,
+            imperative_sinks=self._imperative_sinks,
+            benign_tools=self._benign_tools,
+            driving_args=self._driving_args,
+            require_egress_allowlist=self._require_egress_allowlist,
+            require_tool_roles=self._require_tool_roles,
+            trajectory_observers=self._trajectory_observers,
+            adjudicator=self._adjudicator,
+            federation_gateway=self._federation_gateway,
         )
 
-        raw_output, raw_payload = await self._collect_stream(
+        raw_output, raw_payload, budget_export_mode = await self._collect_stream(
             intent_loop=intent_loop,
             envelope=envelope,
             extension_bundle=extension_bundle,
@@ -288,11 +347,26 @@ class GovernedNode:
         )
 
         # ── 7. Export filter ───────────────────────────────────────────────────
+        # Apply any budget-imposed export narrowing to the contract before the
+        # filter runs, so a crossed restrict_export threshold actually narrows what
+        # leaves the node.
+        export_envelope = envelope
+        if budget_export_mode is not None:
+            effective_mode = _more_restrictive_export(
+                envelope.export_contract.mode, budget_export_mode
+            )
+            if effective_mode != envelope.export_contract.mode:
+                narrowed_contract = dataclasses.replace(
+                    envelope.export_contract, mode=effective_mode
+                )
+                export_envelope = dataclasses.replace(
+                    envelope, export_contract=narrowed_contract
+                )
         token_usage = self._extract_token_usage(trace_events, context)
         result = self._export_filter.apply(
             raw_output=raw_output,
             raw_payload=raw_payload,
-            envelope=envelope,
+            envelope=export_envelope,
             token_usage=token_usage,
         )
 
@@ -315,9 +389,10 @@ class GovernedNode:
         extension_bundle: ExtensionBundle | None,
         parent_policy: ExecutionPolicy,
         cancel_token: CancelToken,
-    ) -> tuple[str, dict]:
+    ) -> tuple[str, dict, "ExportMode | None"]:
         output_parts: list[str] = []
         payload: dict = {}
+        budget_export_mode: "ExportMode | None" = None  # budget-imposed narrowing
 
         with governance_context():
             raw_stream = self._executor.stream(envelope)
@@ -329,7 +404,7 @@ class GovernedNode:
                         tool_result = event.payload.get("tool_result")
 
                         if tool_result and self._budget_engine:
-                            estimate = len(str(tool_result)) // 4
+                            estimate = estimate_tokens(tool_result)
                             result_decision = self._budget_engine.on_result_arrived(
                                 node_id=envelope.node_id,
                                 result_token_estimate=estimate,
@@ -342,6 +417,13 @@ class GovernedNode:
                                 log.warning(
                                     "budget: %s recommended after result (node=%s, reason=%s)",
                                     result_decision.action.value, envelope.node_id, result_decision.reason,
+                                )
+                            # Actually ENFORCE the export restriction — narrow
+                            # the export mode to the more restrictive of the contract
+                            # and the budget's suggestion (never widens).
+                            if result_decision.action == OptimizationAction.RESTRICT_EXPORT:
+                                budget_export_mode = _more_restrictive_export(
+                                    budget_export_mode, result_decision.suggested_export
                                 )
 
                         # record file reads into context manager
@@ -359,7 +441,7 @@ class GovernedNode:
                     case ExecutorEventKind.STOP:
                         payload = event.payload
 
-        return "".join(output_parts), payload
+        return "".join(output_parts), payload, budget_export_mode
 
     # ── Spawn child ────────────────────────────────────────────────────────────
 
@@ -416,9 +498,11 @@ class GovernedNode:
         # Build child taint engine before constructing the node so taint
         # inheritance is set atomically via the constructor, not via private field.
         child_taint = TaintEngine(node_id=child_lineage.node_id)
-        parent_taint = self._taint_engine.state
-        if parent_taint.is_tainted:
-            child_taint.inherit_from_parent(parent_taint)
+        # Spawn inheritance is PER-VALUE: the child inherits the parent's
+        # value-ledger, NOT the coarse session-taint flag (which would re-explode
+        # taint over the subtree). Subtree lock-down is via the SHARED degradation
+        # engine; lateral protection across the node tree is preserved per-value.
+        child_taint.inherit_value_ledger(self._taint_engine)
 
         child_node = GovernedNode(
             executor=self._child_executor or self._executor,
@@ -432,12 +516,25 @@ class GovernedNode:
             trace_config=self._trace_config,
             current_depth=self._depth + 1,
             child_executor=self._child_executor,
-            anomaly_detector=self._anomaly_detector,
             escalation_callback=self._escalation_callback,
             degradation_engine=self._degradation_engine,
             max_intents_per_session=self._max_intents_per_session,
             max_total_spawns=self._max_total_spawns,
             taint_engine=child_taint,
+            consequence_overrides=self._consequence_overrides,
+            value_policies=self._value_policies,
+            positional_sinks=self._positional_sinks,
+            egress_sinks=self._egress_sinks,
+            untrusted_sources=self._untrusted_sources,
+            sensitive_sources=self._sensitive_sources,
+            imperative_sinks=self._imperative_sinks,
+            benign_tools=self._benign_tools,
+            driving_args=self._driving_args,
+            require_egress_allowlist=self._require_egress_allowlist,
+            require_tool_roles=self._require_tool_roles,
+            trajectory_observers=self._trajectory_observers,
+            adjudicator=self._adjudicator,
+            federation_gateway=self._federation_gateway,
         )
 
         child_cancel = envelope.cancel_token.child_token()
@@ -447,6 +544,27 @@ class GovernedNode:
             parent_policy=parent_policy,
             cancel_token=child_cancel,
         )
+
+        # Provenance of the child's returned output, registered into the parent's
+        # per-value ledger so a parent sink later carrying it is gated.
+        if self._taint_engine is not None and child_result.output:
+            if self._federation_gateway is not None:
+                # Federation on: an in-process child is a same-process, same-kernel
+                # peer — trivially compatible — so restore its ACTUAL per-value
+                # provenance for the output (read from the child engine) instead of a
+                # blanket untrusted re-mint. A clean child output stays clean; an
+                # output carrying a secret / web value the child read is registered
+                # tainted (and a sensitive one re-arms the parent's egress floor).
+                child_root = child_taint.derive_value(child_result.output)
+                self._taint_engine.register_value(child_result.output, child_root)
+            else:
+                # Federation off (conservative default): the child output crosses a
+                # trust boundary we do not audit, so re-mint it untrusted. This
+                # over-taints a clean child output, but guarantees a child cannot
+                # launder a secret / web value it read by returning it.
+                self._taint_engine.register_value(
+                    child_result.output, CausalRoot.cross_process_in()
+                )
 
         # emit child_completed into parent trace
         from axor_core.contracts.trace import TraceEvent
@@ -468,10 +586,16 @@ class GovernedNode:
 
         # record child tokens in parent budget tracker so total_tokens_spent() is accurate
         if self._budget_engine:
+            child_lineage = child_raw_state.lineage
+            child_node_id = child_lineage.node_id if child_lineage else "child"
+            # Register the child's lineage (parent + depth) before recording, so
+            # depth_tokens()/subtree accounting see the real tree, not depth=0/parent=None.
+            if child_lineage:
+                self._budget_engine.register_node(
+                    child_node_id, child_lineage.parent_id, child_lineage.depth
+                )
             self._budget_engine.record_child_tokens(
-                node_id=child_raw_state.lineage.node_id
-                if child_raw_state.lineage
-                else "child",
+                node_id=child_node_id,
                 input_tokens=child_result.token_usage.input_tokens,
                 output_tokens=child_result.token_usage.output_tokens,
                 tool_tokens=child_result.token_usage.tool_tokens,
@@ -514,7 +638,7 @@ class GovernedNode:
             ContextFragment(
                 kind="fact",
                 content=raw_state.task,
-                token_estimate=len(raw_state.task) // 4,
+                token_estimate=estimate_tokens(raw_state.task),
                 source="raw_task",
             )
         ]
@@ -523,7 +647,7 @@ class GovernedNode:
                 ContextFragment(
                     kind="parent_export",
                     content=raw_state.parent_export,
-                    token_estimate=len(raw_state.parent_export) // 4,
+                    token_estimate=estimate_tokens(raw_state.parent_export),
                     source="parent_node",
                 )
             )

@@ -4,6 +4,8 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
 
+from axor_core.contracts.canonical import ConsequenceClass
+
 
 # ── Task Classification ────────────────────────────────────────────────────────
 
@@ -182,6 +184,12 @@ class ExecutionPolicy:
 
     # child context — how much of parent context flows to children
     child_context_fraction: float = 0.0   # 0.0 = no inheritance, 1.0 = full
+
+    # consequence ceiling — the most irreversible action class the operator
+    # permits *unattended* (without a governance/human gate). Default
+    # CONSEQUENTIAL: only CATASTROPHIC sinks (shutdown, restart, …) are gated by
+    # default. Lower it (e.g. REVERSIBLE) for a fail-closed deployment.
+    max_unattended_consequence: ConsequenceClass = ConsequenceClass.CONSEQUENTIAL
 
     # mid-execution capability escalation
     escalation_policy: EscalationPolicy = field(default_factory=EscalationPolicy)

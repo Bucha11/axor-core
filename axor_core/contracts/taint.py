@@ -4,6 +4,29 @@ from dataclasses import dataclass, field
 from enum import Enum
 
 
+class Carrier(str, Enum):
+    """Can the *form* of a value carry an instruction? Ordered from safest to
+    most dangerous: ENDORSED < CLOSED_SCHEMA < FREE_TEXT, with FREE_TEXT the
+    fail-closed top of the order.
+
+    Classification must be deterministic and structural, never decided by a
+    model. A model classifier would let the result be steered by the governed
+    content's own semantics, which is exactly what this guards against.
+    """
+    ENDORSED = "endorsed"          # structurally guaranteed instruction-free
+    CLOSED_SCHEMA = "closed_schema"  # parses fully into a closed, verified schema
+    FREE_TEXT = "free_text"        # may carry an instruction; treated as unsafe
+
+
+# Carrier order from safest to most dangerous (index = height; FREE_TEXT is the top).
+_CARRIER_ORDER = (Carrier.ENDORSED, Carrier.CLOSED_SCHEMA, Carrier.FREE_TEXT)
+
+
+def carrier_join(a: Carrier, b: Carrier) -> Carrier:
+    """Combine two carriers into the more imperative / less safe of the two."""
+    return _CARRIER_ORDER[max(_CARRIER_ORDER.index(a), _CARRIER_ORDER.index(b))]
+
+
 class TaintSource(str, Enum):
     """Origin of an external input that triggered a taint propagation."""
     WEB = "web"
@@ -24,9 +47,9 @@ class TaintScope(str, Enum):
     NODE         — affects the current node for its lifetime.
     SUBTREE      — affects the node and all children spawned from it.
     SESSION      — affects the entire session (default for high-security).
-    CROSS_SESSION — persists across sessions via Sentinel ReputationSnapshot;
-                   widest possible scope. Used by axor-eval to measure
-                   cross-session data-flow integrity (§7.1).
+    CROSS_SESSION — persists across sessions via the reputation snapshot;
+                   widest possible scope. Used to measure cross-session
+                   data-flow integrity.
     """
     INTENT = "intent"
     NODE = "node"
@@ -72,6 +95,11 @@ class TaintState:
     parent_inherited: bool = False
     clearance_history: tuple[ClearanceRecord, ...] = field(default_factory=tuple)
     clearance_authority: str = ""
+    # Confidentiality label, independent of integrity. Integrity is implicit in
+    # `sources` (any source means untrusted); `sensitive` is the separate
+    # confidentiality axis — True if a sensitive source (e.g. a secret read)
+    # contributed, i.e. it is harmful for this to leave. Drives the egress gate.
+    sensitive: bool = False
 
     @property
     def is_tainted(self) -> bool:

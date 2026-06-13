@@ -1,0 +1,36 @@
+# axor governance declaration for the AgentDojo *workspace* suite.
+mode: production
+
+# Email, calendar, files, and contacts are all external-party-writable content.
+untrusted_sources:
+  - get_received_emails
+  - get_unread_emails
+  - get_sent_emails
+  - get_draft_emails
+  - search_emails
+  - get_day_calendar_events
+  - search_calendar_events
+  - get_file_by_id
+  - search_files
+  - search_files_by_filename
+  - list_files
+  - search_contacts_by_name
+  - search_contacts_by_email
+
+# Sending mail and sharing files cross the trust boundary.
+egress_sinks:
+  - send_email
+  - share_file
+
+# The recipients decide the egress, not the body: forwarding untrusted content to
+# a prompt-given colleague is the job; sending anything to an address that came
+# OUT of an untrusted read is exfiltration and is denied.
+driving_args:
+  send_email: [recipients, cc, bcc]
+  share_file: [email]
+
+# Deleting an email/file after acting on it is the attacker covering tracks —
+# raised to catastrophic so the consequence axis forces a gate.
+consequence_overrides:
+  delete_email: catastrophic
+  delete_file: catastrophic

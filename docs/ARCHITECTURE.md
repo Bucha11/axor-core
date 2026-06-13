@@ -29,12 +29,15 @@ raw input
   → EnvelopeBuilder       → ExecutionEnvelope (the governed context object)
   → BudgetPolicyEngine    → pre-execution budget check
   → IntentLoop            → stream interception
-      tool_use event      → DegradationEngine.apply_to_policy (pre-check)
-                          → Intent → Layer 1 → Layer 2 → Layer 3 → execute or deny
-                          → DegradationEngine.record_signal (post-cascade)
-                          → DegradationTransitionEvent emitted if level changed
-      spawn_child event   → _handle_spawn_child via SpawnCallback
-      tool result         → ToolResultBus → back to executor
+      tool_use event      → degradation pre-check (narrow the effective policy)
+                          → capability → consequence → value policies → degradation
+                          → positional → carrier → per-value taint + confidentiality
+                            floor → adjudicator → execute or deny
+                          → register the output's provenance; record a degradation
+                            signal; emit a transition event if the level changed
+      spawn_child event   → _handle_spawn_child via SpawnCallback (child as a node)
+      tool result         → federation ingress (peer value? gateway decides) →
+                            ToolResultBus → back to executor
       text event          → ExportFilter
       cancel check        → CancelToken at every event boundary
   → ExportFilter          → governed ExecutionResult
@@ -60,7 +63,8 @@ axor_core/
 │   ├── policy.py          ExecutionPolicy, TaskSignal, SignalClassifier
 │   ├── result.py          ExecutorEvent, ExecutorEventKind, ExecutionResult
 │   ├── trace.py           DecisionTrace, TraceConfig, 30 typed TraceEvent kinds
-│   ├── taint.py           TaintState, TaintSource, TaintScope, ClearanceRecord
+│   ├── taint.py           Carrier, TaintSource, TaintState (legacy), ClearanceRecord
+│   ├── provenance.py      ValueProvenance — the per-value trust-model interface
 │   ├── degradation.py     DegradationLevel, DegradationPolicy, DegradationState,
 │   │                      DegradationTransition, SourceRecord, GovernanceAuthority
 │   ├── agent.py           AgentDefinition, AgentDomain, TrustLevel
@@ -72,11 +76,14 @@ axor_core/
 │   ├── wrapper.py         GovernedNode — central primitive, wires all subsystems
 │   ├── envelope.py        EnvelopeBuilder — assembles ExecutionEnvelope
 │   ├── intent_loop.py     IntentLoop — stream interception, ToolResultBus, SpawnCallback,
-│   │                                   DegradationEngine pre-check + signal recording
-│   ├── canonicalizer.py   IntentCanonicalizer — strips raw strings before Layer 3
-│   ├── normalizer.py      IntentNormalizer — provider format → NormalizedIntent
+│   │                                   DegradationEngine pre-check + signal recording;
+│   │                                   delegates the structural gates to policy/gates.py
+│   ├── canonicalizer.py   IntentCanonicalizer — strips raw strings before any advisory/detection layer
 │   ├── spawn.py           ChildSpawner — _validate_child_policy(), SpawnValidationError
 │   └── export.py          ExportFilter — SummarizationMembrane, export contracts
+│
+├── governor.py            ToolCallGovernor — synchronous per-call gate engine for
+│                          frameworks that own their agent loop; same gates as IntentLoop
 │
 ├── capability/            Tool permission derivation and execution
 │   ├── resolver.py        CapabilityResolver — fail-closed: unknown prefix = denied
@@ -85,18 +92,40 @@ axor_core/
 │   ├── daemon_client.py   DaemonCapabilityClient — out-of-process tool execution
 │   └── lease_validator.py LeaseValidator — TTL, max_uses, normpath path check
 │
-├── taint/                 Session taint tracking
-│   └── engine.py          TaintEngine — sticky propagation, source tracking, clearance audit
+├── taint/                 Per-value provenance
+│   ├── causal_root.py     CausalRoot — a value's own integrity/confidentiality labels
+│   ├── ledger.py          ValueTaintLedger — refcounted content-derivation, fail-closed
+│   ├── engine.py          TaintEngine — register/derive per value, confidentiality floor,
+│   │                      governance release (per-value endorse / wholesale clear)
+│   └── density.py         the per-value vs session-sticky measurement (observe-only)
+│
+├── kernel/                Decidability + the advisory layer
+│   ├── decidability.py    classifies a sink field as predicate-guardable vs fuzz-required
+│   ├── registration.py    validates value policies against that classification
+│   └── adjudicator.py     advisory adjudicator — projection-only, memoized, tightening
+│
+├── federation/            Agent-to-agent trust
+│   ├── signing.py         Signer/Verifier — HMAC (default) and ed25519 (optional)
+│   ├── receipt.py         signed provenance receipts; mint / verify / restore
+│   ├── gateway.py         the L1/L2/deny decision for an incoming peer value
+│   ├── value.py           FederatedValue — the wrapped (value, receipt) transport type
+│   └── transport.py       reference wire (de)serialization + in-memory peer network
 │
 ├── degradation/           Session degradation state machine
-│   └── engine.py          DegradationEngine — source-aware level transitions,
-│                          apply_to_policy narrowing, LOCKED_TTL auto-terminal
+│   └── engine.py          DegradationEngine — fact-driven, monotone level transitions,
+│                          apply_to_policy narrowing, optional reputation-crossing tighten
 │
-├── policy/                Dynamic policy selection
+├── policy/                Policy selection + consequence axis + value-policy predicates
 │   ├── heuristic.py       HeuristicClassifier — rule-based, 0ms, 0 tokens
 │   ├── analyzer.py        TaskAnalyzer — heuristic + domain detection + external classifier
 │   ├── selector.py        PolicySelector — TaskSignal → ExecutionPolicy (7-policy matrix)
 │   ├── composer.py        PolicyComposer — parent restrictions always applied to child
+│   ├── normalizer.py      IntentNormalizer — tool call → NormalizedIntent (structural classification)
+│   ├── gates.py           the six stateless gates as pure functions — the one shared
+│   │                      decision core both IntentLoop and ToolCallGovernor call
+│   ├── sinks.py           imperative / instruction-complete sink sets
+│   ├── consequence.py     consequence axis — content-blind action-class classification
+│   ├── value_policy.py    value-policy predicates (numeric range / enum) on arguments
 │   ├── presets.py         readonly, sandboxed, standard, federated, research, support, analysis
 │   ├── topics.py          WORD_TOPICS, SYNONYM_MAP, TOPIC_IMPLICATIONS, DESTRUCTIVE_TOKENS
 │   └── keyword_relevance.py Tool relevance scoring — extract_query_keywords, score_tool_relevance
@@ -136,6 +165,37 @@ axor_core/
 
 ---
 
+## Trust Rings
+
+The subsystems are grouped into three rings by how load-bearing they are for a
+correct decision. The test for each: *can a bug here cause a wrong ALLOW?*
+
+| Ring | Role | Subsystems |
+|---|---|---|
+| **0 — kernel** | the trusted computing base: gate logic + the data it reasons over | `contracts`, `errors`, `taint`, `security`, `policy` (incl. `gates`, `normalizer`), `kernel`, `degradation` |
+| **1 — runtime** | wires the kernel to an executor: capability boundary, node/worker orchestration, opt-in federation | `capability`, `node`, `worker`, `federation` |
+| **2 — platform** | quality / cost / observability — a bug wastes resources, not safety | `budget`, `context`, `trace`, `extensions` |
+
+The one guarantee that matters and is **machine-enforced**: the kernel must not
+depend on the runtime or the platform, so a platform bug cannot reach the
+decision. This is checked in CI by `import-linter` (the `kernel-purity` contract
+in `.importlinter`); a kernel module importing a runtime/platform module fails the
+build. The reverse edge is allowed — the runtime legitimately orchestrates
+platform services (e.g. `node` uses `budget`/`context`/`trace`).
+
+The same six stateless gates run on both enforcement paths: the streaming
+`IntentLoop` and the synchronous `ToolCallGovernor` both delegate to
+`policy/gates.py`, so the decision logic exists once and cannot drift between them.
+
+**Kernel-only bypass.** The package uses lazy imports (PEP 562), so you pay only
+for the rings you touch. `from axor_core import ToolCallGovernor` loads the Ring-0
+kernel and nothing from the runtime or platform — a caller that owns its own agent
+loop gets the gate engine without the orchestration, budget, context, or trace
+machinery. `from axor_core import GovernedSession` pulls the full stack on demand.
+The guarantee is regression-tested (`tests/test_kernel_only_import.py`).
+
+---
+
 ## Design Invariants
 
 **Everything is a GovernedNode.** Flat execution is `depth=0`. No special cases for single-agent vs multi-agent.
@@ -146,19 +206,19 @@ axor_core/
 
 **Executors never self-assign capabilities.** Always derived from policy by `CapabilityResolver`. Fail-closed: unknown tool prefix = denied.
 
-**Layer 1 always runs first.** `_evaluate_tool_intent()` runs synchronously. The anomaly scorer is never called if Layer 1 denies.
+**A structural deny is final.** Gates run in a fixed order and a deny short-circuits the rest; an advisory adjudicator is consulted only on the would-approve path and can only add a deny.
 
 **Child policy cannot exceed parent ceiling.** `_validate_child_policy()` and `PolicyComposer` both enforce this. No path through the codebase allows a child to exceed parent capabilities.
 
 **Workers cannot clear taint.** `TaintEngine.clear_by_governance()` requires governance authority. Worker-path clear attempt raises `TaintClearanceError`.
 
-**Degradation level is monotonically increasing.** `DegradationEngine` level never decreases without a `GovernanceAuthority` object passed to `clear_by_governance`. Worker-path clear attempt raises `DegradationClearanceError` (invariant D-1). A `TERMINAL` session raises `SessionTerminatedError` before any intent is evaluated (D-2).
+**Degradation level is monotonically increasing.** `DegradationEngine` level never decreases without a `GovernanceAuthority` object passed to `clear_by_governance`. Worker-path clear attempt raises `DegradationClearanceError`. A `TERMINAL` session raises `SessionTerminatedError` before any intent is evaluated.
 
-**Degradation is source-aware.** A quarantined source loses write/bash/export capability; clean sources in the same session are unaffected until session-level thresholds are crossed (D-4). `apply_to_policy` for a quarantined source always returns `export_mode=RESTRICTED` (D-5).
+**Degradation is source-aware.** A quarantined source loses write/bash/export capability; clean sources in the same session are unaffected until session-level thresholds are crossed. `apply_to_policy` for a quarantined source always returns `export_mode=RESTRICTED`.
 
-**Child nodes share the parent's DegradationEngine instance.** Children cannot start below the parent's current `DegradationLevel` — the shared instance acts as the floor (D-6).
+**Child nodes share the parent's DegradationEngine instance.** Children cannot start below the parent's current `DegradationLevel` — the shared instance acts as the floor.
 
-**Canonical intent contains no raw strings.** `IntentCanonicalizer` strips all raw strings before Layer 3. Verified by schema-injection adversarial tests.
+**Canonical intent contains no raw strings.** `IntentCanonicalizer` strips all raw strings before they reach any advisory or detection layer. Verified by schema-injection adversarial tests.
 
 **Core does not decompose tasks.** Agents decide when to spawn children. Core governs each spawn and provides a minimum sufficient context slice.
 
@@ -182,39 +242,34 @@ axor_core/
 
 ## Defense System
 
-### Per-Intent Cascade (Core)
+### Per-Intent Gate Sequence (Core)
 
-Every tool call that reaches `IntentLoop` passes through three sequential decision layers. A deny at any layer is final — subsequent layers do not run.
+Every tool call that reaches `IntentLoop` passes through a fixed sequence of structural gates. A deny at any gate is final — subsequent gates do not run.
 
 ```
 IntentLoop receives tool_use event
   │
-  ├─ DegradationEngine.apply_to_policy(source)
-  │    └─ narrows active policy based on source reputation and session level
-  │       quarantined source → export_mode forced to RESTRICTED (D-5)
+  ├─ degradation pre-check — narrow the effective policy for a degraded session
+  │    (locked → read/escalate only; quarantined source → no write/bash/export)
   │
-  ├─ Layer 1 — ToolInterceptor
-  │    rule-based, synchronous, unconditional
-  │    checks: capability surface, allowed_paths (LeaseValidator), TTL, max_uses
-  │    deny → recorded in DegradationEngine.record_signal; stops here
+  ├─ 1. capability       — is the tool allowed by the active policy at all?
+  ├─ 2. consequence      — action-class irreversibility (content-blind; shutdown/wipe)
+  ├─ 3. value policies   — decidable predicates on arguments (amount in range, enum)
+  ├─ 4. degradation      — refuse a call a quarantined source would drive
+  ├─ 5. ssrf             — internal destinations (metadata/private net/docker socket)
+  ├─ 6. positional       — declared sinks: admit only instruction-incomplete forms
+  ├─ 7. carrier          — untrusted free text into an instruction-following sink?
+  ├─ 8. per-value taint  — integrity (untrusted → high-risk) + confidentiality floor
+  ├─ 9. adjudicator      — optional advisory second opinion (tightening-only)
   │
-  ├─ Layer 2 — AnomalyDetector
-  │    evaluates the execution *sequence*, not just the individual call
-  │    pluggable: HeuristicClassifier (0ms, 0 tokens) or axor-classifier-simple / axor-classifier-llm
-  │    deny → recorded in DegradationEngine.record_signal; stops here
+  ├─ execute → register the output's provenance (federation ingress decides the
+  │            provenance of a value returned from a peer agent)
   │
-  ├─ Layer 3 — Isolated Verifier
-  │    gray-zone intents only
-  │    IntentCanonicalizer strips all raw strings before the verifier sees anything
-  │    the verifier receives canonical features only — no task text, no file paths, no tool args
-  │    a prompt injection in a file path cannot reach a governance decision
-  │
-  └─ DegradationEngine.record_signal (post-cascade)
-       converts accumulated denial signals + taint metadata → DegradationLevel
-       NORMAL → CAUTIOUS → RESTRICTED → LOCKED → TERMINAL (monotonically increasing)
-       level transitions emit DegradationTransitionEvent
-       LOCKED_TTL: LOCKED sessions auto-transition to TERMINAL if not cleared within TTL
+  └─ record a degradation signal — fact-driven, monotone:
+       NORMAL → CAUTIOUS → RESTRICTED → LOCKED → TERMINAL, cleared only by governance
 ```
+
+Detection (reputation, drift) is **not** a gate — it is observe-only and may, opt-in, only *tighten* degradation. See [governance-model.md](governance-model.md).
 
 `DegradationEngine` is source-aware. A quarantined source (malicious document) is restricted; clean sources in the same session continue at reduced but functional capability. Only when session-level thresholds are crossed does the whole session degrade.
 
@@ -222,7 +277,7 @@ IntentLoop receives tool_use event
 
 ### Cross-Session Reputation (Sentinel)
 
-`axor-sentinel` solves a problem the per-session cascade cannot: slow-and-low staging attacks, where exfiltration is distributed across many individually normal sessions over days or weeks.
+`axor-sentinel` solves a problem the per-session gates cannot: slow-and-low staging attacks, where exfiltration is distributed across many individually normal sessions over days or weeks.
 
 **Background audit cycle — `SentinelCycle`** (runs hourly, not on the hot path):
 
@@ -249,15 +304,17 @@ ReputationSnapshot (loaded at startup)
   │
   ▼
 SnapshotIntentEnricher.enrich(intent)
-  └─ populates NormalizedIntent.target_resource_reputation
+  └─ annotates the intent with the source's reputation signal
        │
        ▼
-  IntentLoop Phase 1 check:
-    score ≥ 0.8 AND after_external_read → deterministic deny
-    decision recorded before any LLM inference
+  IntentLoop: recorded into the observe-only detection register
+    reputation is NOT a gate — it never denies an intent directly.
+    With detection→degradation opt-in (`detection_floor`), a high score
+    can only *tighten* the session's degradation level (monotone),
+    never loosen a decision. See governance-model.md §8.
 ```
 
-The snapshot is swapped atomically in the background. The hot path reads a flat dict — no lock contention, no graph queries per intent.
+The snapshot is swapped atomically in the background. The hot path reads a flat dict — no lock contention, no graph queries per intent. Enrichment is telemetry; the gate sequence above (capability … taint … adjudicator) is the only thing that can deny.
 
 ---
 
@@ -329,13 +386,14 @@ axor-core  -X→ axor-probe   (core does not depend on probe)
                    ┌─────────────────┼──────────────────┐
                    ▼                 ▼                   ▼
         ┌──────────────────┐  ┌──────────────┐  ┌───────────────┐
-        │  Core cascade    │  │   Sentinel   │  │     Probe     │
+        │   Core gates     │  │   Sentinel   │  │     Probe     │
         │  (per-intent)    │  │  (cross-     │  │  (behavioral  │
         │                  │  │   session)   │  │   drift)      │
-        │  L1 rule         │  │              │  │               │
-        │  L2 anomaly      │◄─┤ reputation   │  │ shadow compare│
-        │  L3 verifier     │  │ enrichment   │  │ drift signal  │
-        │  DegradationEng  │  │              │  │               │
+        │  consequence     │  │              │  │               │
+        │  value policies  │  │ reputation   │  │ shadow compare│
+        │  ssrf/positional │  │ enrichment   │  │ drift signal  │
+        │  carrier/taint   │  │ (observe →   │  │ (observe →    │
+        │  + DegradationEng│◄─┤  tighten)    │  │  tighten)     │
         └────────┬─────────┘  └──────┬───────┘  └──────┬────────┘
                  │                   │                  │
                  └───────────────────┴──────────────────┘
@@ -348,11 +406,11 @@ Each layer operates independently across a different time horizon:
 
 | Layer | Scope | Latency | Signal source |
 |-------|-------|---------|---------------|
-| Core cascade | per intent | synchronous | tool calls, spawn events, export |
+| Core gates | per intent | synchronous | tool calls, spawn events, export |
 | Sentinel | cross-session | hourly background | resource access patterns over time |
 | Probe | per session | out-of-band | behavioral consistency under policy pressure |
 
-A bypass of probe does not disable the enforcement cascade. A gap in sentinel's reputation coverage does not disable per-intent rule enforcement. Layers compose additively — each adds coverage the others cannot provide.
+A bypass of probe does not disable the enforcement gates. A gap in sentinel's reputation coverage does not disable per-intent enforcement — detection only ever observes (or, opt-in, tightens degradation); it cannot allow.
 
 ---
 
@@ -397,7 +455,7 @@ class BashHandler(ToolHandler):
 
 
 # 3. IntentNormalizer — translate provider format → NormalizedIntent
-from axor_core.node.normalizer import IntentNormalizer
+from axor_core.policy.normalizer import IntentNormalizer
 from axor_core.contracts.anomaly import NormalizedIntent
 
 class MyNormalizer(IntentNormalizer):

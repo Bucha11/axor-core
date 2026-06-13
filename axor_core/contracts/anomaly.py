@@ -2,10 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
-
-if TYPE_CHECKING:
-    from axor_core.contracts.canonical import CanonicalizedIntent
 
 
 class AnomalyClass(str, Enum):
@@ -19,9 +15,9 @@ class NormalizedIntent:
     """
     Behavioral abstraction of a tool call.
 
-    Produced by IntentNormalizer from a raw Intent.
-    This is the only thing the AnomalyDetector and LLMVerifier see —
-    they never receive raw tool output, webpage content, or chain-of-thought.
+    Produced by IntentNormalizer from a raw Intent. It is a structural projection
+    only — the gates and any observe-only detection layer read it, never raw tool
+    output, webpage content, or chain-of-thought.
     """
     tool: str
     operation: str          # file_read | file_write | test | search | network_request
@@ -47,7 +43,9 @@ class NormalizedIntent:
 @dataclass(frozen=True)
 class AnomalyResult:
     """
-    Output of AnomalyDetector.score().
+    Output of an observe-only behavioral scorer (the optional detection layer,
+    e.g. axor-sentinel). It is telemetry: a score never returns an allow/deny and
+    never feeds the gates — at most it tightens degradation via the opt-in floor.
 
     score:   0.0–1.0 continuous risk score
     cls:     discretized class
@@ -57,52 +55,3 @@ class AnomalyResult:
     cls: AnomalyClass
     reasons: tuple[str, ...] = field(default_factory=tuple)
 
-
-@runtime_checkable
-class LLMVerifier(Protocol):
-    """
-    Optional gray-zone verifier for ambiguous behavioral trajectories.
-
-    Receives normalized intent sequences only — never raw content.
-    Injected into MLAnomalyDetector; axor-core never imports implementations.
-    """
-
-    async def verify(
-        self,
-        window: "list[CanonicalizedIntent]",
-        task_signal_hint: str,
-        policy_name: str,
-    ) -> AnomalyResult:
-        """
-        Review the canonical intent sequence and return an AnomalyResult.
-
-        window:           last N CanonicalizedIntents — no raw strings
-        task_signal_hint: e.g. "FOCUSED/MUTATIVE/coding"
-        policy_name:      active policy name for context
-        """
-        ...
-
-
-@runtime_checkable
-class AnomalyDetector(Protocol):
-    """
-    Behavioral anomaly scorer.
-
-    Pluggable layer 2 of the governance cascade.
-    axor-core defines this protocol; axor-classifier-simple implements it.
-    Core never imports the implementation.
-    """
-
-    async def score(
-        self,
-        window: list[NormalizedIntent],
-        task_signal_hint: str = "",
-        policy_name: str = "",
-    ) -> AnomalyResult:
-        """
-        Score the behavioral window.
-
-        window: the last N NormalizedIntents from this session
-        Returns AnomalyResult with score, class, and trigger reasons.
-        """
-        ...

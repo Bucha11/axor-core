@@ -17,7 +17,7 @@ from typing import Any
 from axor_core.contracts.anomaly import NormalizedIntent
 from axor_core.contracts.intent import Intent, IntentKind
 from axor_core.errors.exceptions import NormalizerError, UnknownProviderFormatError
-from axor_core.node.normalizer import IntentNormalizer
+from axor_core.policy.normalizer import IntentNormalizer
 
 _PROVIDER = "openai"
 

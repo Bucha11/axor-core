@@ -33,6 +33,6 @@ class ReputationEnricher(Protocol):
         Return a new NormalizedIntent with reputation fields set.
 
         Must not raise — unknown resources silently return 0.0.
-        Must not query Neo4j — reads pre-loaded snapshot only (invariant A-6).
+        Must not issue any live graph query — reads the pre-loaded snapshot only.
         """
         ...

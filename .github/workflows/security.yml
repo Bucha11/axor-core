@@ -1,0 +1,49 @@
+name: Security
+
+# The adversarial + invariant suites are the security regression gate. They run on
+# every PR and push so a governance bypass cannot land silently. The marked
+# `adversarial` suite (and the fuzz-floor / invariant tests) are the attacker's-eye
+# coverage for the v4.12 enforcement spine.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  security:
+    name: Security regression (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install
+        run: pip install -e ".[dev,config,federation]"
+
+      - name: Adversarial suite (attacker scenarios + fuzz-floor)
+        # Determinism guard: a fixed hash seed plus the property fuzz floor. The
+        # ledger/carrier/path soundness must not depend on iteration order.
+        env:
+          PYTHONHASHSEED: "0"
+        run: pytest -m adversarial -v --tb=short
+
+      - name: Security invariants
+        run: pytest tests/invariants/ -v --tb=short
+
+      - name: Determinism — adversarial suite across hash seeds
+        run: |
+          for seed in 1 42 1337; do
+            echo "== PYTHONHASHSEED=$seed =="
+            PYTHONHASHSEED=$seed pytest -m adversarial -q
+          done

@@ -23,9 +23,9 @@ The distinction:
 |----------|-------------|-------------------|
 | "Which policy preset fits this task?" | Classifier (advisory) | Task text signal |
 | "What tools are allowed?" | Operator policy | Static configuration |
-| "Can this tool be called now?" | ToolInterceptor (Layer 1) | Runtime evaluation |
-| "Is this sequence suspicious?" | ML scorer (Layer 2) | Behavioral features |
-| "Is this intent adversarial?" | LLM verifier (Layer 3) | Canonical features only |
+| "Can this tool be called now?" | the capability gate | Runtime evaluation |
+| "Is this sequence suspicious?" | the detection layer (reputation / drift, observe-only) | Behavioral features |
+| "Is this intent adversarial?" | an advisory adjudicator (projection only) | Canonical features only |
 
 ---
 
@@ -37,7 +37,7 @@ The distinction:
 - `TaskSignal` is advisory: complexity, nature, estimated scope.
 - `PolicySelector` chooses a preset based on `TaskSignal`.
 - Preset is subject to parent policy ceiling — classifier cannot exceed it.
-- Classifier result does not affect Layer 1 rule-based checks.
+- A detection result never affects the structural gates — detection is observe-only.
 
 ### Strict Mode (`ExecutionMode.STRICT`)
 
@@ -98,7 +98,7 @@ Mitigations:
 
 - STRICT mode disables classifier entirely.
 - Even in default mode, the ceiling invariant prevents capability expansion.
-- Classify-by-behavior (Layer 2 ML) is not based on text content.
+- Behavioural classification is not based on raw text content.
 
 ### Classifier Failure
 
@@ -116,9 +116,9 @@ happens from task text, so this attack surface is eliminated.
 
 ## What the Classifier Does Not Do
 
-- Does not evaluate tool calls (that is Layer 1's job)
-- Does not evaluate behavioral sequences (that is Layer 2's job)
-- Does not verify canonical intent features (that is Layer 3's job)
+- Does not evaluate tool calls (the capability gate's job)
+- Does not gate on behavioural sequences (detection is observe-only)
+- Does not gate on the projection (an advisory adjudicator may, tightening-only)
 - Does not grant capability leases
 - Does not clear taint
 - Does not make deny/allow decisions

@@ -12,6 +12,24 @@ from axor_core.contracts.policy import (
     ContextMode,
     ExportMode,
 )
+from axor_core.security.paths import intersect_allowlist
+
+
+def _intersect_escalation(
+    policy: EscalationPolicy, ceiling: EscalationPolicy
+) -> EscalationPolicy:
+    """Narrowing intersection of two escalation policies. Each field takes the
+    more restrictive side, so a permissive operator overlay can never widen a
+    tighter per-task escalation policy (or vice-versa)."""
+    return EscalationPolicy(
+        allow_escalation=policy.allow_escalation and ceiling.allow_escalation,
+        grantable_tools=tuple(
+            t for t in policy.grantable_tools if t in set(ceiling.grantable_tools)
+        ),
+        max_escalations=min(policy.max_escalations, ceiling.max_escalations),
+        max_ops_per_grant=min(policy.max_ops_per_grant, ceiling.max_ops_per_grant),
+        require_human=policy.require_human or ceiling.require_human,
+    )
 
 
 class PolicyComposer:
@@ -32,6 +50,19 @@ class PolicyComposer:
        Full pipeline: base → extensions → parent restrictions.
     """
 
+    def __init__(
+        self,
+        *,
+        consequence_ceiling=None,
+        escalation_policy: EscalationPolicy | None = None,
+        allowed_paths: tuple[str, ...] | None = None,
+    ) -> None:
+        # Deployment overlay from a profile (operator-wide knobs applied to every
+        # per-task policy). None → no overlay.
+        self._consequence_ceiling = consequence_ceiling
+        self._overlay_escalation = escalation_policy
+        self._overlay_allowed_paths = allowed_paths
+
     def compose(
         self,
         base: ExecutionPolicy,
@@ -39,9 +70,38 @@ class PolicyComposer:
         parent_policy: ExecutionPolicy | None = None,
     ) -> ExecutionPolicy:
         policy = self.apply_extension_overrides(base, extensions)
+        policy = self._apply_deployment_overlay(policy)
         if parent_policy is not None:
             policy = self.apply_parent_restrictions(policy, parent_policy)
         return policy
+
+    def _apply_deployment_overlay(self, policy: ExecutionPolicy) -> ExecutionPolicy:
+        """Impose operator-wide profile knobs (ceiling / escalation / workspace),
+        applied before parent restrictions so a child can still be narrowed
+        further, never widened past the operator's choice.
+
+        The overlay is a CEILING: it intersects with the per-task policy, never
+        replaces it. A broad overlay (e.g. workspace = root, or a permissive
+        escalation profile) therefore cannot widen a narrower per-task policy."""
+        changes: dict = {}
+        if self._consequence_ceiling is not None:
+            changes["max_unattended_consequence"] = self._consequence_ceiling
+        if self._overlay_escalation is not None:
+            changes["escalation_policy"] = _intersect_escalation(
+                policy.escalation_policy, self._overlay_escalation
+            )
+        if self._overlay_allowed_paths:
+            policy_paths = tuple(policy.allowed_paths or ())
+            if not policy_paths:
+                # Unconfined per-task policy → confine to the operator workspace.
+                changes["allowed_paths"] = tuple(self._overlay_allowed_paths)
+            else:
+                # Confined already → intersect, so a path outside the workspace
+                # cannot survive and the workspace cannot widen the policy.
+                changes["allowed_paths"] = intersect_allowlist(
+                    policy_paths, tuple(self._overlay_allowed_paths)
+                )
+        return dataclasses.replace(policy, **changes) if changes else policy
 
     def apply_extension_overrides(
         self,
@@ -83,11 +143,15 @@ class PolicyComposer:
             if overrides.get("allow_spawn") and base.tool_policy.allow_spawn:
                 tool_policy = _with_tool(tool_policy, allow_spawn=True)
 
-            # extra_allowed — extension-specific tool names
+            # extra_allowed — extension-specific tool names. An extension may only
+            # re-enable names base already permits; it can never introduce a tool
+            # name base did not grant (union with an arbitrary list is escalation).
             if extra := overrides.get("extra_allowed_tools", []):
+                base_ceiling = set(base.tool_policy.extra_allowed)
+                granted = base_ceiling & set(extra)
                 tool_policy = _with_tool(
                     tool_policy,
-                    extra_allowed=tuple(set(tool_policy.extra_allowed) | set(extra)),
+                    extra_allowed=tuple(set(tool_policy.extra_allowed) | granted),
                 )
 
         return _with_policy(base, tool_policy=tool_policy)
@@ -226,7 +290,7 @@ def _restrict_allowed_paths(
     - child unrestricted but parent restricted → child inherits parent's ceiling
     - both restricted → keep only child roots contained by the parent ceiling
     """
-    from axor_core.capability.lease_validator import path_matches_allowlist
+    from axor_core.security.paths import path_matches_allowlist
 
     if not parent_paths:
         return child_paths

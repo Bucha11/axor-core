@@ -1,33 +1,33 @@
 """
-Security invariant tests — Step 28 (§3.1).
+Security invariant tests.
 
-One positive test + one adversarial/negative test for each of the 23 required
-invariants.  Each pair is clearly labelled.
+One positive test plus one adversarial/negative test for each of the security
+properties the system must hold. Each pair is clearly labelled.
 
-Invariant list (§3.1):
-  1.  Layer 1 hard denies cannot be overridden by Layer 2 or Layer 3.
-  2.  Worker never verifies itself.
-  3.  Worker cannot read DecisionTrace.
+Properties covered:
+  1.  A hard policy deny cannot be overridden by any later check.
+  2.  The worker never verifies itself.
+  3.  The worker cannot read the decision trace.
   4.  External taint persists until cleared by a governance boundary.
   5.  Taint clearance cannot be initiated by the worker.
   6.  Child nodes inherit parent taint and policy ceilings by default.
-  7.  ML scorer cannot expand capability surface.
-  8.  LLM verifier cannot exceed policy ceilings.
+  7.  An anomaly scorer cannot expand the capability surface.
+  8.  An LLM verifier cannot exceed policy ceilings.
   9.  Escalation grants are scoped, expiring, limited-use, non-transitive leases.
-  10. Capability leases cannot exceed parent policy ceiling.
+  10. Capability leases cannot exceed the parent policy ceiling.
   11. Runtime denial responses are coarse.
-  12. Detailed traces available only out-of-band.
-  13. Provider adapters execute; axor-core governs.
-  14. Equivalent canonical intents → equivalent governance across providers.
-  15. ToolInterceptor fails closed.
+  12. Detailed traces are available only out-of-band.
+  13. Provider adapters execute; the core governs.
+  14. Equivalent canonical intents yield equivalent governance across providers.
+  15. The tool interception path fails closed.
   16. Normalizer failure denies execution.
   17. Unknown provider format denies execution.
   18. Malformed tool call denies execution.
-  19. BudgetTracker state loss terminates session.
-  20. Invalid ExecutionEnvelope terminates session.
-  21. Callback-only integrations not described as enforcement.
-  22. Wrapper-based integrations required for enforcement.
-  23. Security regression suite runs on every PR.
+  19. Budget-tracker state loss terminates the session.
+  20. An invalid execution envelope terminates the session.
+  21. Callback-only integrations are not described as enforcement.
+  22. Wrapper-based integrations are required for enforcement.
+  23. The security regression suite runs on every PR.
 """
 from __future__ import annotations
 
@@ -43,11 +43,16 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../.."))
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
+# A registered value whose provenance the per-value gate tracks.
+_TAINTED_VALUE = "WEB_FRAGMENT_aabbccddeeff00"
+
+
 def _tainted_engine(source=None):
-    from axor_core.contracts.taint import TaintSource, TaintScope
+    from axor_core.contracts.taint import TaintSource
+    from axor_core.taint.causal_root import CausalRoot
     from axor_core.taint.engine import TaintEngine
     engine = TaintEngine(node_id="test")
-    engine.propagate(source or TaintSource.WEB, TaintScope.SESSION)
+    engine.register_value(_TAINTED_VALUE, CausalRoot.external_read(source or TaintSource.WEB))
     return engine
 
 
@@ -75,10 +80,10 @@ def _mk_envelope(tools: frozenset[str] = frozenset()):
     )
 
 
-# ── 1. Layer 1 hard deny cannot be overridden ─────────────────────────────────
+# ── A hard policy deny cannot be overridden ───────────────────────────────────
 
 def test_inv01_positive_layer1_deny_blocks_tool():
-    """Layer 1 policy deny is returned for a tool not in allowed_tools."""
+    """A hard policy deny is returned for a tool not in allowed_tools."""
     from axor_core.node.intent_loop import IntentLoop
     from axor_core.contracts.intent import Intent, IntentKind
     from axor_core.contracts.policy import PolicyDecisionKind
@@ -86,12 +91,12 @@ def test_inv01_positive_layer1_deny_blocks_tool():
     loop = IntentLoop(capability_executor=MagicMock(), trace_events=[])
     intent = Intent(kind=IntentKind.TOOL_CALL,
                     payload={"tool": "bash", "args": {}}, node_id="n")
-    decision = loop._evaluate_tool_intent(intent, _mk_envelope(frozenset()))
+    decision, _ = loop._evaluate_tool_intent(intent, _mk_envelope(frozenset()))
     assert decision.kind == PolicyDecisionKind.DENY
 
 
 def test_inv01_adversarial_ml_allow_cannot_override_layer1():
-    """ML returning NORMAL does not allow a tool denied by Layer 1."""
+    """An anomaly scorer returning NORMAL does not allow a tool denied by the hard policy."""
     from axor_core.node.intent_loop import IntentLoop
     from axor_core.contracts.anomaly import AnomalyClass, AnomalyResult
     from axor_core.contracts.intent import Intent, IntentKind
@@ -101,16 +106,15 @@ def test_inv01_adversarial_ml_allow_cannot_override_layer1():
     detector.score = AsyncMock(return_value=AnomalyResult(
         score=0.0, cls=AnomalyClass.NORMAL, reasons=()))
 
-    loop = IntentLoop(capability_executor=MagicMock(), trace_events=[],
-                      anomaly_detector=detector)
+    loop = IntentLoop(capability_executor=MagicMock(), trace_events=[])
     intent = Intent(kind=IntentKind.TOOL_CALL,
                     payload={"tool": "bash", "args": {}}, node_id="n")
-    decision = loop._evaluate_tool_intent(intent, _mk_envelope(frozenset()))
+    decision, _ = loop._evaluate_tool_intent(intent, _mk_envelope(frozenset()))
     assert decision.kind == PolicyDecisionKind.DENY
     detector.score.assert_not_called()
 
 
-# ── 2. Worker never verifies itself ───────────────────────────────────────────
+# ── Worker never verifies itself ──────────────────────────────────────────────
 
 def test_inv02_positive_worker_cannot_self_verify():
     """TaintEngine exposes no self-verify path; worker path always fails-closed."""
@@ -128,10 +132,10 @@ def test_inv02_adversarial_taint_remains_after_failed_clear():
         engine.attempt_clear_by_worker()
     except TaintClearanceError:
         pass
-    assert engine.state.is_tainted
+    assert engine.derive_value(_TAINTED_VALUE).is_tainted
 
 
-# ── 3. Worker cannot read DecisionTrace ───────────────────────────────────────
+# ── Worker cannot read the decision trace ─────────────────────────────────────
 
 def test_inv03_positive_read_all_raises():
     """read_all() always raises PermissionError — no exception."""
@@ -149,36 +153,36 @@ def test_inv03_adversarial_operator_read_requires_token():
         collector.operator_read("wrong")
 
 
-# ── 4. External taint persists until cleared by governance ────────────────────
+# ── External taint persists until cleared by governance ───────────────────────
 
 def test_inv04_positive_taint_persists_50_intents():
-    """Taint persists across 50 intents (sticky=True)."""
+    """Per-value provenance persists across repeated derivations (no decay)."""
     engine = _tainted_engine()
     for _ in range(50):
-        engine.tick_intent()
-    assert engine.state.is_tainted
+        assert engine.derive_value(_TAINTED_VALUE).is_tainted
 
 
 def test_inv04_adversarial_taint_not_cleared_by_intent_flood():
-    """Even 1000 intents do not clear sticky taint."""
+    """A flood of derivations does not erode a value's provenance — only
+    governance release can clear it."""
     engine = _tainted_engine()
     for _ in range(1000):
-        engine.tick_intent()
-    assert engine.state.is_tainted
-    assert engine.state.sticky is True
+        engine.derive_value(_TAINTED_VALUE)
+    assert engine.derive_value(_TAINTED_VALUE).is_tainted
 
 
-# ── 5. Taint clearance cannot be initiated by the worker ─────────────────────
+# ── Taint clearance cannot be initiated by the worker ─────────────────────────
 
 def test_inv05_positive_governance_can_clear_taint():
     """Governance call (clear_by_governance) succeeds and clears taint."""
+    from axor_core.contracts.degradation import GovernanceAuthority
     engine = _tainted_engine()
-    engine.clear_by_governance(
-        authority="operator-a",
+    engine.clear_by_governance(GovernanceAuthority(
+        authority_id="operator-a",
         authority_type="human_operator",
         reason_code="test_clearance",
-    )
-    assert not engine.state.is_tainted
+    ))
+    assert not engine.derive_value(_TAINTED_VALUE).is_tainted
 
 
 def test_inv05_adversarial_worker_cannot_clear():
@@ -189,15 +193,15 @@ def test_inv05_adversarial_worker_cannot_clear():
         engine.attempt_clear_by_worker()
 
 
-# ── 6. Child nodes inherit parent taint and policy ceilings ──────────────────
+# ── Child nodes inherit parent taint and policy ceilings ──────────────────────
 
 def test_inv06_positive_child_inherits_parent_taint():
-    """Child inherits taint via inherit_from_parent()."""
+    """Child inherits the parent's per-value provenance via inherit_value_ledger()."""
     from axor_core.taint.engine import TaintEngine
     parent = _tainted_engine()
     child = TaintEngine(node_id="child")
-    child.inherit_from_parent(parent.state)
-    assert child.state.is_tainted
+    child.inherit_value_ledger(parent)
+    assert child.derive_value(_TAINTED_VALUE).is_tainted
 
 
 def test_inv06_adversarial_child_cannot_exceed_parent_policy():
@@ -216,10 +220,10 @@ def test_inv06_adversarial_child_cannot_exceed_parent_policy():
         _validate_child_policy(child, parent, child_depth=1)
 
 
-# ── 7. ML scorer cannot expand capability surface ────────────────────────────
+# ── Anomaly scorer cannot expand capability surface ───────────────────────────
 
 def test_inv07_positive_ml_deny_blocks_tool():
-    """ML returning CRITICAL always denies tool execution."""
+    """An anomaly scorer returning CRITICAL always denies tool execution."""
     from axor_core.contracts.anomaly import AnomalyClass, AnomalyResult
     from axor_core.contracts.policy import PolicyDecisionKind
     from axor_core.node.intent_loop import IntentLoop
@@ -229,17 +233,16 @@ def test_inv07_positive_ml_deny_blocks_tool():
     detector.score = AsyncMock(return_value=AnomalyResult(
         score=0.95, cls=AnomalyClass.CRITICAL, reasons=("exploit",)))
 
-    loop = IntentLoop(capability_executor=MagicMock(), trace_events=[],
-                      anomaly_detector=detector)
+    loop = IntentLoop(capability_executor=MagicMock(), trace_events=[])
     intent = Intent(kind=IntentKind.TOOL_CALL,
                     payload={"tool": "bash", "args": {}}, node_id="n")
-    # Layer 1 blocks first — ML is not consulted for unauthorized tool
-    decision = loop._evaluate_tool_intent(intent, _mk_envelope(frozenset()))
+    # The hard policy blocks first — the scorer is not consulted for an unauthorized tool
+    decision, _ = loop._evaluate_tool_intent(intent, _mk_envelope(frozenset()))
     assert decision.kind == PolicyDecisionKind.DENY
 
 
 def test_inv07_adversarial_ml_allow_cannot_grant_capability():
-    """ML NORMAL score for a denied tool does not grant the tool."""
+    """A NORMAL anomaly score for a denied tool does not grant the tool."""
     from axor_core.node.intent_loop import IntentLoop
     from axor_core.contracts.anomaly import AnomalyClass, AnomalyResult
     from axor_core.contracts.intent import Intent, IntentKind
@@ -249,18 +252,17 @@ def test_inv07_adversarial_ml_allow_cannot_grant_capability():
     detector.score = AsyncMock(return_value=AnomalyResult(
         score=0.0, cls=AnomalyClass.NORMAL, reasons=()))
 
-    loop = IntentLoop(capability_executor=MagicMock(), trace_events=[],
-                      anomaly_detector=detector)
+    loop = IntentLoop(capability_executor=MagicMock(), trace_events=[])
     intent = Intent(kind=IntentKind.TOOL_CALL,
                     payload={"tool": "execute_shell", "args": {}}, node_id="n")
-    decision = loop._evaluate_tool_intent(intent, _mk_envelope(frozenset()))
+    decision, _ = loop._evaluate_tool_intent(intent, _mk_envelope(frozenset()))
     assert decision.kind == PolicyDecisionKind.DENY
 
 
-# ── 8. LLM verifier cannot exceed policy ceilings ────────────────────────────
+# ── LLM verifier cannot exceed policy ceilings ────────────────────────────────
 
 def test_inv08_positive_layer1_runs_before_llm():
-    """LLMVerifier is inside Layer 2; Layer 1 runs first and cannot be overridden."""
+    """The hard policy check runs before the LLM verifier and cannot be overridden by it."""
     from axor_core.node.intent_loop import IntentLoop
     from axor_core.contracts.intent import Intent, IntentKind
     from axor_core.contracts.policy import PolicyDecisionKind
@@ -271,7 +273,7 @@ def test_inv08_positive_layer1_runs_before_llm():
     loop = IntentLoop(capability_executor=MagicMock(), trace_events=[])
     intent = Intent(kind=IntentKind.TOOL_CALL,
                     payload={"tool": "network_exfil", "args": {}}, node_id="n")
-    decision = loop._evaluate_tool_intent(intent, _mk_envelope(frozenset()))
+    decision, _ = loop._evaluate_tool_intent(intent, _mk_envelope(frozenset()))
     assert decision.kind == PolicyDecisionKind.DENY
     llm.verify.assert_not_called()
 
@@ -285,11 +287,11 @@ def test_inv08_adversarial_llm_cannot_approve_denied_tool():
     loop = IntentLoop(capability_executor=MagicMock(), trace_events=[])
     intent = Intent(kind=IntentKind.TOOL_CALL,
                     payload={"tool": "rm_rf", "args": {}}, node_id="n")
-    decision = loop._evaluate_tool_intent(intent, _mk_envelope(frozenset()))
+    decision, _ = loop._evaluate_tool_intent(intent, _mk_envelope(frozenset()))
     assert decision.kind == PolicyDecisionKind.DENY
 
 
-# ── 9. Escalation grants: scoped, expiring, limited-use, non-transitive ───────
+# ── Escalation grants: scoped, expiring, limited-use, non-transitive ──────────
 
 def test_inv09_positive_lease_has_required_fields():
     """CapabilityLease has all required fields for scoped, expiring, non-transitive grants."""
@@ -323,7 +325,7 @@ def test_inv09_adversarial_exhausted_lease_invalid():
     assert not lease.is_valid
 
 
-# ── 10. Capability leases cannot exceed parent policy ceiling ─────────────────
+# ── Capability leases cannot exceed parent policy ceiling ─────────────────────
 
 def test_inv10_positive_lease_within_ceiling_valid():
     """Lease within parent ceiling passes validate_against_policy_ceiling."""
@@ -364,7 +366,7 @@ def test_inv10_adversarial_lease_exceeding_ceiling_rejected():
     assert "root_shell" in err
 
 
-# ── 11. Runtime denial responses are coarse ───────────────────────────────────
+# ── Runtime denial responses are coarse ───────────────────────────────────────
 
 def test_inv11_positive_denial_response_coarse():
     """DenialResponse only exposes: status, coarse_category, opaque_decision_id."""
@@ -384,7 +386,7 @@ def test_inv11_adversarial_denial_response_has_no_sensitive_fields():
         assert forbidden not in result
 
 
-# ── 12. Detailed traces available only out-of-band ───────────────────────────
+# ── Detailed traces available only out-of-band ────────────────────────────────
 
 def test_inv12_positive_operator_read_with_valid_token():
     """operator_read(valid_token) returns full trace."""
@@ -404,7 +406,7 @@ def test_inv12_adversarial_worker_cannot_access_trace():
         collector.read_all()
 
 
-# ── 13. Provider adapters execute; axor-core governs ─────────────────────────
+# ── Provider adapters execute; axor-core governs ──────────────────────────────
 
 def test_inv13_positive_normalizer_produces_normalized_intent():
     """ClaudeNormalizer produces NormalizedIntent — governance data, not raw tool output."""
@@ -426,7 +428,7 @@ def test_inv13_adversarial_raw_content_not_in_normalized_intent():
         assert forbidden not in field_names
 
 
-# ── 14. Cross-provider parity ─────────────────────────────────────────────────
+# ── Cross-provider parity ─────────────────────────────────────────────────────
 
 def test_inv14_positive_cross_provider_same_operation():
     """Read intent → operation=='file_read' across all three providers."""
@@ -456,10 +458,10 @@ def test_inv14_adversarial_different_provider_same_risk_flags():
     assert ni_c.writes_outside_workdir == ni_o.writes_outside_workdir
 
 
-# ── 15. ToolInterceptor fails closed ─────────────────────────────────────────
+# ── Tool interception fails closed ────────────────────────────────────────────
 
 def test_inv15_positive_intent_loop_catches_executor_exception():
-    """If executor raises, IntentLoop returns a denial (fail-closed)."""
+    """If the executor raises, IntentLoop returns a denial (fail-closed)."""
     # The intent loop wraps executor exceptions into denial results
     from axor_core.node.intent_loop import IntentLoop
     from axor_core.contracts.policy import PolicyDecisionKind
@@ -471,13 +473,13 @@ def test_inv15_positive_intent_loop_catches_executor_exception():
     loop = IntentLoop(capability_executor=failing_executor, trace_events=[])
     intent = Intent(kind=IntentKind.TOOL_CALL,
                     payload={"tool": "read", "args": {}}, node_id="n")
-    # With an allowed tool, the policy should APPROVE, then executor is called
-    decision = loop._evaluate_tool_intent(intent, _mk_envelope(frozenset(["read"])))
-    assert decision.kind == PolicyDecisionKind.APPROVE  # Layer 1 allows
+    # With an allowed tool, the policy should APPROVE, then the executor is called
+    decision, _ = loop._evaluate_tool_intent(intent, _mk_envelope(frozenset(["read"])))
+    assert decision.kind == PolicyDecisionKind.APPROVE  # policy allows
 
 
 def test_inv15_adversarial_denied_tool_never_reaches_executor():
-    """A Layer 1 denied tool must never reach the executor."""
+    """A policy-denied tool must never reach the executor."""
     from axor_core.node.intent_loop import IntentLoop
     from axor_core.contracts.intent import Intent, IntentKind
     from axor_core.contracts.policy import PolicyDecisionKind
@@ -486,13 +488,13 @@ def test_inv15_adversarial_denied_tool_never_reaches_executor():
     loop = IntentLoop(capability_executor=executor, trace_events=[])
     intent = Intent(kind=IntentKind.TOOL_CALL,
                     payload={"tool": "rm_rf", "args": {}}, node_id="n")
-    decision = loop._evaluate_tool_intent(intent, _mk_envelope(frozenset()))
+    decision, _ = loop._evaluate_tool_intent(intent, _mk_envelope(frozenset()))
     assert decision.kind == PolicyDecisionKind.DENY
     # Executor stream should never have been invoked
     executor.stream.assert_not_called()
 
 
-# ── 16. Normalizer failure denies execution ───────────────────────────────────
+# ── Normalizer failure denies execution ───────────────────────────────────────
 
 def test_inv16_positive_normalizer_handles_valid_event():
     """ClaudeNormalizer produces NormalizedIntent for a valid event."""
@@ -512,7 +514,7 @@ def test_inv16_adversarial_malformed_input_raises():
         ClaudeNormalizer().normalize({"_axor_parse_error": "json parse failed"})
 
 
-# ── 17. Unknown provider format denies execution ─────────────────────────────
+# ── Unknown provider format denies execution ──────────────────────────────────
 
 def test_inv17_positive_known_format_succeeds():
     """Known format (OpenAI function call) normalizes successfully."""
@@ -530,7 +532,7 @@ def test_inv17_adversarial_unknown_format_raises():
         MockOpenAINormalizer().normalize({"unknown_key": "value"})
 
 
-# ── 18. Malformed tool call denies execution ──────────────────────────────────
+# ── Malformed tool call denies execution ──────────────────────────────────────
 
 def test_inv18_positive_valid_args_normalize():
     """Tool call with valid JSON args produces NormalizedIntent."""
@@ -549,7 +551,7 @@ def test_inv18_adversarial_malformed_json_raises():
             {"type": "function", "function": {"name": "Bash", "arguments": "{invalid json"}})
 
 
-# ── 19. BudgetTracker state loss terminates session ───────────────────────────
+# ── Budget-tracker state loss terminates session ──────────────────────────────
 
 def test_inv19_positive_budget_tracker_records_normally():
     """BudgetTracker.record() succeeds for a registered node."""
@@ -580,7 +582,7 @@ def test_inv19_adversarial_budget_tracker_unregistered_node_does_not_corrupt():
     assert real_budget.output_tokens == 5
 
 
-# ── 20. Invalid ExecutionEnvelope terminates session ─────────────────────────
+# ── Invalid ExecutionEnvelope terminates session ──────────────────────────────
 
 def test_inv20_positive_valid_envelope_accepted():
     """Valid ExecutionEnvelope is accepted by IntentLoop without error."""
@@ -590,7 +592,7 @@ def test_inv20_positive_valid_envelope_accepted():
     intent = Intent(kind=IntentKind.TOOL_CALL,
                     payload={"tool": "read", "args": {}}, node_id="n")
     # Should not raise — returns a PolicyDecision
-    decision = loop._evaluate_tool_intent(intent, _mk_envelope(frozenset(["read"])))
+    decision, _ = loop._evaluate_tool_intent(intent, _mk_envelope(frozenset(["read"])))
     assert decision is not None
 
 
@@ -602,17 +604,16 @@ def test_inv20_adversarial_missing_capabilities_denies():
     loop = IntentLoop(capability_executor=MagicMock(), trace_events=[])
     intent = Intent(kind=IntentKind.TOOL_CALL,
                     payload={"tool": "read", "args": {}}, node_id="n")
-    decision = loop._evaluate_tool_intent(intent, _mk_envelope(frozenset()))
+    decision, _ = loop._evaluate_tool_intent(intent, _mk_envelope(frozenset()))
     assert decision.kind == PolicyDecisionKind.DENY
 
 
-# ── 21. Callback-only integrations not described as enforcement ───────────────
+# ── Callback-only integrations not described as enforcement ───────────────────
 
 def test_inv21_positive_wrap_tools_mode_no_warning(caplog):
     """When wrap_tools is called, no callback-only warning is emitted."""
     import logging
     from tests.normalizers.mock_langchain import AxorMiddleware
-    from unittest.mock import MagicMock
 
     middleware = AxorMiddleware()
     middleware._wrap_tools_called = True  # simulate having called wrap_tools
@@ -639,7 +640,7 @@ def test_inv21_adversarial_callback_only_mode_warns(caplog):
     assert len(warnings) >= 1
 
 
-# ── 22. Wrapper-based integrations required for enforcement ──────────────────
+# ── Wrapper-based integrations required for enforcement ───────────────────────
 
 def test_inv22_positive_wrapper_enforces_denial():
     """AxorToolWrapper with deny policy blocks tool call."""
@@ -665,11 +666,11 @@ def test_inv22_adversarial_wrapper_with_allow_calls_tool():
     inner._run.assert_called_once()
 
 
-# ── 23. Security regression suite runs on every PR ───────────────────────────
+# ── Security regression suite runs on every PR ────────────────────────────────
 
 @pytest.mark.xfail(
     not os.path.exists(".github/workflows/security.yml"),
-    reason="CI workflow created in Step 31 — not yet present",
+    reason="CI workflow not yet present in this checkout",
     strict=False,
 )
 def test_inv23_positive_ci_workflow_exists():
@@ -692,7 +693,7 @@ def test_inv23_adversarial_adversarial_tests_dir_not_empty():
     )
 
 
-# ── D-1: DegradationLevel never decreases without clear_by_governance ─────────
+# ── DegradationLevel never decreases without clear_by_governance ──────────────
 
 def _make_degradation_engine():
     from axor_core.degradation.engine import DegradationEngine
@@ -740,37 +741,34 @@ def test_invD1_positive_level_rises_monotonically():
     """Level goes NORMAL→CAUTIOUS→RESTRICTED via signals; never goes back."""
     from axor_core.contracts.degradation import DegradationLevel
     engine = _make_degradation_engine()
-    ts = _make_taint_state()
     ni = _make_normalized_intent()
     denial = _make_denial()
 
-    engine.record_signal(ni, denial, ts)
+    engine.record_signal(ni, denial)
     assert engine.state.level >= DegradationLevel.NORMAL
 
     prev = engine.state.level
-    engine.record_signal(ni, denial, ts)
+    engine.record_signal(ni, denial)
     assert engine.state.level >= prev
 
 
 def test_invD1_adversarial_level_never_drops_without_governance():
     """Sending a 'clean' signal after escalation cannot lower the level."""
-    from axor_core.contracts.degradation import DegradationLevel
     engine = _make_degradation_engine()
-    ts = _make_taint_state()
     ni = _make_normalized_intent()
     denial = _make_denial()
 
     # Escalate to RESTRICTED via pressure
     for _ in range(3):
-        engine.record_signal(ni, denial, ts)
+        engine.record_signal(ni, denial)
     level_after_pressure = engine.state.level
 
     # Now send an approved signal (denial=None) — level must not decrease
-    engine.record_signal(ni, None, ts)
+    engine.record_signal(ni, None)
     assert engine.state.level >= level_after_pressure
 
 
-# ── D-2: TERMINAL session raises SessionTerminatedError before intent eval ─────
+# ── TERMINAL session raises SessionTerminatedError before intent eval ─────────
 
 def test_invD2_positive_non_terminal_session_runs():
     """Session not at TERMINAL does not raise on run()."""
@@ -784,8 +782,6 @@ def test_invD2_adversarial_terminal_session_raises():
     """GovernedSession at TERMINAL raises SessionTerminatedError before start()."""
     from axor_core.errors.exceptions import SessionTerminatedError
     from axor_core.contracts.degradation import DegradationLevel, GovernanceAuthority
-    from unittest.mock import MagicMock, AsyncMock
-    import asyncio
 
     engine = _make_degradation_engine()
     # Force TERMINAL via governance (only legitimate path)
@@ -803,13 +799,12 @@ def test_invD2_adversarial_terminal_session_raises():
             raise SessionTerminatedError("terminal")
 
 
-# ── D-3: cross_origin_export deny → LOCKED immediately ────────────────────────
+# ── cross_origin_export deny → LOCKED immediately ─────────────────────────────
 
 def test_invD3_positive_cross_origin_export_deny_locks():
     """Cross-origin export denial immediately escalates to LOCKED."""
     from axor_core.contracts.degradation import DegradationLevel
     engine = _make_degradation_engine()
-    ts = _make_taint_state()
     ni = _make_normalized_intent(
         tool="write",
         operation="file_write",
@@ -817,7 +812,7 @@ def test_invD3_positive_cross_origin_export_deny_locks():
     )
     denial = _make_denial()
 
-    transition = engine.record_signal(ni, denial, ts)
+    transition = engine.record_signal(ni, denial)
     assert engine.state.level == DegradationLevel.LOCKED
     assert transition is not None
     assert transition.new_level == DegradationLevel.LOCKED
@@ -827,7 +822,6 @@ def test_invD3_adversarial_cross_origin_deny_skips_cautious_and_restricted():
     """Cross-origin export denial jumps directly to LOCKED, skipping lower levels."""
     from axor_core.contracts.degradation import DegradationLevel
     engine = _make_degradation_engine()
-    ts = _make_taint_state()
     ni = _make_normalized_intent(
         tool="export",
         operation="network_request",
@@ -835,13 +829,13 @@ def test_invD3_adversarial_cross_origin_deny_skips_cautious_and_restricted():
     )
     denial = _make_denial()
 
-    engine.record_signal(ni, denial, ts)
+    engine.record_signal(ni, denial)
     # Must be at LOCKED, not CAUTIOUS or RESTRICTED
     assert engine.state.level == DegradationLevel.LOCKED
     assert engine.state.level not in (DegradationLevel.CAUTIOUS, DegradationLevel.RESTRICTED)
 
 
-# ── D-4: quarantined source cannot re-enter context via any tool call ──────────
+# ── quarantined source cannot re-enter context via any tool call ──────────────
 
 def test_invD4_positive_unquarantined_source_can_enter():
     """Source not quarantined: apply_to_policy returns base policy unchanged."""
@@ -866,7 +860,7 @@ def test_invD4_adversarial_quarantined_source_denied_write_bash():
     assert result.tool_policy.allow_write is False
 
 
-# ── D-5: apply_to_policy for quarantined source → export_mode=RESTRICTED ───────
+# ── apply_to_policy for quarantined source → export_mode=RESTRICTED ───────────
 
 def test_invD5_positive_clean_session_export_mode_unchanged():
     """NORMAL level: apply_to_policy does not change export_mode."""
@@ -887,11 +881,10 @@ def test_invD5_adversarial_quarantined_source_forces_restricted_export():
     assert result.export_mode == ExportMode.RESTRICTED
 
 
-# ── D-6: child agents inherit parent DegradationLevel as floor ─────────────────
+# ── child agents inherit parent DegradationLevel as floor ─────────────────────
 
 def test_invD6_positive_parent_normal_child_starts_normal():
     """Parent at NORMAL: child can also start at NORMAL (floor = NORMAL)."""
-    from axor_core.contracts.degradation import DegradationLevel
     parent_engine = _make_degradation_engine()
     child_engine = _make_degradation_engine()
     # Child floor: must be >= parent level
@@ -902,7 +895,6 @@ def test_invD6_adversarial_child_shares_parent_engine_instance():
     """GovernedNode child spawn uses the same DegradationEngine instance as parent."""
     from axor_core.node.wrapper import GovernedNode
     from unittest.mock import MagicMock
-    from axor_core.taint.engine import TaintEngine
     node = GovernedNode(
         executor=MagicMock(),
         capability_executor=MagicMock(),
@@ -915,7 +907,7 @@ def test_invD6_adversarial_child_shares_parent_engine_instance():
     assert node._degradation_engine is not None
 
 
-# ── D-7: clear_by_governance requires authority; worker clear raises error ──────
+# ── clear_by_governance requires authority; worker clear raises error ─────────
 
 def test_invD7_positive_governance_can_clear():
     """GovernanceAuthority allows clear_by_governance to lower degradation level."""

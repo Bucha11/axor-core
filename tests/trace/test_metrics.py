@@ -1,4 +1,4 @@
-"""Tests for governance metrics aggregation (Phase 6)."""
+"""Tests for governance metrics aggregation."""
 
 from __future__ import annotations
 

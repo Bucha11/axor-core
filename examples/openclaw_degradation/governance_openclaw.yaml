@@ -1,0 +1,30 @@
+# The configuration that closes the OpenClaw gap — and the denied-exfil gap with it.
+#
+# In the original artifact, catching the un-denied restart/shutdown needed a
+# hand-built DegradationEngine overlay (a `privileged_shutdown` predicate). Here it
+# is one line of `consequence_overrides`: the consequence gate then DENIES the call,
+# rather than raising a degradation level after the fact.
+#
+# The data-flow harm class (read a secret, exfiltrate it) is closed by the taxonomy:
+# the secret read arms the confidentiality floor and the egress sink is gated.
+
+mode: production
+
+# Action-class: mark the load-bearing privileged operations high-stakes. The
+# consequence gate denies anything above the unattended ceiling — a human/operator
+# gate (escalation or lease) is then required to run it.
+consequence_overrides:
+  # restart_gateway / shutdown are already CATASTROPHIC in the shipped table and
+  # are denied out of the box — these lines are belt-and-suspenders. The one that
+  # MATTERS is the renamed tool the table cannot know:
+  force_gateway_refresh: catastrophic   # a deployment's custom restart
+  restart_gateway: catastrophic
+  shutdown: catastrophic
+
+# Data-flow: the secret source arms the floor; the egress sink is gated.
+sensitive_sources:
+  - read_credentials
+egress_sinks:
+  - send_email
+driving_args:
+  send_email: [to]

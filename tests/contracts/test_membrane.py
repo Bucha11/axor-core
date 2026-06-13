@@ -1,9 +1,9 @@
 """
-Tests for SummarizationMembrane contract — Step 22.
+Tests for the SummarizationMembrane contract.
 
 Verifies:
 - SummarizationMembrane protocol importable
-- ClearanceEvent has all §25.6 audit fields
+- ClearanceEvent carries all required audit fields
 - Default outcome preserves taint
 - Worker-initiated summarization cannot produce clearance
 """
@@ -33,7 +33,7 @@ def test_summarization_membrane_is_protocol():
 # ── ClearanceEvent audit fields ────────────────────────────────────────────────
 
 def test_clearance_event_has_all_required_fields():
-    """§25.6: all audit fields must be present."""
+    """Every audit field must be present on a clearance event."""
     ev = ClearanceEvent(
         membrane_id="mem-1",
         source_taint_set=frozenset(["web"]),

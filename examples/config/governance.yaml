@@ -1,0 +1,230 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# axor-core governance configuration
+# ──────────────────────────────────────────────────────────────────────────────
+#
+# This file declares how the kernel should govern YOUR tool set. The kernel knows
+# generic tool names (read/write/bash/curl/...) on its own, but a real deployment
+# renames its tools — so you tell it, here, which of your tools read untrusted or
+# secret data and which ones send data out of the trust boundary. Everything in
+# this file is a deliberate, auditable declaration; nothing is inferred.
+#
+# Load it:
+#
+#     from axor_core import GovernanceConfig, GovernedSession
+#     config  = GovernanceConfig.from_yaml("governance.yaml")
+#     session = GovernedSession.from_config(executor, capability_executor, config)
+#
+# Requires the config extra (PyYAML):  pip install 'axor-core[config]'
+#
+# Fail-closed parsing: an unknown key or a malformed predicate RAISES at load time
+# rather than being silently ignored — a typo in a security config must never quietly
+# disable a rule.
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+# Execution mode. Controls how strict the kernel is overall.
+#   library     — same process, classifier on, escalate on ambiguity. Dev / trusted.
+#   production  — bypass attempts raise; classifier on; escalate on ambiguity.
+#   strict      — production + audit-required trace + NO inference, and two extra
+#                 obligations enforced AT CONSTRUCTION (see below).
+mode: strict
+
+# Optional filesystem root. Path-bearing tool arguments are confined to this root.
+# Omit if you do not constrain the filesystem here (e.g. the daemon does it).
+workspace: /app/workspace
+
+# Optional named profile — a preset bundle of mode/ceiling/escalation/isolation.
+# Leave unset to configure those directly. (See axor_core/profiles.py.)
+# profile: support
+
+
+# ── Sources: tools whose OUTPUT may carry attacker-influenced or secret data ─────
+#
+# These are READ tools. Declaring a tool here is how the kernel knows to treat its
+# output as tainted, so that a later sink driven by that output is gated.
+
+# untrusted_sources — output may carry INJECTED INSTRUCTIONS (a web page, an inbox,
+# a document store, another agent's reply). Output is registered untrusted; a
+# high-stakes sink driven by it (egress / write-outside / exec) is then refused.
+untrusted_sources:
+  - search_documents      # RAG / knowledge-base lookup — classic injection vector
+  - get_webpage           # fetched web content
+  - read_inbox            # incoming email — attacker can send you mail
+  - read_channel_messages # chat history
+
+# sensitive_sources — output is a SECRET (credentials, keys, 2FA codes). Reading one
+# ALSO arms the confidentiality floor: the SOUND, paraphrase-proof control that
+# refuses ALL egress until a governance endorsement, regardless of the outgoing
+# value's content. Use this for anything you would not want leaving the box.
+sensitive_sources:
+  - read_credentials
+  - get_api_key
+
+# benign_tools — trusted reads whose output need NOT be tainted (a clock, a static
+# config you control, a deterministic calculator). In strict mode EVERY registered
+# tool must have a declared role; list the harmless ones here so they are not flagged
+# as unclassified. Do NOT put a tool here if its output could be attacker-influenced.
+benign_tools:
+  - get_current_time
+  - list_my_calendars
+
+
+# ── Sinks: tools that ACT, where a tainted value must be stopped ─────────────────
+
+# egress_sinks — calls that send data OUT of the trust boundary (email, webhook,
+# money transfer, file share). Gated when driven by a tainted/secret value, and —
+# in strict mode — each one MUST also carry a destination allowlist below.
+egress_sinks:
+  - send_email
+  - post_webhook
+  - transfer_money
+  - share_file
+
+# positional_sinks — sinks whose legitimate input CANNOT encode an instruction (a
+# closed schema, an enum, a number). Admission flips to a sound positional check:
+# admitted only when the driving value's FORM is instruction-incomplete, independent
+# of content — so a paraphrased injection cannot defeat it. NEVER list an exec-class
+# sink here (a shell command's input is instruction-complete by definition; the
+# kernel will reject the config).
+positional_sinks:
+  - set_thermostat
+  - rate_item
+
+# imperative_sinks — sinks that FOLLOW their argument as an instruction (spawn a
+# sub-agent, send a chat message, dispatch a task). A tainted FREE-TEXT value into
+# one of these is the "imperative channel" — injected text becoming a command. The
+# kernel recognises the generic names (spawn/send/...); declare your RENAMED ones
+# here so the carrier gate covers them on both enforcement paths.
+imperative_sinks:
+  - dispatch_agent
+  - send_chat_message
+
+
+# ── Allowlists & predicates: decidable constraints on a sink's arguments ─────────
+#
+# value_policies attach per-argument predicates checked by a decision procedure
+# (membership / numeric range), content-blind and provenance-independent. An `enum`
+# on a destination argument is the SOUND, paraphrase-proof allowlist: nothing outside
+# the set passes, no matter how the value was encoded or where it came from.
+#
+# In STRICT mode every egress_sink MUST have an `enum` allowlist on its destination —
+# the kernel refuses to construct otherwise.
+value_policies:
+
+  send_email:
+    - arg: to                       # the recipient field
+      kind: enum
+      allowed:
+        - alice@yourcorp.com
+        - bob@yourcorp.com
+        - reports@yourcorp.com
+    # Lock every destination-bearing field, not just `to`, or the unlocked one is a
+    # hole. Uncomment if your send_email accepts cc/bcc:
+    # - arg: cc
+    #   kind: enum
+    #   allowed: [alice@yourcorp.com, bob@yourcorp.com]
+
+  post_webhook:
+    - arg: url
+      kind: enum
+      allowed:
+        - https://hooks.yourcorp.com/ingest
+
+  transfer_money:
+    - arg: recipient                # approved payees only
+      kind: enum
+      allowed:
+        - GB29NWBK60161331926819
+        - DE89370400440532013000
+    - arg: amount                   # and a bounded amount
+      kind: numeric_range
+      lo: 0
+      hi: 5000
+
+  share_file:
+    - arg: to
+      kind: enum
+      allowed: [alice@yourcorp.com, bob@yourcorp.com]
+
+
+# ── Driving arguments: which field of a sink the taint decision keys on ──────────
+#
+# By default the WHOLE argument blob drives the per-value taint decision — safe but
+# coarse. So `send_email(to=alice, body=<an untrusted document>)` is BLOCKED, because
+# the body carries untrusted content, even though the recipient is trusted and
+# "summarise this email and send it to alice" is a legitimate task.
+#
+# Declare a sink's driving argument(s) — the field that actually carries the
+# DESTINATION (or, for an imperative sink, the INSTRUCTION) — and the integrity
+# check narrows to just that field. Then:
+#   - a tainted `to` (recipient came from an untrusted read = exfil to attacker) is
+#     still DENIED;
+#   - untrusted *content* in `body` going to a *trusted* `to` is ALLOWED.
+#
+# This only narrows the INTEGRITY axis. The confidentiality floor is unchanged: once
+# a secret is read, ALL egress is blocked regardless of which field holds it — a
+# secret in `body` to a trusted `alice` is still refused.
+#
+# Tip: list EVERY destination-bearing field (to, cc, bcc), or an unlisted one that
+# carries the destination falls back to whole-args (fail-safe, never a bypass).
+driving_args:
+  send_email: [to, cc, bcc]   # the recipients drive the egress decision, not the body
+  post_webhook: [url]
+  transfer_money: [recipient]
+  share_file: [to]
+
+
+# ── Consequence overrides: raise/lower how irreversible a custom tool is ─────────
+#
+# The kernel ships a default action-class table (read=benign, write=reversible,
+# shutdown=catastrophic, ...). Override it for YOUR tools. A tool above the policy's
+# unattended ceiling requires a human/operator gate (escalation or a capability
+# lease) — it cannot run unattended. Classes: benign | reversible | consequential |
+# catastrophic.
+consequence_overrides:
+  drop_database: catastrophic       # irreversible — force a human gate
+  delete_workspace: catastrophic
+  send_invoice: consequential       # real-world side effect, hard to undo
+
+
+# ── Federation (agent-to-agent trust) — OPTIONAL ─────────────────────────────────
+#
+# When agents talk to each other, a value arriving from a peer carries a SIGNED
+# provenance receipt. The gateway decides: a valid receipt from a known peer on a
+# compatible kernel in a federated domain RESTORES the peer's provenance (trust its
+# labels); an authentic but incompatible/foreign one is RE-MINTED untrusted; a
+# forged / tampered / unknown-peer receipt is REJECTED outright.
+#
+# CRITICAL: key material is NEVER written inline here. Every key is a REFERENCE —
+# an environment variable (hex-encoded bytes) or a file path (raw bytes) — resolved
+# at load time. A shared HMAC secret or an ed25519 private key in a committed config
+# would be a disaster; there is deliberately no field to inline one, and a missing
+# reference fails closed at load.
+#
+# Remove this whole section if your agent does not federate.
+#
+# federation:
+#   compatible_kernels: ["0.8.0"]          # peer kernels we accept
+#   federated_domains: [payments.corp]     # domains whose provenance we restore
+#
+#   # OUR identity — used to mint receipts for values WE send to peers (send side).
+#   identity:
+#     peer_id: billing-agent
+#     domain: payments.corp
+#     kernel_version: "0.8.0"
+#     algorithm: ed25519                   # ed25519 (asymmetric) or hmac-sha256
+#     private_key_env: AXOR_FED_PRIVATE_KEY   # hex in env — NEVER inline
+#
+#   # PEERS we trust — used to verify receipts on values they send us (receive side).
+#   peers:
+#     - peer_id: fulfilment-agent
+#       domain: payments.corp
+#       kernel_version: "0.8.0"
+#       algorithm: ed25519
+#       public_key_file: /etc/axor/peers/fulfilment.pub   # public key — file or env
+#
+#     - peer_id: legacy-agent              # a peer still on symmetric HMAC
+#       domain: payments.corp
+#       kernel_version: "0.8.0"
+#       algorithm: hmac-sha256
+#       shared_key_env: AXOR_FED_SHARED_LEGACY            # shared secret — NEVER inline

@@ -1,8 +1,8 @@
 """
-Fail-closed tests — Step 28 (§5.3).
+Fail-closed tests.
 
-Verifies that execution is denied or session is terminated for all
-§5.3 required failure scenarios:
+Verifies that execution is denied or the session is terminated for each
+failure scenario:
 
   1. Interceptor exception → deny
   2. Normalizer exception → deny
@@ -18,7 +18,7 @@ from __future__ import annotations
 import sys
 import os
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
 
@@ -117,8 +117,8 @@ def test_fail_closed_budget_tracker_subscriber_exception_does_not_break():
     """
     A subscriber that raises during record() must not break the record() call.
 
-    BudgetTracker is fail-open for subscriber errors (per-spec: telemetry
-    failure does not bypass execution), but record() itself must succeed.
+    BudgetTracker is fail-open for subscriber errors (a telemetry failure
+    must not bypass execution), but record() itself must succeed.
     """
     from axor_core.budget.tracker import BudgetTracker
 
@@ -149,7 +149,7 @@ def test_fail_closed_empty_allowed_tools_denies_all():
     from axor_core.contracts.envelope import ExecutionEnvelope, ExportContract, Capabilities
     from axor_core.contracts.context import ContextView, LineageSummary
     from axor_core.contracts.cancel import make_token
-    from axor_core.contracts.policy import ExecutionPolicy, ToolPolicy, ExportMode
+    from axor_core.contracts.policy import ExecutionPolicy, ExportMode
 
     lineage = LineageSummary(node_id="n", parent_id=None, depth=0,
                              ancestry_ids=[], inherited_restrictions=[])
@@ -171,7 +171,7 @@ def test_fail_closed_empty_allowed_tools_denies_all():
     loop = IntentLoop(capability_executor=MagicMock(), trace_events=[])
     intent = Intent(kind=IntentKind.TOOL_CALL,
                     payload={"tool": "read", "args": {}}, node_id="n")
-    decision = loop._evaluate_tool_intent(intent, envelope)
+    decision, _ = loop._evaluate_tool_intent(intent, envelope)
     assert decision.kind == PolicyDecisionKind.DENY
 
 
@@ -184,7 +184,6 @@ def test_fail_closed_trace_access_requires_token():
     This is the audit-required fail-closed contract: worker cannot read trace.
     """
     from axor_core.trace.collector import TraceCollector
-    from axor_core.trace.guard import TraceAccessGuard
 
     collector = TraceCollector(operator_token="audit-token")
     collector.register_node("n1", None, 0, "audit-policy")
@@ -216,7 +215,7 @@ def test_fail_closed_telemetry_failure_does_not_bypass_policy():
     from axor_core.contracts.envelope import ExecutionEnvelope, ExportContract, Capabilities
     from axor_core.contracts.context import ContextView, LineageSummary
     from axor_core.contracts.cancel import make_token
-    from axor_core.contracts.policy import ExecutionPolicy, ToolPolicy, ExportMode
+    from axor_core.contracts.policy import ExecutionPolicy, ExportMode
     from axor_core.budget.tracker import BudgetTracker
 
     # Simulate telemetry/subscriber failure
@@ -248,5 +247,5 @@ def test_fail_closed_telemetry_failure_does_not_bypass_policy():
                     payload={"tool": "rm_rf", "args": {}}, node_id="n")
 
     # Policy must still deny even when telemetry is broken
-    decision = loop._evaluate_tool_intent(intent, envelope)
+    decision, _ = loop._evaluate_tool_intent(intent, envelope)
     assert decision.kind == PolicyDecisionKind.DENY

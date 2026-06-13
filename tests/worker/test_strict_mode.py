@@ -1,5 +1,5 @@
 """
-Tests for ExecutionMode STRICT enforcement — Step 29.
+Tests for ExecutionMode STRICT enforcement.
 
 STRICT mode is a superset of PRODUCTION mode.  These tests confirm that each
 STRICT-only restriction is active and that PRODUCTION mode does NOT apply them.
@@ -15,7 +15,6 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-import pytest
 
 from axor_core.capability.executor import CapabilityExecutor
 from axor_core.contracts.mode import ExecutionMode

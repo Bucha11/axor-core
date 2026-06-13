@@ -45,32 +45,35 @@ reach the executor.
 
 When a file read, web fetch, MCP result, or API response enters `ContextView`:
 
-1. `TaintEngine.propagate(TaintSource.WEB | MCP | FILE | API, scope=SESSION)` is called.
-2. The session (or node) is marked tainted for the remainder of execution.
-3. Subsequent privileged actions are subject to stricter policy evaluation.
-4. `TaintPropagatedEvent` is written to the `DecisionTrace`.
-5. Child agents spawned after taint inherits the parent's taint state.
-6. The taint source identifier is used by `DegradationEngine` to track per-source
-   behavioral pressure — accumulating denials from the same origin may quarantine
-   that source and escalate the session's `DegradationLevel`.
+1. The produced **value** is registered with its causal root:
+   `engine.register_value(content, CausalRoot.external_read(TaintSource.WEB | MCP | FILE | API))`.
+2. Enforcement is **per-value**: a sink decides on the causal root of its driving
+   argument (by content derivation), so only actions that actually *carry* a
+   tainted/sensitive value are constrained — not every subsequent action.
+3. The per-value *driving root* at a denied sink feeds `DegradationEngine` to track
+   per-source behavioral pressure — accumulating denials from the same origin may
+   quarantine that source and escalate the session's `DegradationLevel`.
+4. Child agents inherit the parent's per-value ledger via `inherit_value_ledger`.
 
-Taint is sticky — it persists until governance explicitly clears it via
-`TaintEngine.clear_by_governance()`.
+A value's provenance does not decay on its own; it is released only by governance —
+per value via `endorse_value()` or wholesale via `clear_by_governance()`.
 
 ---
 
-## How Taint Is Updated
+## How Taint Is Recorded
 
-| Source | TaintSource | Default Scope |
-|--------|-------------|---------------|
-| Web fetch / search | `WEB` | SESSION |
-| MCP result | `MCP` | SESSION |
-| File read (untrusted workspace) | `FILE` | NODE or SESSION |
-| External API | `API` | SESSION |
-| Child agent output | `CHILD_AGENT` | SUBTREE |
-| Memory (external session) | `MEMORY` | NODE |
-| Provider tool output | `PROVIDER_TOOL` | INTENT or NODE |
-| Unknown external | `UNKNOWN_EXTERNAL` | SESSION |
+A registered value records which `TaintSource`(s) it derived from in its causal root.
+
+| Source | TaintSource |
+|--------|-------------|
+| Web fetch / search | `WEB` |
+| MCP result | `MCP` |
+| File read (untrusted workspace) | `FILE` |
+| External API | `API` |
+| Child agent output | `CHILD_AGENT` |
+| Memory (external session) | `MEMORY` |
+| Provider tool output | `PROVIDER_TOOL` |
+| Unknown external | `UNKNOWN_EXTERNAL` |
 
 ---
 
@@ -82,15 +85,16 @@ evaluate whether content is trusted.
 Taint provides the trust signal:
 
 - Selection controls **visibility** (what the agent sees).
-- Taint controls **privilege** (what the agent can do after seeing it).
+- Per-value provenance controls **privilege** (what may be done with a *specific
+  value* derived from untrusted content).
 
-A tainted session cannot expand its capability surface via tool calls that
-would normally be allowed — it remains under the same policy ceiling, but
-with additional escalation requirements.
+A value carrying untrusted/sensitive provenance cannot be driven into a risky sink
+(an integrity write, an egress) that would normally be allowed — while actions that
+do not carry that value remain unconstrained (the per-value win).
 
 This separation means that even if a malicious file enters `ContextView`, the
 resulting execution is still governed.  The agent may be instructed to do
-something harmful by the content, but the `ToolInterceptor` (Layer 1 policy)
+something harmful by the content, but the the capability gate
 will evaluate the resulting tool calls independently of the content.
 
 ---
@@ -99,12 +103,12 @@ will evaluate the resulting tool calls independently of the content.
 
 When a child node is spawned from a tainted parent:
 
-1. `GovernedNode._handle_spawn_child()` calls `child_node._taint_engine.inherit_from_parent(parent.state)`.
-2. The child starts with `parent_inherited=True` in its `TaintState`.
+1. `GovernedNode._handle_spawn_child()` calls `child_node._taint_engine.inherit_value_ledger(parent_engine)`.
+2. The child's per-value gate now flags any value the parent marked tainted/sensitive.
 3. The child cannot exceed the parent's policy ceiling (enforced by `_validate_child_policy()`).
-4. The child cannot clear inherited taint via the worker path.
+4. The child cannot release inherited provenance via the worker path.
 
-A child agent cannot be used to launder parent taint.
+A child agent cannot be used to launder a parent's tainted values.
 
 ---
 

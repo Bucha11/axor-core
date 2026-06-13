@@ -1,5 +1,119 @@
 # Changelog
 
+## Unreleased
+
+The kernel/platform split and one-implementation gate engine.
+
+### Added
+
+- **Trust rings, machine-enforced.** Subsystems grouped into Ring 0 (kernel — the
+  TCB), Ring 1 (runtime), Ring 2 (platform). An `import-linter` `kernel-purity`
+  contract (`.importlinter`, run in CI) forbids the kernel from importing the
+  runtime or platform, so a platform bug cannot reach a decision.
+- **`policy/gates.py` — one shared gate engine.** The six stateless gates
+  (consequence, value policies, SSRF, positional, carrier, per-value taint +
+  confidentiality floor) are pure functions. The streaming `IntentLoop` and the
+  synchronous `ToolCallGovernor` both delegate to them — the decision logic exists
+  once and cannot drift.
+- **Operator tool taxonomy on the session path.** `egress_sinks`,
+  `untrusted_sources`, `sensitive_sources` are threaded through `GovernedSession →
+  GovernedNode → IntentLoop` (previously only the standalone governor had them), so
+  the main path governs a deployment's renamed tools. New integration test proves a
+  declared-tool exfiltration is blocked end-to-end.
+- **Kernel-only import bypass.** Lazy package `__init__` (PEP 562): `from axor_core
+  import ToolCallGovernor` loads Ring 0 and nothing from the runtime or platform;
+  `GovernedSession` lazy-loads the full stack. Regression-tested.
+- **Robust identifier tokenisation** in the taint ledger: case-fold + structural
+  delimiter splitting + Unicode NFKC/zero-width normalisation, so an attacker
+  address written `mailto:x@y.z` / `'x@y.z'` / `cc=x@y.z;` / fullwidth / split by an
+  invisible char still matches the clean form a model extracts. Exhaustive
+  evasion-surface tests; documented residuals (encoding, sub-12-char shredding,
+  cross-script homoglyphs, semantic paraphrase) marked strict-xfail.
+- **Declarative `GovernanceConfig` (YAML)** with fail-closed parsing and key
+  material by reference only (`*_env` / `*_file`), `profiles` presets, and the
+  synchronous `ToolCallGovernor` for framework-owned agent loops.
+- **Federation A2A**: signed provenance receipts (HMAC default, optional ed25519),
+  the L1/L2 trust ladder, replay defence (per-(peer, nonce) cache, pruned by
+  expiry, receiver-side TTL clamp, legacy-receipt reject), and value-hash binding.
+- **STRICT mode obligations**: every egress sink needs a destination allowlist,
+  every tool needs a declared data-flow role, and an egress sink that narrows its
+  taint check to `driving_args` must carry its allowlist on the driving arg.
+- **Extension points**: tightening-only `TrajectoryObserver` and the advisory,
+  projection-only adjudicator.
+
+### Changed
+
+- `IntentNormalizer` moved `node/normalizer.py → policy/normalizer.py` (Ring-0
+  structural classification; it never belonged in the runtime ring).
+- The role→provenance output mapping is now a single shared `policy/provenance.py`
+  (`output_root`), used by both enforcement paths instead of being duplicated.
+- `ValueProvenance` now includes `confidentiality_floor_active`: the kernel gates
+  confidentiality on the sound floor via the contract, not a silent fallback.
+- Escalation grants, capability leases, and the flood guard moved into
+  `node/escalation.py` (`EscalationManager`); the intent loop delegates instead of
+  implementing them inline.
+- spawn's carrier check routes through the shared `policy.gates.carrier_gate`
+  instead of an ad-hoc reimplementation.
+- Removed the unused `AnomalyDetector` / `LLMVerifier` protocols (their only
+  implementer is retired); the sentinel-facing detection surface is unchanged.
+
+### Security
+
+- `restore_root` degrades an unknown federated source label to an untrusted
+  re-mint instead of silently restoring a clean root (under-taint fix).
+- Trace filenames are derived from a sanitised session-id stem (path-injection
+  guard).
+- Lease use / grant op is consumed only when a call is finally approved, so a call
+  denied by a later data-flow gate no longer burns a use.
+- The confidentiality-floor map is bounded: a flood of distinct secret reads flips
+  a sticky fail-closed flag instead of growing memory without bound.
+
+## 0.8.0 — 2026-06-10
+
+The v4.12 governance pass — per-value provenance becomes the enforcement spine, with
+a stratified soundness story across the integrity and confidentiality axes.
+
+### Added
+
+- **Per-value enforcement (TM2).** Sinks decide on the driving argument's own
+  `CausalRoot` via the `ValueProvenance` contract, not a session-wide flag. The
+  content-derivation `ValueTaintLedger` is refcounted (no endorsement over-release)
+  and fails closed on flood saturation (no silent fragment drop).
+- **Confidentiality sound floor (TM4, 1.1b).** Egress is gated on the *fact* of a
+  sensitive read, independent of the egress value's content (paraphrase-proof);
+  released only by governance endorsement.
+- **D_high positional admission (Corollary / 1.1c).** Operator-declared
+  instruction-incomplete sinks admit only via a positional carrier check
+  (content-independent), closing the O2/paraphrase gap on that partition. Exec-class
+  sinks cannot be lifted (lift ban).
+- **Consequence axis (TM3.1) wired through the gate**, incl. power-state shell
+  command detection (X5 OpenClaw).
+- **Thm. 0 decidability classifier** (`kernel/decidability.py`) wired into value-policy
+  registration; K5/T4 fuzz-floor for the path and carrier classifiers.
+- **Persistence / cross-process re-mint (TM3.2 / TM4.1):** memory read-back and a
+  child's returned output are re-minted untrusted.
+- **Advisory adjudicator (TM3.4):** projection-only, memoized by π-hash,
+  tightening-only.
+- **Opt-in detection→degradation (TM7.1):** a decidable reputation
+  threshold-crossing may tighten degradation; per-tenant isolated.
+- **Federation L1/L2 (TM4.2):** authenticated peers with HMAC provenance receipts;
+  L2 restores provenance, incompatible kernels/domains degrade to L1, forged
+  receipts are denied.
+
+### Fixed
+
+- SSRF host classification across all obfuscated notations; extension-override and
+  deployment-overlay escalations; spawn taint gate; degradation clearance now resets
+  quarantine; budget `register_node` wiring and `restrict_export` enforcement;
+  carrier classifier no longer admits paths/URLs/`Infinity`/`NaN`; null-byte paths
+  fail closed; sanitizer reserved-prefix match is case-insensitive; symbol
+  deprecation match is whole-word.
+
+### Known gaps
+
+- **X1** in-process-LLM implicit flow on the D_low integrity partition remains open
+  (documented as strict `xfail`); closed only by a CaMeL trust-model backend.
+
 ## 0.5.0 — 2026-05-25
 
 ### Added

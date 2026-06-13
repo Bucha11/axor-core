@@ -2,27 +2,38 @@ from __future__ import annotations
 
 import logging
 import traceback
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, AsyncIterator, Awaitable, Callable
 
 from axor_core.capability.executor import CapabilityExecutor
-from axor_core.capability.flood import EscalationFloodGuard
-from axor_core.contracts.anomaly import (
-    AnomalyClass,
-    AnomalyDetector,
-    AnomalyResult,
-    NormalizedIntent,
-)
+from axor_core.contracts.anomaly import NormalizedIntent
 from axor_core.contracts.envelope import ExecutionEnvelope
 from axor_core.contracts.intent import Intent, IntentKind, ResolvedIntent
+from axor_core.contracts.canonical import ConsequenceClass
 from axor_core.contracts.policy import PolicyDecision, PolicyDecisionKind
+from axor_core.policy.consequence import consequence_class
+from axor_core.policy.value_policy import check_value_policies
+from axor_core.policy.gates import (
+    carrier_gate,
+    consequence_gate,
+    driving_subset,
+    positional_gate,
+    ssrf_gate,
+    taint_gate,
+)
+from axor_core.kernel.registration import (
+    validate_value_policies,
+    validate_egress_allowlists,
+    validate_driving_arg_allowlists,
+    tool_is_classified,
+)
+from axor_core.taint.engine import TaintEngine
+from axor_core.policy.sinks import INSTRUCTION_COMPLETE_SINKS
+from axor_core.policy.provenance import output_root
 from axor_core.contracts.result import ExecutorEvent, ExecutorEventKind
 from axor_core.contracts.trace import (
     CancelledEvent,
-    EscalationDeniedEvent,
-    EscalationGrantedEvent,
     IntentDeniedEvent,
-    SuspiciousIntentEvent,
+    SinkDensityEvent,
     TokensSpentEvent,
     TraceEvent,
     TraceEventKind,
@@ -33,21 +44,27 @@ from axor_core.errors.exceptions import (
     ToolNotFoundError,
 )
 from axor_core.capability.lease_validator import (
-    LeaseValidator,
     extract_path_arg,
     path_matches_allowlist,
 )
-from axor_core.contracts.lease import LeaseAuthorityType
 from axor_core.contracts.degradation import DegradationLevel
-from axor_core.contracts.taint import TaintScope, TaintSource, TaintState
 from axor_core.degradation.engine import _LOCKED_ALLOWED_TOOLS
-from axor_core.node.normalizer import IntentNormalizer
+from axor_core.policy.normalizer import IntentNormalizer
+from axor_core.node.canonicalizer import IntentCanonicalizer
+from axor_core.node.escalation import EscalationManager, _PendingConsumption
+from axor_core.kernel.adjudicator import (
+    Adjudicator,
+    MemoizingAdjudicator,
+    projection_hash,
+)
+from axor_core.federation.value import FederatedValue
+from axor_core.federation.gateway import FederationError
+from axor_core.taint.causal_root import CausalRoot
 
 if TYPE_CHECKING:
-    from axor_core.contracts.lease import CapabilityLease
     from axor_core.contracts.reputation import ReputationEnricher
     from axor_core.degradation.engine import DegradationEngine
-    from axor_core.taint.engine import TaintEngine
+    from axor_core.contracts.provenance import ValueProvenance
 
 log = logging.getLogger("axor.intent_loop")
 
@@ -81,13 +98,6 @@ SpawnCallback = Callable[[str, str, str], Awaitable[str]]
 EscalationCallback = Callable[[str, str, list[str], int], Awaitable[bool]]
 
 
-@dataclass
-class _GrantedEscalation:
-    tool: str
-    paths: list[str]  # empty = no path restriction
-    ops_remaining: int
-
-
 class IntentLoop:
     """
     Core of governed execution.
@@ -118,37 +128,117 @@ class IntentLoop:
         tool_result_callback: ToolResultCallback | None = None,
         spawn_callback: SpawnCallback | None = None,
         escalation_callback: EscalationCallback | None = None,
-        anomaly_detector: AnomalyDetector | None = None,
-        anomaly_window_size: int = 10,
-        taint_engine: "TaintEngine | None" = None,
+        taint_engine: "ValueProvenance | None" = None,
         degradation_engine: "DegradationEngine | None" = None,
         reputation_enricher: "ReputationEnricher | None" = None,
         max_intents_per_session: int | None = None,
         max_total_spawns: int | None = None,
+        value_policies: "dict | None" = None,
+        consequence_overrides: "dict | None" = None,
+        positional_sinks: "frozenset[str] | set[str] | None" = None,
+        adjudicator: "Adjudicator | MemoizingAdjudicator | None" = None,
+        federation_gateway=None,
+        egress_sinks: "frozenset[str] | set[str] | None" = None,
+        untrusted_sources: "frozenset[str] | set[str] | None" = None,
+        sensitive_sources: "frozenset[str] | set[str] | None" = None,
+        imperative_sinks: "frozenset[str] | set[str] | None" = None,
+        benign_tools: "frozenset[str] | set[str] | None" = None,
+        driving_args: "dict[str, list[str]] | None" = None,
+        require_egress_allowlist: bool = False,
+        require_tool_roles: bool = False,
+        trajectory_observers: "list | None" = None,
     ) -> None:
         self._executor = capability_executor
         self._trace_events = trace_events
         self._depth = current_depth
         self._tool_result_callback = tool_result_callback
         self._spawn_callback = spawn_callback
-        self._escalation_callback = escalation_callback
-        self._anomaly_detector = anomaly_detector
-        self._anomaly_window_size = anomaly_window_size
-        self._taint_engine = taint_engine
+        # Escalation grants + capability leases + flood guard live in their own
+        # manager; the loop only asks it to resolve/grant/cover.
+        self._escalation = EscalationManager(escalation_callback=escalation_callback)
+        # Default to a real engine when none is supplied: the per-value/carrier/
+        # taint/floor cascade is guarded on `self._taint_engine is not None`, so a
+        # None engine would silently disable the entire data-flow core (fail-open).
+        # Constructing a default makes the absence of an engine impossible, so that
+        # cascade always runs (fail-closed).
+        self._taint_engine = taint_engine if taint_engine is not None else TaintEngine()
         self._degradation_engine = degradation_engine
         self._reputation_enricher = reputation_enricher
         self._normalizer = IntentNormalizer()
-        self._intent_window: list[NormalizedIntent] = []
         self._intent_sequence = 0
         self._token_totals = _TokenAccumulator()
-        self._granted_escalations: dict[str, _GrantedEscalation] = {}
-        self._capability_leases: dict[str, "CapabilityLease"] = {}
-        self._lease_validator = LeaseValidator()
-        self._escalation_count = 0
-        self._flood_guard = EscalationFloodGuard()
         # DoS guards — opt-in (None = unlimited). GovernedSession sets prod defaults.
         self._max_intents_per_session = max_intents_per_session
         self._max_total_spawns = max_total_spawns
+        self._value_policies = value_policies or {}
+        # Registration validator: reject value policies that try to discharge a
+        # field requiring rich-syntax (fuzz) checking with a simple decidable
+        # predicate — false assurance must fail closed, not be silently accepted.
+        _vp_errors = validate_value_policies(self._value_policies)
+        if _vp_errors:
+            raise ValueError(
+                "invalid value_policies: " + "; ".join(_vp_errors)
+            )
+        self._consequence_overrides = consequence_overrides or {}
+        # Positional sinks. These are sinks the operator DECLARES to have an
+        # instruction-incomplete input space — i.e. their legitimate input cannot
+        # encode an instruction, and the trusted side constrains input to that space
+        # (e.g. via constrained decoding). For these sinks, admission flips from the
+        # leaky content-derivation DENY-LIST to a sound POSITIONAL ALLOW-LIST: admit
+        # only if the driving value's carrier is instruction-incomplete, independent
+        # of content. Opt-in/empty by default; sinks that execute their argument can
+        # NEVER be declared here (a shell command's input space admits instructions
+        # by definition).
+        # Advisory adjudicator. Wrap a bare Adjudicator so verdicts are memoized by
+        # projection hash; a MemoizingAdjudicator is used as-is. None = off.
+        self._canonicalizer = IntentCanonicalizer()
+        if adjudicator is None:
+            self._adjudicator = None
+        elif isinstance(adjudicator, MemoizingAdjudicator):
+            self._adjudicator = adjudicator
+        else:
+            self._adjudicator = MemoizingAdjudicator(adjudicator)
+        # Federation gateway (opt-in): decides the provenance of a peer value that
+        # arrives wrapped as a FederatedValue. None = federation off.
+        self._federation_gateway = federation_gateway
+        self._positional_sinks = frozenset(positional_sinks or ())
+        # Operator tool taxonomy (complements the normalizer's heuristics): which
+        # tools exfiltrate (egress_sinks) and which produce untrusted/secret data
+        # (untrusted_sources / sensitive_sources). Empty by default — the normalizer
+        # still classifies generic tools; a deployment declares its renamed tools.
+        self._egress_sinks = frozenset(egress_sinks or ())
+        self._untrusted_sources = frozenset(untrusted_sources or ())
+        self._sensitive_sources = frozenset(sensitive_sources or ())
+        # Operator-declared instruction-following sinks (renamed spawn/send/exec).
+        # Threaded into carrier_gate so a renamed imperative sink is honoured here,
+        # matching the synchronous governor (previously this path ignored it).
+        self._imperative_sinks = frozenset(imperative_sinks or ())
+        # Explicitly-benign reads, kept for the lazy STRICT role check below.
+        self._benign_tools = frozenset(benign_tools or ())
+        self._require_tool_roles = require_tool_roles
+        # Per-sink driving arguments — the fields the taint decision keys on
+        # (whole-args by default). Narrows over-blocking of untrusted content sent
+        # to a trusted destination.
+        self._driving_args = {k: frozenset(v) for k, v in (driving_args or {}).items()}
+        # Stateful, domain-supplied trajectory observers (tighten-only). Shared
+        # instances so their state persists across the session's runs.
+        self._trajectory_observers = list(trajectory_observers or [])
+        # STRICT obligation: every egress sink must carry an enum allowlist (the
+        # sound, paraphrase-proof destination control). Fail closed at construction.
+        if require_egress_allowlist:
+            _eg_errors = validate_egress_allowlists(self._egress_sinks, self._value_policies)
+            _eg_errors += validate_driving_arg_allowlists(
+                self._egress_sinks, self._driving_args, self._value_policies
+            )
+            if _eg_errors:
+                raise ValueError("strict egress allowlist: " + "; ".join(_eg_errors))
+        _illegal = {s for s in self._positional_sinks if s.lower() in INSTRUCTION_COMPLETE_SINKS}
+        if _illegal:
+            raise ValueError(
+                "instruction-complete sinks cannot be declared positional: "
+                f"{sorted(_illegal)} — their codomain admits instructions by "
+                "definition; they must stay on the content-derivation path."
+            )
         self._spawn_count = 0
 
     async def run(
@@ -258,6 +348,27 @@ class IntentLoop:
                                 )
                             continue
 
+                        # Per-value carrier/taint gate — the capability check
+                        # above only asks "may this node spawn"; it does not inspect
+                        # WHAT drives the spawn. A tainted free-text task is prompt
+                        # injection reaching an instruction-following sink.
+                        spawn_args = event.payload.get("args", {})
+                        taint_reason = self._spawn_taint_reason(spawn_args)
+                        if taint_reason is not None:
+                            self._record_denial(spawn_intent, taint_reason, envelope)
+                            denial = _denial_result(tool_name, taint_reason)
+                            if self._tool_result_callback is not None:
+                                await self._tool_result_callback(
+                                    tool_use_id, tool_name, denial, False
+                                )
+                            else:
+                                yield ExecutorEvent(
+                                    kind=ExecutorEventKind.TEXT,
+                                    payload={"tool_result": denial, "approved": False},
+                                    node_id=envelope.node_id,
+                                )
+                            continue
+
                         # Approved — count this spawn once at the dispatch site.
                         self._spawn_count += 1
                         task = event.payload.get("args", {}).get("task", "")
@@ -354,7 +465,7 @@ class IntentLoop:
                 result=_denial_result(tool_name, reason),
             )
 
-        decision = self._evaluate_tool_intent(intent, envelope)
+        decision, pending_consumption = self._evaluate_tool_intent(intent, envelope)
 
         if decision.kind == PolicyDecisionKind.DENY:
             self._record_denial(intent, decision.reason, envelope)
@@ -367,53 +478,112 @@ class IntentLoop:
                 result=denial_resp.to_tool_result(),
             )
 
-        # normalize intent once — shared by anomaly detection, taint, degradation, and reputation
+        # Normalize early: the consequence gate needs the operation enum to
+        # escalate a generic sink whose command is power-state-changing (e.g.
+        # `bash shutdown`). Pure structural transform; reputation enrichment stays
+        # telemetry-only and never gates.
         needs_normalized = (
-            self._anomaly_detector is not None
-            or self._taint_engine is not None
+            self._taint_engine is not None
             or self._degradation_engine is not None
             or self._reputation_enricher is not None
         )
         normalized: NormalizedIntent | None = None
         if needs_normalized:
             normalized = self._normalizer.normalize(intent)
-
-        # reputation enrichment — populate reputation fields from sentinel snapshot.
-        # A-11: anomaly detector (Layer 2) must not receive enriched reputation floats in Phase 1.
-        # normalized_for_layer2 retains the pre-enrichment copy (0.0 defaults) for the intent window.
-        normalized_for_layer2: NormalizedIntent | None = normalized
         if self._reputation_enricher is not None and normalized is not None:
             normalized = self._reputation_enricher.enrich(normalized, intent)
-            # normalized_for_layer2 keeps the pre-enrichment version (invariant A-11)
+            # Opt-in: a reputation threshold-CROSSING fact may tighten degradation
+            # (tightening-only, a decidable fact — not the raw score). No-op unless
+            # the degradation engine was given a detection_floor. Detection never
+            # returns an allow decision; it can only tighten.
+            if self._degradation_engine is not None:
+                self._degradation_engine.record_detection(normalized)
+                for ev in self._degradation_engine.drain_events():
+                    self._trace_events.append(ev)
 
-        # Phase 1 reputation rule — deterministic deny before ML cascade (axor-sentinel spec §Layer 2)
-        # Fires when resource has high accumulated suspicion AND session already read external input.
-        if normalized is not None and (
-            normalized.target_resource_reputation >= 0.8
-            and normalized.after_external_read
-        ):
-            reason = (
-                "reputation enforcement: resource reputation "
-                f"{normalized.target_resource_reputation:.3f} >= 0.8 "
-                "and session preceded by external read"
+        # STRICT role completeness (lazy, per call): an unclassified tool fails
+        # closed instead of defaulting to a clean benign read. Mirrors the governor;
+        # closes the fail-open-on-unknown-tool default on the streaming path too.
+        if self._require_tool_roles and tool_name not in _LOCKED_ALLOWED_TOOLS \
+                and not tool_is_classified(
+                    tool_name,
+                    untrusted_sources=self._untrusted_sources,
+                    sensitive_sources=self._sensitive_sources,
+                    egress_sinks=self._egress_sinks,
+                    positional_sinks=self._positional_sinks,
+                    benign_tools=self._benign_tools,
+                    value_policies=self._value_policies,
+                ):
+            role_denial = (
+                f"tool {tool_name!r} has no declared data-flow role; STRICT mode "
+                "refuses an unclassified tool (it would default to a clean read and "
+                "arm no floor)"
             )
-            self._record_denial(intent, reason, envelope)
-            denial_resp = _make_denial_response(reason, "high_reputation_resource_tainted_access")
-            # DegradationEngine interaction: reputation deny contributes to tool_pressure_count
-            # per spec §DegradationEngine interaction.
-            self._record_degradation_signal(intent, denial_resp, normalized)
+            self._record_denial(intent, role_denial, envelope)
+            denial_resp = _make_denial_response(role_denial, "unclassified_tool")
+            self._record_degradation_signal(intent, denial_resp)
             return ResolvedIntent(
                 intent=intent,
                 approved=False,
-                reason=reason,
+                reason=role_denial,
                 result=denial_resp.to_tool_result(),
             )
 
-        # degradation pre-check — enforce narrowed policy from previous signals
+        # consequence axis — content-blind structural gate on the action class, part
+        # of the pure allow decision. Catches a destructive/irreversible action
+        # issued under trusted provenance that the provenance axes cannot see (e.g.
+        # a host shutdown or disk wipe). Reads only the sink type + operation enum +
+        # policy ceiling.
+        consequence_denial = self._check_consequence(
+            tool_name, envelope,
+            operation=normalized.operation if normalized is not None else None,
+        )
+        if consequence_denial is not None:
+            self._record_denial(intent, consequence_denial, envelope)
+            denial_resp = _make_denial_response(consequence_denial, "consequence_gate")
+            self._record_degradation_signal(intent, denial_resp)
+            return ResolvedIntent(
+                intent=intent,
+                approved=False,
+                reason=consequence_denial,
+                result=denial_resp.to_tool_result(),
+            )
+
+        # value-policy predicates — operator-registered range/enum predicates over
+        # an admissible projection of an argument (e.g. transfer(amount) within
+        # bounds). Content-blind: reads only the numeric/enum projection, discharged
+        # by decidable decision procedures.
+        value_denial = check_value_policies(tool_name, tool_args, self._value_policies)
+        if value_denial is not None:
+            self._record_denial(intent, value_denial, envelope)
+            denial_resp = _make_denial_response(value_denial, "value_policy")
+            self._record_degradation_signal(intent, denial_resp)
+            return ResolvedIntent(
+                intent=intent,
+                approved=False,
+                reason=value_denial,
+                result=denial_resp.to_tool_result(),
+            )
+
+        # normalize intent once — shared by taint, degradation, and reputation
+
+        # ── allow gate (pure) — capability already checked above; here the
+        # degradation-narrowed policy gate. Degradation is driven only by
+        # structural facts; no probabilistic detector feeds it (ML/judge removed).
         if self._degradation_engine is not None and normalized is not None:
-            taint_state = self._taint_engine.state if self._taint_engine is not None else None
+            # Per-value: hand the driving value's causal_root to the check
+            # path so a value-keyed quarantine ("value:<src>") is matched here, not
+            # only on the record_signal path. Without it derive_source_id falls back
+            # to provenance/"unknown" and the narrowing silently misses.
+            check_root = (
+                self._taint_engine.derive_value(
+                    driving_subset(tool_args, self._driving_args.get(tool_name))
+                )
+                if self._taint_engine is not None
+                else None
+            )
             degradation_denial = self._check_degradation_denial(
-                tool_name, normalized, taint_state, envelope
+                tool_name, normalized, envelope, driving_root=check_root
             )
             if degradation_denial is not None:
                 self._record_denial(intent, degradation_denial, envelope)
@@ -426,105 +596,130 @@ class IntentLoop:
                     result=denial_resp.to_tool_result(),
                 )
 
-        # anomaly detection — runs after policy approval
-        # A-11: pass pre-enrichment normalized (reputation floats at 0.0) to Layer 2
-        if self._anomaly_detector is not None and normalized_for_layer2 is not None:
-            self._intent_window.append(normalized_for_layer2)
-            if len(self._intent_window) > self._anomaly_window_size:
-                self._intent_window.pop(0)
-            try:
-                anomaly = await self._anomaly_detector.score(
-                    window=list(self._intent_window),
-                    policy_name=envelope.policy.name,
-                )
-            except Exception as exc:
-                reason = f"anomaly detector raised unexpectedly: {type(exc).__name__}: {exc}"
-                log.error("anomaly detector error — failing closed: %s", exc, exc_info=True)
-                self._record_denial(intent, reason, envelope)
-                denial_resp = _make_denial_response(reason, "anomaly_detector_error")
-                self._record_degradation_signal(intent, denial_resp, normalized)
-                return ResolvedIntent(
-                    intent=intent,
-                    approved=False,
-                    reason=reason,
-                    result=denial_resp.to_tool_result(),
-                )
-
-            if anomaly is not None and anomaly.cls == AnomalyClass.CRITICAL:
-                reason = f"anomaly detector: CRITICAL score={anomaly.score:.2f} reasons={anomaly.reasons}"
-                self._record_anomaly_event(
-                    tool_name=tool_name,
-                    normalized=normalized,
-                    anomaly=anomaly,
-                    policy_action="denied",
-                    envelope=envelope,
-                )
-                self._record_denial(intent, reason, envelope)
-                return ResolvedIntent(
-                    intent=intent,
-                    approved=False,
-                    reason=reason,
-                    result=_denial_result(tool_name, reason),
-                )
-
-            if anomaly is not None and anomaly.cls == AnomalyClass.SUSPICIOUS:
-                self._record_anomaly_event(
-                    tool_name=tool_name,
-                    normalized=normalized,
-                    anomaly=anomaly,
-                    policy_action="flagged",
-                    envelope=envelope,
-                )
-
-        # taint enforcement — deny high-risk operations on a tainted session
-        if (
-            self._taint_engine is not None
-            and normalized is not None
-            and self._taint_engine.state.is_tainted
-        ):
-            # Exfiltration to SSRF/internal destinations is high-risk on a
-            # tainted session: a tainted session pushing data to the cloud
-            # metadata endpoint or a private-network host is almost never
-            # legitimate. destination_kind is resolved by the normalizer, which
-            # decodes obfuscated IP forms (decimal/hex/octal) — so an encoded
-            # 169.254.169.254 still classifies as private_network here.
-            # SSRF/internal destinations are always blocked on a tainted session.
-            # For a *public* external destination the rule is source-aware: a
-            # session tainted only by web reads may keep browsing (research),
-            # but once any non-web source contaminates it (a local file / secret,
-            # MCP, memory, …) outbound sends to external domains are exfiltration
-            # risk and are blocked too.
-            sources = self._taint_engine.state.sources
-            web_only_taint = sources == frozenset({TaintSource.WEB})
-            internal_exfil = normalized.destination_kind in (
-                "cloud_metadata", "private_network"
+        # Shared gate denial → ResolvedIntent (records denial + degradation signal).
+        def _gate_denial(gd) -> ResolvedIntent:
+            self._record_denial(intent, gd.reason, envelope)
+            denial_resp = _make_denial_response(gd.reason, gd.category)
+            self._record_degradation_signal(intent, denial_resp, normalized)
+            return ResolvedIntent(
+                intent=intent, approved=False, reason=gd.reason,
+                result=denial_resp.to_tool_result(),
             )
-            external_exfil = normalized.destination_kind == "external_domain"
-            exfil_destination = internal_exfil or (
-                external_exfil and not web_only_taint
+
+        # SSRF / internal-destination gate — content-blind, always-on, and
+        # independent of taint (this is a *destination* concern, not a data-flow
+        # one): no agent should reach cloud metadata or the docker socket unless
+        # policy explicitly allows it. Decoupling this from taint is what lets the
+        # taint gate below be cleanly per-value without regressing SSRF safety.
+        if normalized is not None:
+            gd = ssrf_gate(tool_name, normalized)
+            if gd is not None:
+                return _gate_denial(gd)
+
+        # taint enforcement — PER-VALUE. The gate decides on the *driving
+        # argument's own* causal_root (content-derivation ledger), NOT a
+        # session-wide flag. A clean-valued sink passes even when other values in
+        # the session are tainted.
+        # Known gap: content-derivation misses paraphrased / re-encoded influence;
+        # soundly over-tainting opaque model output would collapse this back to
+        # session-sticky tainting and needs a sound per-value interpreter backend.
+        if normalized is not None:
+            driving_root = self._taint_engine.derive_value(
+                driving_subset(tool_args, self._driving_args.get(tool_name))
             )
-            risky = (
-                normalized.writes_outside_workdir
-                or normalized.executes_generated_code
-                or exfil_destination
+
+            # Density telemetry: record, per high-stakes sink firing, the per-value
+            # taint (both axes) and the session-sticky shadow, split integrity vs
+            # confidentiality so the taint-explosion asymmetry is visible. Uses the
+            # same overrides as the enforcement gate so density and enforcement
+            # agree on which sinks count.
+            sink_consequence = consequence_class(
+                tool_name, operation=normalized.operation,
+                overrides=self._consequence_overrides,
             )
-            if risky:
+            if sink_consequence >= ConsequenceClass.REVERSIBLE:
+                session_tainted, session_sensitive = (
+                    self._taint_engine.session_shadow()
+                    if hasattr(self._taint_engine, "session_shadow")
+                    else (driving_root.is_tainted, driving_root.sensitive)
+                )
+                self._trace_events.append(SinkDensityEvent(
+                    kind=TraceEventKind.SINK_DENSITY,
+                    node_id=envelope.node_id,
+                    sequence=len(self._trace_events),
+                    operation=tool_name,
+                    tainted=driving_root.is_tainted,
+                    sensitive=driving_root.sensitive,
+                    session_tainted=session_tainted,
+                    session_sensitive=session_sensitive,
+                ))
+
+            # POSITIONAL ADMISSION. For a sink the operator DECLARED
+            # instruction-incomplete, admission flips from the (leaky)
+            # content-derivation deny-list to a sound positional allow-list: admit
+            # ONLY if the driving value's carrier is instruction-incomplete, else
+            # fail-closed. It does NOT consult driving_root.is_tainted — a paraphrase
+            # that launders the content-derivation label cannot change the value's
+            # FORM, and classify_carrier is structural, so admission holds against
+            # semantic derivation, content-independently.
+            gd = positional_gate(tool_name, tool_args, self._positional_sinks)
+            if gd is not None:
+                return _gate_denial(gd)
+
+            # Carrier / imperative-channel gate: a tainted FREE_TEXT value reaching
+            # an instruction-following sink (spawn a sub-agent, send a message,
+            # execute) is the imperative channel. Complements per-value: catches
+            # free-text-as-directive the risky-op list below does not.
+            gd = carrier_gate(
+                tool_name, tool_args, normalized, driving_root, self._imperative_sinks
+            )
+            if gd is not None:
+                return _gate_denial(gd)
+
+            # Per-value taint: integrity (untrusted-derived value into a high-risk
+            # operation) + the confidentiality SOUND FLOOR (egress denied while a
+            # secret read is outstanding — on the FACT of the read, content-blind, so
+            # a paraphrased/re-encoded secret cannot escape; lifted only by
+            # governance endorsement). `self._egress_sinks` is the operator's
+            # declaration of which tools exfiltrate (complements the normalizer's
+            # destination classification).
+            # Contract-mandated (ValueProvenance.confidentiality_floor_active): call
+            # it directly. The kernel gates confidentiality on the sound floor, never
+            # on the leaky per-value `sensitive` derivation; a backend that omits it
+            # fails loudly rather than silently downgrading the guarantee.
+            floor_active = self._taint_engine.confidentiality_floor_active()
+            gd = taint_gate(
+                tool_name, normalized, driving_root, floor_active, self._egress_sinks
+            )
+            if gd is not None:
+                return _gate_denial(gd)
+
+        # approved or transformed — but first consult the advisory adjudicator on
+        # the PROJECTION only. We are on the would-approve path: every kernel hard
+        # gate has already passed, so the adjudicator can only TIGHTEN (deny), never
+        # override a hard deny. Memoized by projection hash: equal projection →
+        # equal verdict.
+        if self._adjudicator is not None and normalized is not None:
+            projection = self._canonicalizer.canonicalize(normalized, tool_args)
+            if not self._adjudicator.apply(projection, kernel_allowed=True):
                 reason = (
-                    "taint enforcement: session is tainted by external input "
-                    f"(sources={[s.value for s in self._taint_engine.state.sources]}) "
-                    f"and tool '{tool_name}' performs a high-risk operation "
-                    "(writes_outside_workdir, executes_generated_code, or "
-                    "exfiltration to a cloud-metadata/private-network destination)"
+                    f"adjudicator (advisory): denied '{tool_name}' on its "
+                    f"projection (hash {projection_hash(projection)})"
                 )
                 self._record_denial(intent, reason, envelope)
-                denial_resp = _make_denial_response(reason, "taint_enforcement")
+                denial_resp = _make_denial_response(reason, "adjudicator")
                 self._record_degradation_signal(intent, denial_resp, normalized)
                 return ResolvedIntent(
-                    intent=intent,
-                    approved=False,
-                    reason=reason,
+                    intent=intent, approved=False, reason=reason,
                     result=denial_resp.to_tool_result(),
                 )
+
+        # Every gate (capability, consequence, value-policy, degradation, ssrf,
+        # positional, carrier, taint, adjudicator) has passed: the call is approved
+        # and about to execute. NOW consume the lease use / grant op — a call denied
+        # by any gate above returned earlier and burned nothing.
+        if pending_consumption is not None:
+            pending_consumption.commit()
 
         # approved or transformed — emit the appropriate trace event
         is_transform = decision.kind == PolicyDecisionKind.TRANSFORM
@@ -550,27 +745,39 @@ class IntentLoop:
             result = await self._executor.execute(
                 effective_intent, envelope.capabilities
             )
-            # Propagate taint after any successful privileged read.
-            if self._taint_engine is not None:
-                normalized_check = normalized or self._normalizer.normalize(effective_intent)
-                if normalized_check.target_kind in (
-                    "external_url", "cloud_metadata", "docker_socket"
-                ) or normalized_check.operation == "network_request":
-                    self._taint_engine.propagate(TaintSource.WEB, TaintScope.SESSION)
-                elif (
-                    normalized_check.target_kind in ("secret", "system_path")
-                    or normalized_check.reads_secret_like_data
-                    or normalized_check.writes_outside_workdir
-                ):
-                    # Reading secrets / system paths or touching files outside the
-                    # trusted workspace may introduce adversarial or sensitive
-                    # content — taint with FILE source so later high-risk ops are
-                    # contained by taint enforcement.
-                    self._taint_engine.propagate(TaintSource.FILE, TaintScope.SESSION)
-                self._taint_engine.tick_intent()
-                for _ev in self._taint_engine.drain_events():
-                    self._trace_events.append(_ev)
+            # Federation ingress: a tool that delegated to a peer agent returns the
+            # result wrapped with the peer's provenance receipt. Decide its trust
+            # via the gateway BEFORE it is used or registered. A forged / tampered /
+            # unknown-peer receipt is an attack — reject the value outright; an
+            # authentic receipt either restores the peer's provenance (trusted) or
+            # degrades to untrusted. Then unwrap so the agent sees the plain value.
+            fed_root = None
+            if self._federation_gateway is not None and isinstance(result, FederatedValue):
+                try:
+                    fed_root, _level = self._federation_gateway.receive(
+                        result.value, result.receipt, result.peer_id
+                    )
+                except FederationError as exc:
+                    reason = f"federation: rejected peer value — {exc}"
+                    self._record_denial(intent, reason, envelope)
+                    denial_resp = _make_denial_response(reason, "federation_gate")
+                    return ResolvedIntent(
+                        intent=intent, approved=False, reason=reason,
+                        result=denial_resp.to_tool_result(),
+                    )
+                result = result.value
+            # Register the tool output into the PER-VALUE ledger so a later
+            # sink whose argument carries this content is gated at the value level.
+            # No session-taint propagation — a read taints its produced *value*,
+            # not the whole session.
+            self._register_value_taint(
+                effective_intent, result, normalized, override_root=fed_root
+            )
             self._record_degradation_signal(intent, None)
+            # Stateful trajectory observers see the executed (tool, args, result).
+            # They may only TIGHTEN degradation (observe-only), never authorise — a
+            # domain heuristic, not a structural fact.
+            self._run_trajectory_observers(tool_name, effective_args, result)
             return ResolvedIntent(
                 intent=intent,
                 approved=True,
@@ -613,15 +820,20 @@ class IntentLoop:
         self,
         intent: Intent,
         envelope: ExecutionEnvelope,
-    ) -> PolicyDecision:
+    ) -> tuple[PolicyDecision, "_PendingConsumption | None"]:
         """
         Evaluate a tool_call intent against capabilities.
 
+        Returns ``(decision, pending)``. ``pending`` is a not-yet-applied lease/grant
+        consumption: the caller commits it only when the whole call is finally
+        approved, so a call denied by a later data-flow gate burns no lease use /
+        grant op. (Decisions that do not arise from a lease/grant carry ``None``.)
+
         Resolution order:
-        1. Active escalation grant covers the tool?  → approve (decrement ops)
-        2. Is the tool in allowed_tools?             → approve
-        3. Is the tool in extra_denied?              → deny
-        4. Not in capabilities at all                → deny
+        1. Active escalation grant/lease covers the tool?  → approve (consume on commit)
+        2. Is the tool in allowed_tools?                   → approve
+        3. Is the tool in extra_denied?                    → deny
+        4. Not in capabilities at all                      → deny
         """
         tool_name: str = intent.payload.get("tool", "")
         caps = envelope.capabilities
@@ -639,172 +851,38 @@ class IntentLoop:
                         f"path {candidate_path!r} is outside policy "
                         f"allowed_paths {tuple(policy_paths)!r}"
                     ),
-                )
+                ), None
 
-        # Check CapabilityLease first (authoritative — validates TTL + max_uses)
-        lease = self._capability_leases.get(tool_name)
-        if lease is not None:
-            if not self._lease_validator.is_valid(lease):
-                del self._capability_leases[tool_name]
-                if tool_name in self._granted_escalations:
-                    del self._granted_escalations[tool_name]
-                return PolicyDecision(
-                    kind=PolicyDecisionKind.DENY,
-                    reason=f"capability lease for '{tool_name}' has expired or been exhausted",
-                )
-            tool_path = extract_path_arg(tool_args)
-            if not self._lease_validator.check_path_allowed(lease, tool_path):
-                return PolicyDecision(
-                    kind=PolicyDecisionKind.DENY,
-                    reason=f"lease for '{tool_name}' restricts to paths {lease.allowed_paths!r}",
-                )
-            lease.increment_use()
-
-        grant = self._granted_escalations.get(tool_name)
-        if grant is not None:
-            if grant.paths and not lease:
-                tool_path = extract_path_arg(tool_args)
-                if not path_matches_allowlist(tool_path, grant.paths):
-                    return PolicyDecision(
-                        kind=PolicyDecisionKind.DENY,
-                        reason=f"escalation grant for '{tool_name}' restricts to paths {grant.paths!r}",
-                    )
-            grant.ops_remaining -= 1
-            remaining = grant.ops_remaining
-            if remaining <= 0:
-                del self._granted_escalations[tool_name]
-            return PolicyDecision(
-                kind=PolicyDecisionKind.APPROVE,
-                reason=f"approved via escalation grant ({remaining} ops remaining)",
-            )
+        # Lease/grant resolution (authoritative — validates TTL + max_uses + path).
+        escalation_decision, pending = self._escalation.evaluate(tool_name, tool_args)
+        if escalation_decision is not None:
+            return escalation_decision, pending
 
         if tool_name in caps.allowed_tools:
             return PolicyDecision(
                 kind=PolicyDecisionKind.APPROVE,
                 reason="tool in allowed_tools",
-            )
+            ), pending
 
         if tool_name in envelope.policy.tool_policy.extra_denied:
             return PolicyDecision(
                 kind=PolicyDecisionKind.DENY,
                 reason=f"tool '{tool_name}' is explicitly denied by policy",
-            )
+            ), pending
 
         return PolicyDecision(
             kind=PolicyDecisionKind.DENY,
             reason=f"tool '{tool_name}' is not in capabilities for policy '{envelope.policy.name}'",
-        )
+        ), pending
 
     async def _handle_escalation(
         self,
         event: ExecutorEvent,
         envelope: ExecutionEnvelope,
     ) -> dict:
-        args = event.payload.get("args", {})
-        tool = args.get("tool", "")
-        reason = args.get("reason", "")
-        paths = args.get("paths", [])
-        max_ops = min(
-            _safe_int(args.get("max_ops", 10), default=10),
-            envelope.policy.escalation_policy.max_ops_per_grant,
+        return await self._escalation.grant_from_intent(
+            event, envelope, self._trace_events
         )
-        ep = envelope.policy.escalation_policy
-        node_id = envelope.node_id
-        tool_use_id = event.payload.get("tool_use_id", "")
-
-        def _deny(deny_reason: str) -> dict:
-            self._trace_events.append(
-                EscalationDeniedEvent(
-                    kind=TraceEventKind.ESCALATION_DENIED,
-                    node_id=node_id,
-                    sequence=len(self._trace_events),
-                    tool=tool,
-                    reason=deny_reason,
-                )
-            )
-            return {"error": "escalation_denied", "reason": deny_reason}
-
-        if not ep.allow_escalation:
-            return _deny("escalation not allowed by policy")
-
-        if tool not in ep.grantable_tools:
-            return _deny(f"tool '{tool}' is not in grantable_tools")
-
-        if max_ops <= 0:
-            return _deny("escalation max_ops must be a positive integer")
-
-        if self._escalation_count >= ep.max_escalations:
-            return _deny(f"max escalations reached ({ep.max_escalations})")
-
-        flood_denial = self._flood_guard.check(
-            tool=tool,
-            paths=paths,
-            reason=reason,
-            session_id=envelope.node_id,
-            node_id=envelope.node_id,
-        )
-        if flood_denial is not None:
-            return _deny(flood_denial)
-
-        auto_approved = True
-        if ep.require_human:
-            if self._escalation_callback is None:
-                return _deny(
-                    "escalation requires human approval but no callback is configured"
-                )
-            approved = await self._escalation_callback(
-                tool_use_id, tool, paths, max_ops
-            )
-            auto_approved = False
-            if not approved:
-                return _deny("human denied escalation request")
-
-        # Create the CapabilityLease first — if it fails the grant is not stored,
-        # preventing a grant-without-TTL bypass.
-        lease, lease_err = self._lease_validator.create_lease(
-            granted_by="operator" if ep.require_human else "auto_policy",
-            authority_type=(
-                LeaseAuthorityType.HUMAN_OPERATOR
-                if ep.require_human
-                else LeaseAuthorityType.AUTOMATED_POLICY
-            ),
-            allowed_tools=[tool],
-            parent_policy=envelope.policy,
-            allowed_paths=paths,
-            ttl_seconds=300.0,
-            max_uses=max_ops,
-            reason_code=reason,
-        )
-        if lease_err is not None:
-            return _deny(f"escalation rejected: lease creation failed ({lease_err})")
-
-        self._capability_leases[tool] = lease
-        self._granted_escalations[tool] = _GrantedEscalation(
-            tool=tool,
-            paths=paths,
-            ops_remaining=max_ops,
-        )
-        self._escalation_count += 1
-        self._flood_guard.record_approval()
-
-        self._trace_events.append(
-            EscalationGrantedEvent(
-                kind=TraceEventKind.ESCALATION_GRANTED,
-                node_id=node_id,
-                sequence=len(self._trace_events),
-                tool=tool,
-                paths=paths,
-                max_ops=max_ops,
-                reason=reason,
-                auto_approved=auto_approved,
-            )
-        )
-        return {
-            "granted": True,
-            "tool": tool,
-            "max_ops": max_ops,
-            "paths": paths,
-        }
 
     def resolve_spawn_intent(
         self,
@@ -881,6 +959,23 @@ class IntentLoop:
             )
         )
 
+    def _spawn_taint_reason(self, spawn_args: dict) -> str | None:
+        """Carrier gate for spawn_child, routed through the SHARED gate predicate so
+        the spawn branch and the regular tool path cannot drift. spawn_child is an
+        instruction-following sink (in IMPERATIVE_SINKS), so a tainted FREE_TEXT task
+        is the imperative channel. The driving root is derived over the WHOLE spawn
+        args (spawn is deliberately not narrowed by driving_args). Returns a denial
+        reason, or None to allow — structured/sensitive values that are not the
+        imperative channel stay gated at the child's own sinks (the child inherits
+        this engine's per-value ledger)."""
+        if self._taint_engine is None:
+            return None
+        driving_root = self._taint_engine.derive_value(spawn_args)
+        gd = carrier_gate(
+            "spawn_child", spawn_args, None, driving_root, self._imperative_sinks
+        )
+        return gd.reason if gd is not None else None
+
     def _record_denial(
         self,
         intent: Intent,
@@ -897,27 +992,68 @@ class IntentLoop:
             )
         )
 
-    def _record_anomaly_event(
+    def _register_value_taint(
+        self,
+        effective_intent: Intent,
+        result: Any,
+        normalized: NormalizedIntent | None,
+        override_root: "CausalRoot | None" = None,
+    ) -> None:
+        """Register a tool's output content in the per-value ledger with the
+        causal_root its read introduces. Mirrors the session-taint triggers:
+        external/web reads → untrusted; secret/system reads → untrusted + sensitive.
+
+        `override_root` short-circuits the structural derivation — used when the
+        federation gateway has already decided the value's provenance (a peer value
+        whose receipt was restored or re-minted untrusted).
+        """
+        if self._taint_engine is None:
+            return
+        if override_root is not None:
+            self._taint_engine.register_value(result, override_root)
+            return
+        tool_name = effective_intent.payload.get("tool", "")
+        # Shared arming map (policy.provenance.output_root) — the same mapping the
+        # governor registers through, so the streaming and synchronous paths cannot
+        # drift on what a tool's output taints. A declared source role wins over the
+        # normalizer heuristic; a clean read returns None and arms nothing.
+        ni = normalized or self._normalizer.normalize(effective_intent)
+        root = output_root(
+            tool_name, ni,
+            untrusted_sources=self._untrusted_sources,
+            sensitive_sources=self._sensitive_sources,
+        )
+        if root is None:
+            return  # clean read — nothing to register
+        self._taint_engine.register_value(result, root)
+
+    def _check_consequence(
         self,
         tool_name: str,
-        normalized: NormalizedIntent,
-        anomaly: AnomalyResult,
-        policy_action: str,
         envelope: ExecutionEnvelope,
-    ) -> None:
-        self._trace_events.append(
-            SuspiciousIntentEvent(
-                kind=TraceEventKind.ANOMALY_FLAGGED,
-                node_id=envelope.node_id,
-                sequence=len(self._trace_events),
-                tool=tool_name,
-                score=anomaly.score,
-                anomaly_class=anomaly.cls,
-                reasons=anomaly.reasons,
-                policy_action=policy_action,
-                provenance=normalized.provenance,
-            )
+        operation: str | None = None,
+    ) -> str | None:
+        """Consequence axis gate. Return a denial reason if the sink's
+        action class exceeds the policy's unattended ceiling and no governance
+        gate is present, else None. Content-blind: reads only the sink type and
+        the operation enum (never argument content).
+
+        The governance gate is satisfied by an active escalation grant or
+        capability lease for the tool (a human/operator-authorised path).
+        """
+        ceiling = getattr(
+            envelope.policy, "max_unattended_consequence", ConsequenceClass.CONSEQUENTIAL
         )
+        # over-ceiling is admissible only through a governance gate (an active
+        # escalation grant or capability lease for the tool).
+        has_gate = self._escalation.covers(tool_name)
+        gd = consequence_gate(
+            tool_name, operation, ceiling, self._consequence_overrides,
+            has_governance_gate=has_gate,
+        )
+        return gd.reason if gd is not None else None
+
+    # ── Detection layer — out-of-band from the allow decision ───────────────────
 
     def _record_cancellation(self, envelope: ExecutionEnvelope) -> None:
         token = envelope.cancel_token
@@ -943,9 +1079,35 @@ class IntentLoop:
         """Call record_signal on degradation engine and flush its events into the trace."""
         if self._degradation_engine is None:
             return
-        taint_state = self._taint_engine.state if self._taint_engine is not None else TaintState()
         ni = normalized if normalized is not None else self._normalizer.normalize(intent)
-        self._degradation_engine.record_signal(ni, denial, taint_state)
+        # Per-value: degradation keys on the driving argument's own causal_root,
+        # not a session-taint flag.
+        driving_root = None
+        if self._taint_engine is not None:
+            driving_root = self._taint_engine.derive_value(intent.payload.get("args", {}))
+        self._degradation_engine.record_signal(ni, denial, driving_root=driving_root)
+        for event in self._degradation_engine.drain_events():
+            self._trace_events.append(event)
+
+    def _run_trajectory_observers(self, tool: str, args: dict, result: "Any") -> None:
+        """Feed each stateful observer the executed (tool, args, result). A returned
+        signal tightens degradation (observe-only, never authorises). Observer
+        exceptions are swallowed — a buggy domain predicate must not break execution."""
+        if not self._trajectory_observers or self._degradation_engine is None:
+            return
+        for observer in self._trajectory_observers:
+            try:
+                signal = observer.observe(tool, args, result)
+            except Exception:
+                log.debug("trajectory observer raised", exc_info=True)
+                continue
+            if signal is None:
+                continue
+            self._degradation_engine.tighten(
+                signal.target_level,
+                reason=signal.reason,
+                trigger_intent=tool,
+            )
         for event in self._degradation_engine.drain_events():
             self._trace_events.append(event)
 
@@ -953,8 +1115,8 @@ class IntentLoop:
         self,
         tool_name: str,
         normalized: NormalizedIntent,
-        taint_state: "TaintState | None",
         envelope: ExecutionEnvelope,
+        driving_root: "CausalRoot | None" = None,
     ) -> str | None:
         """
         Return a denial reason string if degradation state forbids this tool call, else None.
@@ -962,8 +1124,7 @@ class IntentLoop:
         """
         if self._degradation_engine is None:
             return None
-        ts = taint_state or TaintState()
-        source_id = self._degradation_engine.derive_source_id(normalized, ts)
+        source_id = self._degradation_engine.derive_source_id(normalized, driving_root)
         effective = self._degradation_engine.apply_to_policy(envelope.policy, source_id)
         # LOCKED/TERMINAL: only read + escalate allowed
         level = self._degradation_engine.state.level
@@ -999,14 +1160,6 @@ def _denial_result(tool_name: str, reason: str) -> dict:
     Full reason is in the trace (operator-only access).
     """
     return _make_denial_response(reason).to_tool_result()
-
-
-def _safe_int(value: Any, default: int) -> int:
-    """Parse an int from untrusted args without raising on bad input."""
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return default
 
 
 def _make_denial_response(reason: str, category: str | None = None) -> DenialResponse:

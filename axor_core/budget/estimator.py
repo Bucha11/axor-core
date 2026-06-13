@@ -23,28 +23,6 @@ class BudgetEstimator:
     Never makes decisions. Only provides estimates to policy_engine.py.
     """
 
-    def estimate_envelope_tokens(
-        self,
-        task: str,
-        context: ContextView,
-        tool_count: int,
-    ) -> int:
-        """
-        Estimate total input tokens for one envelope before execution.
-
-        Breakdown:
-            task prompt tokens
-          + context view tokens
-          + tool definition tokens
-          + system prompt overhead
-        """
-        task_tokens     = len(task) // 4
-        context_tokens  = context.token_count
-        tool_tokens     = tool_count * _TOOL_DEFINITION_TOKENS
-        overhead        = 200   # system prompt, formatting
-
-        return task_tokens + context_tokens + tool_tokens + overhead
-
     def estimate_child_slice_tokens(
         self,
         parent_context: ContextView,

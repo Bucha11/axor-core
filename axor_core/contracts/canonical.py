@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum
+from enum import Enum, IntEnum
 
 
 class ToolCategory(str, Enum):
@@ -36,6 +36,23 @@ class OperationClass(str, Enum):
     UNKNOWN = "unknown"
 
 
+class ConsequenceClass(IntEnum):
+    """How irreversible the *effect* of an action is.
+
+    Distinct from OperationClass (which names the kind of operation): this ranks
+    how costly/irreversible the effect is, independent of the arguments' content
+    or provenance. It is a deterministic table lookup keyed on the sink's
+    structural type — never derived from the content being acted on.
+
+    Ordered so that `cls <= ceiling` expresses "within the unattended ceiling":
+        BENIGN < REVERSIBLE < CONSEQUENTIAL < CATASTROPHIC
+    """
+    BENIGN = 0
+    REVERSIBLE = 1
+    CONSEQUENTIAL = 2
+    CATASTROPHIC = 3
+
+
 class ExportClass(str, Enum):
     LOCAL = "local"
     EXTERNAL = "external"
@@ -53,7 +70,7 @@ class ProviderClass(str, Enum):
 @dataclass(frozen=True)
 class CanonicalizedIntent:
     """
-    Canonical feature representation of a NormalizedIntent for Layer 3 (LLMVerifier).
+    Canonical feature representation of a NormalizedIntent for the LLM verifier.
 
     Contains ONLY canonical features — no raw strings, no raw paths, no raw content.
     This prevents prompt injection via tool outputs or web content reaching the verifier.
@@ -81,3 +98,7 @@ class CanonicalizedIntent:
     taint_state_summary: str     # "clean" | "tainted" | "tainted:web,mcp" etc.
     lease_state_summary: str     # "none" | "active:N_uses_remaining" etc.
     node_depth: int
+    # Irreversibility of the action, deterministic and keyed on the sink type.
+    # Defaulted so existing construction sites remain valid; the canonicalizer
+    # populates it from the sink's structural type.
+    consequence_class: ConsequenceClass = ConsequenceClass.CONSEQUENTIAL

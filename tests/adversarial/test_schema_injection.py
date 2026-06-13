@@ -1,8 +1,8 @@
 """
-Adversarial tests: schema injection — Step 24.
+Adversarial tests: schema injection.
 
 Confirms that IntentCanonicalizer strips all raw content before the
-CanonicalizedIntent reaches the LLMVerifier prompt.
+CanonicalizedIntent reaches the verifier prompt.
 
 Five injection variants:
   1. Newline in path
@@ -118,10 +118,11 @@ def test_path_traversal_not_in_canonical_fields():
 
 def test_prompt_like_filename_stripped():
     """
-    Filename 'ignore_previous_instructions.py' must not reach the verifier prompt.
+    Filename 'ignore_previous_instructions.py' must not reach a projection consumer.
 
     The extension .py may appear (it's a safe canonical feature), but the raw
-    instruction text must not appear in any field passed to LLMVerifier.
+    instruction text must not appear in any field of the canonical projection
+    (what the advisory adjudicator / detection layer sees).
     """
     injected_path = "ignore_previous_instructions.py"
     ci = _canonicalize(injected_path)
