@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import dataclasses
 import logging
+from typing import Callable
 
 from axor_core import trace as trace_mod
 from axor_core.budget.policy_engine import BudgetPolicyEngine, OptimizationAction
@@ -119,6 +120,7 @@ class GovernedNode:
         require_egress_allowlist: bool = False,
         require_tool_roles: bool = False,
         trajectory_observers: "list | None" = None,
+        invocation_recorder: "Callable[[str, dict, bool], None] | None" = None,
         adjudicator=None,
         federation_gateway=None,
     ) -> None:
@@ -149,6 +151,7 @@ class GovernedNode:
         self._require_egress_allowlist = require_egress_allowlist
         self._require_tool_roles = require_tool_roles
         self._trajectory_observers = list(trajectory_observers or [])
+        self._invocation_recorder = invocation_recorder
         self._adjudicator = adjudicator
         self._federation_gateway = federation_gateway
         self._value_policies = value_policies or {}
@@ -334,6 +337,7 @@ class GovernedNode:
             require_egress_allowlist=self._require_egress_allowlist,
             require_tool_roles=self._require_tool_roles,
             trajectory_observers=self._trajectory_observers,
+            invocation_recorder=self._invocation_recorder,
             adjudicator=self._adjudicator,
             federation_gateway=self._federation_gateway,
         )
@@ -533,6 +537,7 @@ class GovernedNode:
             require_egress_allowlist=self._require_egress_allowlist,
             require_tool_roles=self._require_tool_roles,
             trajectory_observers=self._trajectory_observers,
+            invocation_recorder=self._invocation_recorder,
             adjudicator=self._adjudicator,
             federation_gateway=self._federation_gateway,
         )

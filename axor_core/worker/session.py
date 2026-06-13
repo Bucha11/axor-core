@@ -2,13 +2,16 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 import uuid
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from axor_core.contracts.agent import AgentDefinition
     from axor_core.contracts.memory import MemoryProvider
+    from axor_core.contracts.session import SessionSink
 from axor_core.contracts.cancel import make_token, CancelReason
+from axor_core.contracts.session import SessionAuditRecord, ToolInvocationRecord
 from axor_core.contracts.context import RawExecutionState, LineageSummary
 from axor_core.contracts.extension import ExtensionLoader
 from axor_core.contracts.drift import BehavioralDriftObserver
@@ -114,7 +117,17 @@ class GovernedSession:
         detection_floor: float | None = None,
         adjudicator=None,
         federation_gateway=None,
+        session_sink: "SessionSink | None" = None,
     ) -> None:
+        # Wall-clock the session was constructed — handed to sentinel in the
+        # closed-session record (slow-and-low staging compares session start times).
+        self._started_at = time.time()
+        # Optional Core → Sentinel audit sink + the per-tool invocation buffer it
+        # consumes at close. Default None → no record built, zero overhead.
+        self._session_sink = session_sink
+        self._tool_invocations: "list[ToolInvocationRecord]" = []
+        self._record_emitted = False   # guard: aclose is idempotent, emit once
+
         # Profile = a named bundle of existing knobs (no new mechanism); it
         # pre-fills mode / isolation / escalation / consequence-ceiling / watcher.
         self._consequence_overrides = dict(danger or {})
@@ -552,12 +565,78 @@ class GovernedSession:
         if self._active_token:
             self._active_token.cancel(CancelReason.USER_ABORT, detail=detail)
 
+    def _record_invocation(self, tool: str, args: dict, executed: bool) -> None:
+        """Append a resolved tool call to the session's invocation buffer.
+
+        Wired into the intent loop only when a ``session_sink`` is attached. Audit
+        only — never gates execution, and must not raise into the governance path.
+        """
+        try:
+            self._tool_invocations.append(
+                ToolInvocationRecord(tool=tool, args=dict(args), executed=executed)
+            )
+        except Exception:
+            _log.debug("session: failed to record invocation tool=%s", tool, exc_info=True)
+
+    def _build_session_audit_record(self) -> "SessionAuditRecord":
+        """Aggregate the closed session into the record sentinel consumes.
+
+        ``event_kinds`` and ``taint_sources`` are de-duplicated *value* strings drawn
+        from the session's decision traces; ``taint_active`` is the session-wide
+        taint shadow. ``source_class`` is left empty — core does not attest an
+        authenticated actor class today, so sentinel keys mitigation on ``agent_id``.
+        """
+        event_kinds: list[str] = []
+        taint_sources: list[str] = []
+        seen_kinds: set[str] = set()
+        seen_sources: set[str] = set()
+        for trace in self.all_traces():
+            for ev in getattr(trace, "events", ()):
+                kind = getattr(ev.kind, "value", None) or str(ev.kind)
+                if kind not in seen_kinds:
+                    seen_kinds.add(kind)
+                    event_kinds.append(kind)
+                src = getattr(ev, "taint_source", "")
+                if src and src not in seen_sources:
+                    seen_sources.add(src)
+                    taint_sources.append(src)
+        any_tainted, _ = self._taint_engine.session_shadow()
+        return SessionAuditRecord(
+            session_id=self._session_id,
+            agent_id=self._agent_def.name if self._agent_def is not None else "",
+            started_at=self._started_at,
+            taint_active=bool(any_tainted),
+            taint_sources=tuple(taint_sources),
+            event_kinds=tuple(event_kinds),
+            tool_invocations=tuple(self._tool_invocations),
+            source_class="",
+        )
+
+    async def _emit_session_record(self) -> None:
+        """Hand the closed-session record to the sink. Must not raise — a failing
+        observer must never disturb the governance path."""
+        if self._session_sink is None or self._record_emitted:
+            return
+        self._record_emitted = True
+        try:
+            record = self._build_session_audit_record()
+            await self._session_sink.on_session_closed(record)
+        except Exception:
+            _log.warning(
+                "session: session_sink.on_session_closed failed session=%s",
+                self._session_id, exc_info=True,
+            )
+
     async def aclose(self) -> None:
         """
         Close session-scoped resources: trace JSONL file, telemetry pipeline,
         memory provider. Idempotent. Safe to call even if start() was never
         invoked.
+
+        Emits the closed-session audit record to ``session_sink`` first (while the
+        trace collector is still readable), then tears resources down.
         """
+        await self._emit_session_record()
         self._collector.close()
         if self._telemetry is not None:
             close = getattr(self._telemetry, "aclose", None)
@@ -642,6 +721,9 @@ class GovernedSession:
             benign_tools=self._benign_tools,
             driving_args=self._driving_args,
             trajectory_observers=self._trajectory_observers,
+            invocation_recorder=(
+                self._record_invocation if self._session_sink is not None else None
+            ),
             require_egress_allowlist=self._require_egress_allowlist,
             require_tool_roles=self._require_tool_roles,
             value_policies=self._value_policies,
