@@ -95,6 +95,11 @@ from axor_core.contracts.trace import (
     Embedder,
     TelemetrySink,
 )
+from axor_core.contracts.session import (
+    SessionAuditRecord,
+    ToolInvocationRecord,
+    SessionSink,
+)
 
 __all__ = [
     # anomaly
@@ -134,4 +139,6 @@ __all__ = [
     "TaintPropagatedEvent", "TaintClearanceAttemptedEvent", "TaintClearedEvent",
     "DegradationTransitionEvent", "SourceQuarantinedEvent",
     "Embedder", "TelemetrySink",
+    # session audit (Core → Sentinel seam)
+    "SessionAuditRecord", "ToolInvocationRecord", "SessionSink",
 ]

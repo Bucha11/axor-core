@@ -147,6 +147,7 @@ class IntentLoop:
         require_egress_allowlist: bool = False,
         require_tool_roles: bool = False,
         trajectory_observers: "list | None" = None,
+        invocation_recorder: "Callable[[str, dict, bool], None] | None" = None,
     ) -> None:
         self._executor = capability_executor
         self._trace_events = trace_events
@@ -223,6 +224,10 @@ class IntentLoop:
         # Stateful, domain-supplied trajectory observers (tighten-only). Shared
         # instances so their state persists across the session's runs.
         self._trajectory_observers = list(trajectory_observers or [])
+        # Optional sink-side audit hook: records every resolved tool call (tool, args,
+        # executed) for the session's closed-session record. Observe-only; never
+        # gates execution. Default None → zero overhead when sentinel is not attached.
+        self._invocation_recorder = invocation_recorder
         # STRICT obligation: every egress sink must carry an enum allowlist (the
         # sound, paraphrase-proof destination control). Fail closed at construction.
         if require_egress_allowlist:
@@ -395,6 +400,19 @@ class IntentLoop:
                         continue
 
                     resolved = await self._resolve_tool_intent(event, envelope)
+
+                    # Audit hook (observe-only): record the resolved tool call for the
+                    # closed-session record sentinel consumes. Wrapped so a recorder
+                    # bug can never disturb the governance path.
+                    if self._invocation_recorder is not None:
+                        try:
+                            self._invocation_recorder(
+                                event.payload.get("tool", ""),
+                                event.payload.get("args", {}) or {},
+                                bool(resolved.approved),
+                            )
+                        except Exception:
+                            log.debug("invocation_recorder raised", exc_info=True)
 
                     if self._tool_result_callback is not None:
                         # adapter-driven path (e.g. ClaudeCodeExecutor + ToolResultBus)

@@ -1,30 +1,38 @@
-"""Behavioral-drift observer: it is a passive WATCHER (non-enforcing)."""
+"""Behavioral-drift watcher: it is a passive WATCHER (non-enforcing)."""
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
 
 from axor_core.capability.executor import CapabilityExecutor
 from axor_core.contracts.drift import BehavioralDriftObserver
-from axor_core.node.drift_observer import TaintEngineDriftObserver
+from axor_core.node.drift_observer import BehavioralDriftWatcher
 from axor_core.taint.engine import TaintEngine
 from axor_core.worker.session import GovernedSession
 
 
-async def test_drift_does_not_taint_enforcement_state():
+def test_watcher_holds_no_enforcement_reference():
+    # Structural guarantee: the watcher cannot reach the TaintEngine or any
+    # other governance object, so a drift signal can never feed enforcement.
+    watcher = BehavioralDriftWatcher()
+    assert not hasattr(watcher, "_taint")
+    assert not any(isinstance(v, TaintEngine) for v in vars(watcher).values())
+
+
+async def test_drift_does_not_touch_enforcement_state():
     engine = TaintEngine(node_id="n")
-    observer = TaintEngineDriftObserver(engine)
-    await observer.on_drift("s", "a", "elevated_review")
-    await observer.on_drift("s", "a", "restricted_mode")
-    # watcher: the engine's per-value ledger is untouched (registers nothing).
+    watcher = BehavioralDriftWatcher()
+    await watcher.on_drift("s", "a", "elevated_review")
+    await watcher.on_drift("s", "a", "restricted_mode")
+    # watcher: an independent engine's per-value ledger registers nothing.
     assert engine.derive_value("anything").is_tainted is False
 
 
-async def test_drift_observer_runs_without_engine():
-    await TaintEngineDriftObserver().on_drift("s", "a", "elevated_review")  # no raise
+async def test_watcher_runs_and_does_not_raise():
+    await BehavioralDriftWatcher().on_drift("s", "a", "elevated_review")  # no raise
 
 
-def test_observer_satisfies_protocol():
-    assert isinstance(TaintEngineDriftObserver(TaintEngine(node_id="n")), BehavioralDriftObserver)
+def test_watcher_satisfies_protocol():
+    assert isinstance(BehavioralDriftWatcher(), BehavioralDriftObserver)
 
 
 def _session(observer):
@@ -34,10 +42,10 @@ def _session(observer):
 
 
 async def test_session_calls_observer_on_notify():
-    observer = TaintEngineDriftObserver(TaintEngine(node_id="s"))
-    observer.on_drift = AsyncMock()  # type: ignore[method-assign]
-    await _session(observer).notify_behavioral_drift(agent_id="a", action="restricted_mode")
-    observer.on_drift.assert_awaited_once()
+    watcher = BehavioralDriftWatcher()
+    watcher.on_drift = AsyncMock()  # type: ignore[method-assign]
+    await _session(watcher).notify_behavioral_drift(agent_id="a", action="restricted_mode")
+    watcher.on_drift.assert_awaited_once()
 
 
 async def test_session_no_observer_is_noop():
@@ -48,6 +56,6 @@ async def test_session_no_observer_is_noop():
 
 
 async def test_session_observer_failure_is_swallowed():
-    observer = TaintEngineDriftObserver()
-    observer.on_drift = AsyncMock(side_effect=RuntimeError("boom"))  # type: ignore[method-assign]
-    await _session(observer).notify_behavioral_drift(agent_id="a", action="restricted_mode")  # no raise
+    watcher = BehavioralDriftWatcher()
+    watcher.on_drift = AsyncMock(side_effect=RuntimeError("boom"))  # type: ignore[method-assign]
+    await _session(watcher).notify_behavioral_drift(agent_id="a", action="restricted_mode")  # no raise
