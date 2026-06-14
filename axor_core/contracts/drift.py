@@ -12,14 +12,24 @@ class BehavioralDriftObserver(Protocol):
     structurally-compatible CoreDriftSink protocol.
     Core never imports axor-probe — dependency direction is strictly one-way (P-34).
 
+    OBSERVE-ONLY. A drift signal is telemetry: it MUST NOT enter the allow/deny
+    decision. Detection is not a gate (see docs/reverse-osmosis.md "The Gate
+    Sequence" and docs/ARCHITECTURE.md §"Behavioral Drift Detection"). The
+    canonical implementation, TaintEngineDriftObserver, is a pure watcher — it
+    propagates no taint and mutates neither the TaintEngine nor the degradation
+    state. An implementation MUST NOT use a drift signal to gate, taint, or
+    degrade a live session; "a bypass of probe does not disable the enforcement
+    gates."
+
     Wiring:
         observer = TaintEngineDriftObserver(session._taint_engine)
         # pass observer to ProbePipeline integrations via CoreDriftSink callback
         await notify_core(drift_signal, observer)
 
-    action values mirror DriftAction.value:
-        "elevated_review"  — repeated pattern; propagates NODE-scoped taint
-        "restricted_mode"  — strong longitudinal signal; propagates SESSION-scoped taint
+    action values mirror DriftAction.value (severity of the observed signal,
+    NOT an enforcement scope — nothing is propagated):
+        "elevated_review"  — repeated pattern
+        "restricted_mode"  — strong longitudinal signal (calibrated only)
     """
 
     async def on_drift(self, session_id: str, agent_id: str, action: str) -> None:
