@@ -38,3 +38,27 @@ forbidden_modules =
     axor_core.context
     axor_core.trace
     axor_core.extensions
+
+# T0 (producing process non-interpreting) — see docs/kernel-theorem.md §3.
+#
+# The functions that PRODUCE a trusted-path projection must be deterministic and
+# structural, never a model reading the governed content (a steerable projector
+# can emit a valid-but-unfaithful projection). This contract pins the structural
+# half: a projection producer must not import the advisory/model layer
+# (kernel.adjudicator — the only model-consumer surface in core). The external
+# half (no provider SDK / network / subprocess in a producer) is pinned by
+# tests/invariants/test_t0_producers_non_interpreting.py, because import-linter
+# graphs only the root package by default. The adjudicator is a *consumer* of the
+# projection (advisory, projection-only, tightening-only) and may itself be a
+# model — T0 constrains the producer, not the consumer, which is why the rule is
+# scoped to these four modules, not to the whole kernel.
+[importlinter:contract:t0-producers-non-interpreting]
+name = T0 — projection producers must not import the advisory/model surface
+type = forbidden
+source_modules =
+    axor_core.security.carrier
+    axor_core.policy.consequence
+    axor_core.policy.normalizer
+    axor_core.node.canonicalizer
+forbidden_modules =
+    axor_core.kernel.adjudicator

@@ -137,12 +137,21 @@ structural function — there is no model in the decision loop:
 - consequence (action-class) classification — `axor_core/policy/consequence.py`
 - structural normalization — `axor_core/policy/normalizer.py`
 
-**Honest assurance status.** T0 is enforced *structurally* (there is no model to
-plug into a gate) and is partially pinned by the no-probabilistic-component test
-(§5). There is **no single named CI gate** that asserts "no projection-producing
-function reads a model"; today that property holds by construction and by the
-absence of any such hook, not by a dedicated check. Closing this with an explicit
-T0 lint is the cleanest remaining assurance item for the theorem.
+**Assurance status.** T0 is pinned by a dedicated gate in two halves:
+
+- **Structural half** — the `t0-producers-non-interpreting` contract in
+  `.importlinter` forbids the four producer modules from importing the in-core
+  advisory/model surface (`axor_core/kernel/adjudicator.py`). Run by `lint-imports`
+  in CI; a violating import fails the build.
+- **External half** — `tests/invariants/test_t0_producers_non_interpreting.py`
+  statically scans each producer's imports for a model SDK / network / subprocess
+  surface (which import-linter cannot see, as it graphs only the root package) and
+  asserts the two pure classifiers (`classify_carrier`, `consequence_class`) are
+  deterministic.
+
+The adjudicator is a *consumer* of the projection (advisory, projection-only,
+tightening-only) and may itself be a model — T0 constrains the producer, not the
+consumer, which is why the rule is scoped to the four producer modules.
 
 ---
 
@@ -207,9 +216,10 @@ fails if the premise is violated. Test paths are relative to the repo root.
 | **O2** label soundness | `causal_root ⊇` explicit untrusted influence; over-taint; worker cannot clear | `tests/taint/test_value_ledger.py`; `tests/adversarial/test_ledger_soundness.py` (saturation fails closed, endorse does not under-taint a shared fragment); `tests/invariants/test_security_invariants.py` inv04/inv05 |
 | **O2** scope boundary | implicit/control-flow leaks are *out of scope* — claimed, not silently missed | `tests/adversarial/test_implicit_flow_gap.py` (sound behaviour asserted `xfail(strict=True)`: the suite trips the moment a sound backend closes the gap) |
 | **O3** complete mediation | no effect bypasses `allow`; unknown sink fails closed; ceilings cannot be widened | `axor_core/capability/locked.py` (`GovernanceBypassError`); `tests/invariants/test_security_invariants.py` inv15 (denied tool never reaches executor); `tests/adversarial/test_unknown_sink_posture.py`; `tests/adversarial/test_critical_bypasses.py`; `tests/adversarial/test_e2e_gate.py` (lethal-trifecta egress denied) |
-| **T0** non-interpreting producer | no model produces a trusted-path projection | structural (deterministic classifiers in `axor_core/security/carrier.py`, `axor_core/policy/consequence.py`); partially `tests/invariants/test_pure_allow.py` (`test_no_probabilistic_component_in_the_loop`). **No dedicated CI gate — see §3.** |
+| **T0** non-interpreting producer | no model / network / subprocess produces a trusted-path projection | `.importlinter` `t0-producers-non-interpreting` contract (run by `lint-imports`); `tests/invariants/test_t0_producers_non_interpreting.py` (import scan + determinism); `tests/invariants/test_pure_allow.py` (`test_no_probabilistic_component_in_the_loop`) |
 | **T4 decidable** enum/numeric | faithfulness by construction; config that mis-guards a fuzz field is rejected | `axor_core/kernel/decidability.py` (`verify_enum`, `verify_bounded_numeric`); `axor_core/kernel/registration.py` (`validate_value_policies`); `tests/kernel/test_decidability.py` |
 | **T4 fuzzing** path/carrier/string | effective codomain stays in-bounds under fuzzing | `tests/kernel/test_decidability.py` (`test_path_normalizer_fuzz_floor_no_escape`, floor = 8); `tests/adversarial/test_property_fuzz.py` (allowlist never false-accepts; carrier never admits a dangerous bare string) |
+| **"Any trust model"** | the decision factors through the trust model's projection — swap the model, K4 still holds | `tests/contracts/test_value_provenance.py` (`test_noninterference_through_alt_trust_model`, `test_complete_mediation_through_alt_trust_model`): a second trust model with a *different* tainting rule re-proves non-interference + mediation; interface is `axor_core/contracts/provenance.py` |
 | **Non-interference caveats** | adjudicator memoization is "T1 modulo cache state"; detection stays out of `allow` | `axor_core/kernel/adjudicator.py`; `tests/adversarial/test_detection_degradation.py`; [governance-model §8](governance-model.md) |
 
 CI runs the three structural checks plus the suite on every push: the
@@ -232,7 +242,6 @@ Stated as boundaries of the claim, not as incidental gaps:
   confidentiality floor and the positional/carrier gates are paraphrase-proof on
   *their* partition; this residual is integrity-only. See
   [governance-model §7](governance-model.md).
-- **T0 has no dedicated CI gate** (§3) — held by construction, not by a check.
 - **A-3 is a premise, not a theorem** — O3 holds *iff* the finite sink ring is the
   only path to an effect. In-process this is a soft boundary; the hard boundary is the
   daemon.
@@ -240,23 +249,26 @@ Stated as boundaries of the claim, not as incidental gaps:
   confidentiality, not uptime. The opt-in detection→degradation path can cost
   availability under a miscalibrated threshold (reputation-poisoning-upward); that is
   a named non-goal, not a counterexample to K4.
-- **"Any trust model" is argued, not regression-tested** — the kernel/trust-model
-  factorization is enforced at the *import* level (`.importlinter`) and the per-value
-  trust-model interface is `axor_core/contracts/provenance.py`, but there is no test
-  that swaps the reference trust model for another and re-derives K4. The claim rests
-  on the factorization (O1) plus the trust-model lemma (O2 over guarded coercions),
-  not on a mechanized substitution proof.
+- **"Any trust model" — demonstrated on two instances, not proved for all** — the
+  kernel/trust-model factorization is enforced at the *import* level (`.importlinter`)
+  and a substitution test (§5) re-proves non-interference and complete mediation under
+  a second trust model with a different tainting rule. That raises the claim from
+  argued-from-the-interface to demonstrated-on-≥2-instances; it is not a mechanized
+  proof over *all* conforming backends, which would be the inductive content (O2) in a
+  proof assistant.
 
 ---
 
 ## 7. Status
 
-- **Stated and pinned:** O1, O2 (explicit-flow scope), O3, T4 (both branches),
-  the non-interference invariant and its caveats — each with a named regression in §5.
-- **Held structurally, not by a dedicated gate:** T0 (§3).
-- **Argued, not mechanized:** the trust-model-agnostic claim (§6); the obligations
-  are a framing with three checkable premises, not a machine-checked proof (O2 is the
-  inductive content, a Coq/Lean target).
+- **Stated and pinned:** O1, O2 (explicit-flow scope), O3, T0 (import contract +
+  scan/determinism test, §3), T4 (both branches), the non-interference invariant and
+  its caveats — each with a named regression in §5.
+- **Demonstrated on two instances:** the trust-model-agnostic claim — a substitution
+  test re-proves non-interference + mediation under a second trust model (§5/§6).
+- **Argued, not mechanized:** universality over *all* conforming trust models; the
+  obligations are a framing with checkable premises, not a machine-checked proof (O2
+  is the inductive content, a Coq/Lean target).
 
 This document is the narrative anchor for the theorem. When a mechanism below it
 changes, the corresponding crosswalk row is the contract that must still hold.
