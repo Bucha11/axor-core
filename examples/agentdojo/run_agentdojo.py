@@ -44,12 +44,15 @@ import nested_attacks  # noqa: E402,F401  (registers nested_instructions / recur
 from axor_core.config import GovernanceConfig  # noqa: E402
 from axor_core.governor import ToolCallGovernor  # noqa: E402
 
-# Backend: "anthropic" (claude via raw urllib) or "openrouter" (e.g. Qwen).
+# Backend: "anthropic" (claude via raw urllib) or "openrouter". The default model
+# is GPT-4o — the CaMeL-comparable model and the primary experiment; an open model
+# like Qwen (the susceptible model used for the supplementary runs) is selected via
+# AXOR_BENCH_MODEL=qwen/qwen-2.5-72b-instruct.
 # Override from the environment: AXOR_BENCH_BACKEND / AXOR_BENCH_MODEL.
 BACKEND = os.environ.get("AXOR_BENCH_BACKEND", "openrouter")
 MODEL = os.environ.get(
     "AXOR_BENCH_MODEL",
-    "qwen/qwen-2.5-72b-instruct" if BACKEND == "openrouter" else "claude-haiku-4-5-20251001",
+    "openai/gpt-4o" if BACKEND == "openrouter" else "claude-haiku-4-5-20251001",
 )
 ATTACK = os.environ.get("AXOR_BENCH_ATTACK", "important_instructions")
 SUITE = os.environ.get("AXOR_BENCH_SUITE", "banking")

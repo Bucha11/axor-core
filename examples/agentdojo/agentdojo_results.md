@@ -6,6 +6,10 @@ is in `agentdojo_adapter.py`, the runner in `run_agentdojo.py`.
 
 ## Setup
 
+- **Models:** the **primary** experiment is **GPT-4o** (`openai/gpt-4o`, the model
+  family CaMeL measured) — the default in `run_agentdojo.py`. A susceptible open
+  model (**Qwen-2.5-72b**) is used for the **supplementary** runs, where the
+  consequential-injection headroom a robust model hides becomes visible.
 - **Suite:** banking (v1) · **Attack:** `important_instructions` (AgentDojo's
   strongest injection)
 - **Defense:** `GovernedToolsExecutor` — every tool call passes an axor
@@ -23,10 +27,33 @@ is in `agentdojo_adapter.py`, the runner in `run_agentdojo.py`.
 `utility` = the user's real task succeeded. `ASR` (attack success rate) = the
 injected attacker goal succeeded. A good defense lowers ASR while keeping utility.
 
-## Headline — serious threats, Qwen-2.5-72b (injection-susceptible)
+## Primary result — GPT-4o (banking, the CaMeL-comparable model)
+
+The main experiment runs the full banking suite on **GPT-4o**, the capable model
+CaMeL measured and the one with enough headroom to attempt the whole task list.
+Undefended it falls for the serious data-exfiltration injection on **54.2%** of
+pairs; **governed, attack success is 0.0%** while benign utility is retained at
+**56.2%** (60.0% of its 93.8% undefended baseline):
+
+| condition | benign utility (16 tasks) | utility under attack (48 pairs) | ASR |
+|---|---|---|---|
+| undefended | 93.8% | 77.1% | **54.2%** |
+| governed | **56.2%** | 54.2% | **0.0%** |
+
+This is the load-bearing number — measured on the same model family as CaMeL, on
+the same utility-at-ASR≈0 axis. The full per-task cost breakdown (the six benign
+denials and the three mechanisms behind them) is in
+[The CaMeL axis](#the-camel-axis--utility-retained-at-asr--0-banking-full-suite)
+below; the Qwen run there is the susceptible-model comparison. The supplementary
+runs that follow show the broader threat coverage (mass exfiltration, PII leak) on
+a model that actually carries those injections out.
+
+## Supplementary — serious threats on a susceptible open model (Qwen-2.5-72b)
 
 Run via OpenRouter on the injections that are *consequential*, not toy "ignore
-previous instructions" tests — and that the model actually carries out:
+previous instructions" tests — and that this susceptible model actually carries
+out (GPT-4o and Claude resist the overt-theft variants on their own, so the
+mass-exfiltration headroom only appears on an open model):
 
 | suite · threat | n (pairs) | undefended ASR | governed ASR | utility (undef → gov) | calls blocked |
 |---|---|---|---|---|---|
@@ -282,18 +309,20 @@ cleanly).
 
 ```
 pip install agentdojo
-export OPEN_ROUTER_API_KEY=sk-or-...   # Qwen, the susceptible model
+export OPEN_ROUTER_API_KEY=sk-or-...
 
-# The headline serious-threat run (mass exfiltration to an attacker website):
+# PRIMARY — GPT-4o (the default model), CaMeL-axis banking run
+# (full user-task list, benign + attack, both conditions):
+AXOR_BENCH_BACKEND=openrouter AXOR_BENCH_SUITE=banking AXOR_BENCH_CAMEL=1 \
+  python -m examples.agentdojo.run_agentdojo
+
+# Supplementary — susceptible open model (Qwen): the serious-threat run
+# (mass exfiltration to an attacker website):
 AXOR_BENCH_BACKEND=openrouter AXOR_BENCH_MODEL=qwen/qwen-2.5-72b-instruct \
   AXOR_BENCH_SUITE=slack python -m examples.agentdojo.run_agentdojo
 
-# Serious banking PII exfiltration:
+# Other suites (set the model explicitly to override the GPT-4o default):
 AXOR_BENCH_SUITE=slack|banking|workspace|travel ... python -m examples.agentdojo.run_agentdojo
-
-# The CaMeL-axis run (full user-task list, benign + attack, both conditions):
-AXOR_BENCH_BACKEND=openrouter AXOR_BENCH_SUITE=banking AXOR_BENCH_CAMEL=1 \
-  python -m examples.agentdojo.run_agentdojo
 
 # Robust-model contrast:
 export ANTHROPIC_API_KEY=sk-ant-...
