@@ -63,7 +63,16 @@ def _post(body: dict) -> dict:
     for attempt in range(7):
         try:
             with urllib.request.urlopen(req, timeout=120) as r:
-                return json.load(r)
+                result = json.load(r)
+            if "choices" not in result:
+                # OpenRouter free pool occasionally returns a 200 with an error
+                # body (no choices) — treat as transient and retry.
+                if attempt < 6:
+                    time.sleep(delay)
+                    delay = min(delay * 2, 60.0)
+                    continue
+                raise RuntimeError(f"OpenRouter response has no choices: {json.dumps(result)[:200]}")
+            return result
         except urllib.error.HTTPError as e:
             last = e.read().decode(errors="replace")
             if e.code in (400, 429, 500, 502, 503, 529) and attempt < 6:
