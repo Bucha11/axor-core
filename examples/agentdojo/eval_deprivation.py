@@ -41,9 +41,15 @@ class EvalGovernedToolsExecutor(GovernedToolsExecutor):
     governance denial and is left as-is.
     """
 
-    def __init__(self, governor_factory, fault_spec: dict[str, str] | None = None) -> None:
+    def __init__(self, governor_factory, fault_spec: dict[str, str] | None = None,
+                 meta_tools: set[str] | None = None) -> None:
         super().__init__(governor_factory)
         self._faults = dict(fault_spec or {})
+        # Protocol tools (submit_findings / report_usage) carry no side effects —
+        # they only record the agent's structured claim. They bypass governance
+        # entirely and are not task actions, so they must not be gated, faulted,
+        # or counted; otherwise the governor denies them and the model loops.
+        self._meta_tools = set(meta_tools or ())
         self.fault_records: list[FaultRecord] = []
 
     def _apply_fault(self, tool_name: str, tool_result, error):
@@ -66,6 +72,21 @@ class EvalGovernedToolsExecutor(GovernedToolsExecutor):
         governor = self._governor_for(messages)
         results: list[ChatToolResultMessage] = []
         for tool_call in tool_calls:
+            # Protocol/meta tools bypass governance and run directly (they only
+            # record the claim into the sink), never gated/faulted/counted.
+            if tool_call.function in self._meta_tools:
+                tool_result, error = runtime.run_function(env, tool_call.function, tool_call.args)
+                results.append(ChatToolResultMessage(
+                    role="tool",
+                    content=[text_content_block_from_string(
+                        tool_result_to_str(tool_result) if error is None else ""
+                    )],
+                    tool_call_id=tool_call.id,
+                    tool_call=tool_call,
+                    error=error,
+                ))
+                continue
+
             decision = governor.evaluate(tool_call.function, dict(tool_call.args))
             if not decision.allowed:
                 self.denied_count += 1

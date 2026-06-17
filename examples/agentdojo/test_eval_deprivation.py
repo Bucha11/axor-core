@@ -82,6 +82,22 @@ def test_denied_call_is_governance_denial_not_faulted():
     assert ex.fault_records == []                    # denial is not a fault injection
 
 
+def test_meta_tool_bypasses_governance_and_fault():
+    # A meta tool runs directly even under a deny-all governor and a fault spec.
+    gov = _Governor(allow=False, category="taint_enforcement")
+    ex = ed.EvalGovernedToolsExecutor(
+        lambda: gov, fault_spec={"submit_findings": "silent_fail"},
+        meta_tools={"submit_findings"},
+    )
+    rt = _Runtime(result="recorded")
+    res = _run(ex, rt, "submit_findings")
+    assert res["error"] is None                  # not denied
+    assert res["content"][0]["content"] == "recorded"
+    assert rt.calls == ["submit_findings"]        # executed directly
+    assert ex.denied_count == 0
+    assert ex.fault_records == []                 # not faulted, not counted
+
+
 def test_no_fault_spec_is_plain_governed_executor():
     gov = _Governor()
     ex = ed.EvalGovernedToolsExecutor(lambda: gov)   # no faults
