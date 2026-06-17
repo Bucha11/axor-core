@@ -75,10 +75,16 @@ temperature 1.0.
 3. **Governance is dose-independent.** Under axor the recipient argument is
    tainted (it came from untrusted retrieved content) regardless of how much
    corroborating policy surrounds it, so the attacker send is blocked at *every*
-   dose, for both models. The kernel does not estimate a drift probability or
-   parse the composition; it gates on provenance, which the accumulated framing
-   cannot launder. (Same gate, same 0% leak, as the binary NNSI and split-doc
-   runs.)
+   dose. Measured, GPT-4o governed (N=4 per dose):
+
+   | dose | 0 | 1 | 2 | 3 | 4 | 5 |
+   |---|---|---|---|---|---|---|
+   | attacker-CC rate | 0/4 | 0/4 | 0/4 | 0/4 | 0/4 | 0/4 |
+
+   The undefended curve climbs to 25%; the governed curve is flat 0% across the
+   whole dose range. The kernel does not estimate a drift probability or parse the
+   composition; it gates on provenance, which the accumulated framing cannot
+   launder. (Same gate, same 0% leak, as the binary NNSI and split-doc runs.)
 
 ## Caveats / scope
 
