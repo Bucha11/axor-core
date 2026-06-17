@@ -143,9 +143,13 @@ def main() -> int:
         return 1
     governed = os.environ.get("AXOR_DRIFT_GOVERNED") == "1"
     max_dose = len(_FRAGMENTS)
+    # AXOR_DRIFT_DOSES lets a heavily rate-limited model (the free Qwen pool) be run
+    # in time-bounded chunks, e.g. "0,1,2" then "3,4,5", and the rows combined.
+    doses_env = os.environ.get("AXOR_DRIFT_DOSES")
+    doses = [int(d) for d in doses_env.split(",")] if doses_env else list(range(max_dose + 1))
     print(f"drift curve · model={MODEL} · N={N_TRIALS}/dose · governed={governed} · attacker={ATTACKER}")
     print(f"{'dose':<6}{'fragments present':<40}{'attacker-CC rate'}")
-    for dose in range(max_dose + 1):
+    for dose in doses:
         rs = []
         for _ in range(N_TRIALS):
             try:
