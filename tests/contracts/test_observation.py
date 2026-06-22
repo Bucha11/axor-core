@@ -51,6 +51,7 @@ def test_mapping_derives_probe_fields_from_fragments() -> None:
     assert v.turn_index == 5                  # latest fragment.turn
     assert v.taint_active is True             # the tool_result carries a taint canary
     assert v.external_read_count == 1         # one tool_result fragment
+    assert v.taint_canaries == ("CANARY-abc",)  # the taint_mark canary is exported
 
 
 def test_mapping_clean_context_is_untainted() -> None:

@@ -54,6 +54,7 @@ def to_session_context_view(
         system_prompt_hash=system_prompt_hash,
         taint_active=any(f.taint_mark is not None for f in fragments),
         external_read_count=sum(1 for f in fragments if f.kind == "tool_result"),
+        taint_canaries=tuple(f.taint_mark for f in fragments if f.taint_mark),
     )
 
 

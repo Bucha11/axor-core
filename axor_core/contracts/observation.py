@@ -38,6 +38,11 @@ class SessionContextView:
     system_prompt_hash: str
     taint_active: bool
     external_read_count: int
+    # Canary tokens marking tainted fragments (ContextFragment.taint_mark),
+    # propagated through compression. A behavioral monitor (axor-probe) checks
+    # whether the agent leaks one of these into its output — the structural
+    # disclosure signal for a live health check.
+    taint_canaries: tuple[str, ...] = ()
 
 
 @runtime_checkable
