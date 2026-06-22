@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from axor_core.contracts.agent import AgentDefinition
     from axor_core.contracts.memory import MemoryProvider
+    from axor_core.contracts.observation import ContextTap
     from axor_core.contracts.session import SessionSink
 from axor_core.contracts.cancel import make_token, CancelReason
 from axor_core.contracts.session import SessionAuditRecord, ToolInvocationRecord
@@ -118,6 +119,7 @@ class GovernedSession:
         adjudicator=None,
         federation_gateway=None,
         session_sink: "SessionSink | None" = None,
+        context_tap: "ContextTap | None" = None,
     ) -> None:
         # Wall-clock the session was constructed — handed to sentinel in the
         # closed-session record (slow-and-low staging compares session start times).
@@ -125,6 +127,10 @@ class GovernedSession:
         # Optional Core → Sentinel audit sink + the per-tool invocation buffer it
         # consumes at close. Default None → no record built, zero overhead.
         self._session_sink = session_sink
+        # Optional live-context tap (hot path) handed to every GovernedNode so an
+        # external monitor (axor-probe) can build drift snapshots. Default None →
+        # the node-level emit is a no-op, zero overhead.
+        self._context_tap = context_tap
         self._tool_invocations: "list[ToolInvocationRecord]" = []
         self._record_emitted = False   # guard: aclose is idempotent, emit once
 
@@ -730,6 +736,7 @@ class GovernedSession:
             value_policies=self._value_policies,
             adjudicator=self._adjudicator,
             federation_gateway=self._federation_gateway,
+            context_tap=self._context_tap,
         )
 
     async def _handle_command(self, raw: str) -> ExecutionResult:
