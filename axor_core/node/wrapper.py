@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import dataclasses
 import logging
-from typing import Callable
+from typing import TYPE_CHECKING, Callable
 
 from axor_core import trace as trace_mod
 from axor_core.budget.policy_engine import BudgetPolicyEngine, OptimizationAction
@@ -57,6 +57,9 @@ from axor_core.policy.analyzer import TaskAnalyzer
 from axor_core.policy.composer import PolicyComposer
 from axor_core.policy.selector import PolicySelector
 from axor_core.trace.collector import TraceCollector
+
+if TYPE_CHECKING:
+    from axor_core.contracts.observation import ContextTap
 
 
 log = logging.getLogger("axor.wrapper")
@@ -123,7 +126,9 @@ class GovernedNode:
         invocation_recorder: "Callable[[str, dict, bool], None] | None" = None,
         adjudicator=None,
         federation_gateway=None,
+        context_tap: "ContextTap | None" = None,
     ) -> None:
+        self._context_tap = context_tap  # None → live-context seam not attached
         self._executor = executor
         self._child_executor = child_executor  # None → reuse parent executor
         self._cap_executor = capability_executor
@@ -227,6 +232,16 @@ class GovernedNode:
             )
         else:
             context = self._stub_context_view(raw_state, policy, lineage)
+
+        # Fire the live-context observation seam (hot path, fail-safe, no-op when
+        # no tap is attached). External monitors (axor-probe) build drift
+        # snapshots from this; core never imports them. Imported locally, matching
+        # this module's existing lazy-import style.
+        from axor_core.node.context_observation import emit_context_view
+
+        await emit_context_view(
+            self._context_tap, context, session_id=raw_state.session_id
+        )
 
         # ── 4. Envelope ────────────────────────────────────────────────────────
         extension_tools = (
