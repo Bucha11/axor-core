@@ -372,6 +372,28 @@ Frame as "governance is also measurable and cheap," not as the main result.
 - **Firewalls (LLM input-firewall)** — the public **T0 counterexample**: a model-produced
   projection is steerable, so it may feed detection only, never the trusted path. Axor's
   T0 obligation is exactly the rule that forbids this.
+- **Probabilistic verification for AI agents (Solko-Breslin, Mudrakarta, Christodorescu,
+  Jha, Dvijotham, arXiv:2606.20510)** — the sharpest contemporary contrast, and a
+  *deliberate inversion* of axor's design axis. They extend Datalog policy verification
+  to **admit probabilistic predicates** (imperfect PII classifiers, declassifiers with
+  failure rates) into enforcement and, via distributionally robust optimization (no
+  independence assumption between detectors), compute a **sound upper bound on the
+  probability of policy violation**. Axor makes the *opposite* choice on the trusted
+  path: T0 forbids any probabilistic/interpreting producer in the decision loop
+  (`tests/invariants/test_pure_allow.py::test_no_probabilistic_component_in_the_loop`),
+  so its guarantee is a structural non-interference invariant (K4), not a
+  violation-probability bound. State the trade explicitly: *they buy coverage of fuzzy
+  predicates at the cost of a probabilistic guarantee; axor buys a deterministic,
+  framing-invariant guarantee at the cost of restricting the trusted path to
+  non-interpreting projections (the §5.4 decidability split is exactly that restriction
+  made precise).* Their work is also the natural **future direction** for axor's two
+  probabilistic-adjacent surfaces — the observe-only detection→degradation path
+  (`governance-model §8`) and the advisory adjudicator — which could carry such sound
+  bounds *without* violating T0, precisely because both are off the trusted path
+  (detection may only tighten; the adjudicator only adds a deny). Cite it as the answer
+  to the reviewer question "why not just admit a good classifier into the gate?" — they
+  show how to do it soundly, and the cost is the probabilistic guarantee axor's
+  structural axis avoids.
 - Detection-based PI defenses (prompt classifiers) — contrast with the
   enforcement/detection separation: detection is observe-only, may only *tighten*, never
   allow (`governance-model §8`).
@@ -392,6 +414,15 @@ Pull together, as first-class content (the kernel-theorem already states these a
 - "Any trust model" demonstrated on 2 instances, not mechanized.
 - AgentDojo coverage: 3 serious injections × 16 tasks, not the full 9-injection matrix;
   benches go dark on robust models.
+
+**Future direction (one paragraph).** The integrity paraphrase residual and the fuzzing
+fraction of the perimeter (§5.4) are where a *probabilistic* predicate would help most.
+Probabilistic verification (arXiv:2606.20510, §7) shows how to admit such a predicate
+soundly — with a bounded violation probability rather than a structural guarantee. The
+clean way to fold it into axor *without* weakening K4 is to keep it **off the trusted
+path**: carry the bound on the observe-only detection→degradation surface or the advisory
+adjudicator (both tighten-only), so a fuzzy classifier can ratchet restrictions under a
+sound bound while the deterministic gates remain the only thing that can allow.
 
 ---
 
