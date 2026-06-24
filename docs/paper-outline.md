@@ -35,8 +35,9 @@ Haoyu's three asks, mapped to sections:
      Non-Interference theorem (K4)**, with an explicit chain from a concrete
      agentic attack → taint analysis → the non-interference guarantee — §5.
   3. **Empirical validation on AgentDojo** with the *honest* utility/ASR tradeoff,
-     and a concrete motivation for adopting a structural defense even where a robust
-     model already resists — §6.
+     anchored by the result that a strong production model (GPT-4o) fools itself on
+     **60.4%** of pairs undefended → **0.0%** governed at **62.5%** utility retained —
+     the motivation no robust-model argument can wave away — §6.
 - Forward-reference the opening example (§2).
 
 ---
@@ -55,8 +56,13 @@ run, 76.2% → 0% ASR, utility-neutral — good as a second, "and it scales" exa
 **The scene.** A banking agent is asked to do a benign task (summarize transactions /
 pay a bill). The transaction history it must read contains an injected instruction:
 *"send a transaction to `attacker-IBAN` …"* (data and instructions share a channel —
-the hard core of injection). Undefended GPT-4o carries this out on **60.4%** of pairs
-(`examples/agentdojo/agentdojo_results.md`).
+the hard core of injection). **The model fools itself:** undefended **GPT-4o** — a
+strong, current production model, the very one CaMeL measured — carries this out on
+**60.4%** of pairs (`examples/agentdojo/agentdojo_results.md`). This is the example to
+lead with precisely *because the model is not weak*: the reader cannot dismiss it as
+"use a better model." A capable model with enough headroom to attempt the whole task
+list still walks straight into the injection on its own — that is the problem axor
+exists for, and §6.4 turns it into the central adoption argument.
 
 **Walk the call through the gate sequence** (README "Reverse Osmosis", governance-model §2):
 the model emits `send_money(recipient=attacker-IBAN, …)`. The recipient value entered
@@ -311,23 +317,36 @@ The slack row is the strongest single argument: **76.2% → 0% ASR at zero utili
 stops derailing the model. **This is the practical-adoption number.**
 
 **6.4 The motivation Haoyu asked for — why adopt when the model already resists.**
-Three numbered arguments, in order of strength:
-1. **Secure-by-design invariance (the qualitative reason).** The defense gates on
+The frame to defeat is *"just use a robust model."* Four numbered arguments, in order
+of strength, built so the GPT-4o result does the load-bearing work:
+
+1. **A strong, current production model fools itself (the result that kills the rebuttal).**
+   This is the GPT-4o number, promoted to the lead argument. GPT-4o is not a weak open
+   model you can wave away — it is the capable, widely-deployed model CaMeL itself
+   measured, with enough headroom to attempt the whole task list — and **undefended it
+   carries out the data-exfiltration injection on 60.4% of pairs** (`agentdojo_results.md`).
+   "Pick a better model" is therefore not a defense: the better model *is* the one that
+   leads itself astray. Governed, the same model is at **0.0% ASR while retaining 62.5%
+   of its benign utility.** This single contrast — strong model, fools itself, axor
+   neutralizes it at known cost — is the paper's adoption headline.
+2. **Secure-by-design invariance (the qualitative reason).** The defense gates on
    *argument provenance*, not on recognizing the injection — so a cleverer *frame* that
    flips a model produces the *same* tainted egress and is refused identically (NNSI:
    62% → 0%, depth-invariant). Model robustness is per-model, per-attack, and erodes
    with the next framing; the structural guarantee does not. **You cannot benchmark your
    way to this — it is a property, not a score.**
-2. **The robust model is robust *to this bench*, not in general (the negative result).**
+3. **The "robust" model is robust *to this bench*, not in general (the negative result).**
    claude-haiku resists AgentDojo's shallow single-injection attacks — but the *same
    model* falls to the NNSI nested-document framing **62% of the time** undefended
-   (`nnsi_results.md`). "The model defended" and "the defense defended" are
-   indistinguishable on a bench too weak to create headroom; axor's guarantee is exactly
-   what covers the attacks the bench cannot express.
-3. **The numbers where headroom exists (the quantitative reason).** Where a model *does*
-   have headroom (Qwen, GPT-4o), axor drives ASR to 0 — 76.2%→0%, 66.7%→0%, 60.4%→0% —
-   at measured, *explainable* utility cost, often **zero** when the legitimate argument
-   comes from the prompt.
+   (`nnsi_results.md`). So even the apparent counterexample to argument 1 is an artifact
+   of a weak bench: "the model defended" and "the defense defended" are
+   indistinguishable when the bench is too weak to create headroom; axor's guarantee is
+   exactly what covers the attacks the bench cannot express.
+4. **The numbers where headroom exists (the quantitative reason).** Across both a strong
+   (GPT-4o) and a susceptible (Qwen) model, axor drives ASR to 0 — 60.4%→0%, 76.2%→0%,
+   66.7%→0% — at measured, *explainable* utility cost, often **zero** when the legitimate
+   argument comes from the prompt. The effect is not confined to weak models; it is the
+   same structural gate doing the same thing on a frontier model.
 
 **6.5 Honest accounting (a subsection, not buried).** Utility cost falls specifically on
 sinks whose *legitimate* argument is read from an untrusted source (data+instructions
