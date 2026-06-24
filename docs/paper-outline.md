@@ -73,9 +73,13 @@ Clean to walk gate-by-gate and it is the CaMeL-comparable scenario.
 > — it gains §2 nothing**, so **banking stays the default** and the doc is consistent.
 > The suite where the *confidentiality floor* (sound, paraphrase-proof, ends on a closed
 > axis) actually arms is **travel** (`config/travel.yaml` is the only one with
-> `sensitive_sources`). If we ever want a §2 example that closes on the sound axis rather
-> than ending on the integrity residual, the candidate is **travel**, not slack — but
-> that is a separate, smaller scenario; banking remains the recommended opener.
+> `sensitive_sources`). **This finding is bigger than §2 — it exposes a §6 gap, now paired
+> as the travel floor-armed run in §6.2** (the sound axis had zero benchmark backing).
+> Consequence for §2/§5.2: banking stays the recommended opener (cleanest integrity
+> gate-walk), but **travel is the example that *closes on the sound axis*** — the floor
+> refusing a paraphrased secret egress — and is the natural second illustration if we want
+> the reader to see the paraphrase-proof half, not just the integrity gate that ends on a
+> documented residual. Not a swap; an addition.
 
 **The scene.** A banking agent is asked to do a benign task (summarize transactions /
 pay a bill). The transaction history it must read contains an injected instruction:
@@ -437,11 +441,12 @@ fuzz-discharged, §5.4), independent of whether the model would have fallen. The
 question is then CaMeL's question, not a scoreboard: **what does the guarantee cost in
 benign utility?** Measured per suite on the *benign* task list:
 
-| suite (full) | what the guarantee does | benign utility cost |
-|---|---|---|
-| **slack** · mass-exfiltration sink | every channel/inbox → external egress denied | 47.6% → **47.6%** — **zero cost** |
-| **banking** · transfer / exfil sink | tainted-recipient egress denied | 100% → **62.5%** — **−37.5pp** (the costed case) |
-| **workspace** · read-only email Qs | egress denied if driven by untrusted read | transparent (0 denials on Claude) |
+| suite (full) | axis | what the guarantee does | benign utility cost |
+|---|---|---|---|
+| **slack** · mass-exfiltration sink | integrity | every channel/inbox → external egress denied | 47.6% → **47.6%** — **zero cost** |
+| **banking** · transfer / exfil sink | integrity | tainted-recipient egress denied | 100% → **62.5%** — **−37.5pp** (the costed case) |
+| **workspace** · read-only email Qs | integrity | egress denied if driven by untrusted read | transparent (0 denials on Claude) |
+| **travel** · secret read → email | **confidentiality (sound floor)** | egress refused on the *fact* of the `get_user_information` read, paraphrase-proof | **TO RUN** — see below |
 
 **This cost is well-defined on *any* model — it does not evaporate on Claude 4 / o3**,
 which is the entire reason to lead here and not on ASR-delta. Where the guarantee is free
@@ -458,6 +463,33 @@ value-coincidence false positive / whole-args fallback) — this candor locates 
 where a content ledger is weaker than CaMeL's structural provenance, and it is a property
 of the *taxonomy + shared channel*, **not of the model** (it reproduces on claude-haiku,
 where ASR-delta is 0 — the cost is real even where the delta is not).
+
+**The sound (confidentiality) axis — travel, the floor-armed run, and the one run still
+worth the compute.** This closes a real **§6 gap a reviewer hits first**: §5.5 claims a
+*sound, paraphrase-proof* confidentiality floor, but every benchmark suite shown so far
+is **integrity** (slack / banking) or read-only (workspace) — the sound half of the model
+has **zero benchmark backing** (it is currently validated only in `live_governance_demo.py`
+and the unit suite, not in an AgentDojo run). **travel is the suite that arms the floor**:
+`config/travel.yaml` declares `sensitive_sources: [get_user_information]` (passport / ID /
+bank account), so any subsequent `send_email` is refused **on the fact of the secret
+read**, regardless of which field or encoding carries it. Why this is *the* run to do
+(unlike the CaMeL re-run and NNSI-on-robust, which we cut):
+- **Not headroom-dependent.** The floor is structural — it fires whether or not the model
+  would have leaked. This is exactly why ASR-delta made travel look empty (the model
+  *refuses* the overt "email my passport to the attacker" injection on its own, so
+  ASR-delta ≈ 0 — `agentdojo_results.md`), and exactly why the *flipped* axis (§6.2)
+  rescues it: measure the **floor's utility cost**, not a delta.
+- **Not self-refereed.** It is AgentDojo's own travel suite plus a standard secret read —
+  no bespoke attack of ours (contrast NNSI).
+- **Closes a named gap.** It is the empirical leg under §5.5's strongest, paraphrase-proof
+  claim; without it, the sound axis is an assertion.
+What to measure (don't fabricate — *run it first*): (a) the floor **arms** on the secret
+read and **refuses** the subsequent egress; (b) a **paraphrase/encoding micro-test** — the
+secret re-encoded / restructured is *still* refused (the thing the integrity ledger cannot
+do, §5.5); (c) the floor's **benign utility cost** = the legitimate travel tasks that must
+email *after* reading `get_user_information` (the honest price of the sound guarantee,
+reported the same cost-axis way as banking). If the run hasn't happened yet, this is the
+single highest-value compute left in the eval.
 
 **6.3 CaMeL comparison — the *same kind* of claim, not the same number.** The honest,
 strong framing the axis-flip unlocks: axor and CaMeL now report the **same type of
@@ -615,6 +647,11 @@ Pull together, as first-class content (the kernel-theorem already states these a
 - "Any trust model" demonstrated on 2 instances, not mechanized.
 - AgentDojo coverage: 3 serious injections × 16 tasks, not the full 9-injection matrix;
   benches go dark on robust models.
+- **Confidentiality (sound) axis — benchmark leg pending.** Until the travel floor-armed
+  run lands (§6.2), the sound, paraphrase-proof floor is demonstrated only in
+  `live_governance_demo.py` + the unit suite, not on an AgentDojo suite. State this
+  honestly *and* resolve it with the travel run — it is the cheapest credibility gain
+  available and the answer to "where is the sound axis in the experiment?"
 
 **Future direction (one paragraph).** The integrity paraphrase residual and the fuzzing
 fraction of the perimeter (§5.4) are where a *probabilistic* predicate would help most.
@@ -653,9 +690,11 @@ self-govern execution.
 1. The reverse-osmosis gate stack (README) — *the* signature figure.
 2. Trust-ring diagram + three-interface adapter seam (§4).
 3. The attack → taint → theorem chain as a single diagram (§5.2) — the conceptual core.
-4. **The primary figure: guarantee-at-cost across suites** (§6.2 — slack zero cost,
-   banking −37.5pp, workspace transparent) — the CaMeL-shaped result that holds on robust
-   models. Put the ASR-delta table (§6.4) *second/smaller*, captioned "where headroom
+4. **The primary figure: guarantee-at-cost across suites, *split by axis*** (§6.2 —
+   *integrity*: slack zero cost, banking −37.5pp, workspace transparent; *confidentiality
+   (sound floor)*: travel, once run) — the CaMeL-shaped result that holds on robust
+   models, and the one figure that shows **both** axes of §5 are exercised, not just
+   integrity. Put the ASR-delta table (§6.4) *second/smaller*, captioned "where headroom
    exists," so layout itself signals which axis is load-bearing.
 5. The decidability split (enum/numeric = decidable vs path/carrier = fuzzing) (§5.4).
 
@@ -689,6 +728,14 @@ self-govern execution.
   the §6 *primary* result = the cross-suite **cost-of-guarantee** table, with **slack** as
   the zero-cost instance and **banking** as the −37.5pp costed case. (Supersedes both the
   earlier "open with banking" note and the "§6 headline = slack ASR-delta" note.)
+- **The travel floor-armed run — ACTION, the one run worth the compute (§6.2).** The
+  confidentiality (sound) axis has no benchmark backing yet; `config/travel.yaml` already
+  arms the floor (`sensitive_sources: get_user_information`), so the run is set up — it
+  just hasn't been executed under the cost axis. Distinct from the two runs we *rejected*:
+  unlike a CaMeL re-run (loses on harness mismatch) and NNSI-on-robust (self-refereed,
+  headroom-dependent), this one is structural, not self-refereed, and closes the named
+  §5.5 gap. Do this run; report floor-arms + paraphrase micro-test + benign cost. Do not
+  write travel numbers until it is run.
 - **Venue framing:** systems-security (USENIX/CCS/S&P) vs an LLM-agent-safety venue —
   changes how much §5 formalism vs §6 empiricism leads.
 - **How hard to push the theorem:** keep K4 as "stated + pinned + demonstrated on 2
