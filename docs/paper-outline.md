@@ -34,10 +34,11 @@ Haoyu's three asks, mapped to sections:
   2. A **secure-by-design** security model anchored by the **Perimeter
      Non-Interference theorem (K4)**, with an explicit chain from a concrete
      agentic attack → taint analysis → the non-interference guarantee — §5.
-  3. **Empirical validation on AgentDojo** with the *honest* utility/ASR tradeoff,
-     anchored by the result that a strong production model (GPT-4o) fools itself on
-     **60.4%** of pairs undefended → **0.0%** governed at **62.5%** utility retained —
-     the motivation no robust-model argument can wave away — §6.
+  3. **Empirical validation on AgentDojo**, framed as CaMeL frames it — a **structural
+     guarantee at a measured utility cost** (slack: zero cost; banking: −37.5pp), *not* a
+     headroom-dependent ASR-delta that vanishes on a robust model. The ASR-delta (GPT-4o
+     60.4% → 0%, Qwen slack 76.2% → 0%) is secondary colour showing the threat is live
+     where headroom exists — §6.
 - **Novelty arbitration (one headline, decided — a reviewer will ask "which is *the*
   contribution?").** The **single headline novelty is contribution 2's perimeter
   non-interference theorem with the decidability split (§5.4)** — the part that is
@@ -94,9 +95,10 @@ injection — the gate read only the call's *projection* (the origin-class of th
 recipient field), never the attacker's prose, so reframing the injection cannot change
 the verdict. Name the guarantee (*perimeter non-interference*, §5) and forward-reference;
 §5.2 carries the attack→taint→theorem walk in full. §2 gives the reader a feel; §5.2
-proves it. (Empirical echo, phrased as a rate: the NNSI nested-document attack's success
-rate is driven to **0% at every framing depth D0–D5** — from 62% undefended —
-`examples/attacks/nnsi_results.md`.)
+proves it. (If an illustrative stressor is wanted here, the NNSI depth-invariant block is
+available — but flag it as *our own, self-refereed* attack and anchor it to the published
+nested/indirect-injection class, per §6.5; do **not** lean on its 62% as a load-bearing
+number. The framing-invariance claim stands on the theorem, not on NNSI.)
 
 End with the honest qualifier, kept on the right axis. Framing is neutralized
 structurally — but this banking case sits on the **integrity** axis, and there the
@@ -338,10 +340,34 @@ appendix — it is the paper's credibility anchor.
 
 ## 6. Evaluation — AgentDojo (Haoyu point #3)
 
-> Haoyu: defenses are perfect for both axor and the baseline, so we need a **motivation
-> for practical adoption** — secure-by-design is enough for him, *numbers are better*.
-> The honest, load-bearing framing is **utility retained at ASR ≈ 0** (the CaMeL axis),
-> not "ASR → 0" alone (driving ASR to zero is trivial — deny all egress).
+> **The measurement axis — read this before structuring §6; it is the section's whole
+> point.** Our instinct was to lead with **ASR-delta** (undefended X% → governed 0%).
+> *Drop that as the primary axis.* ASR-delta is **headroom-dependent**: it requires a
+> foolable model — no headroom, no delta, and on a robust model it degenerates to
+> 0% → 0% and the result evaporates. **CaMeL never used this axis.** CaMeL's number is
+> "fraction of tasks solved *with* a by-construction guarantee," reported as the
+> **utility *cost* of that guarantee**; its ASR≈0 is *structural* (the interpreter
+> cannot exfiltrate), so it holds whether or not the model would have fallen — the cost
+> question is well-defined on a dumb *and* a smart model.
+>
+> **axor has the same by-construction nature** — the gate denies by *projection*,
+> framing-invariant, ASR→0 *structurally* (enum/numeric outright, rich-syntax
+> fuzz-discharged; §5.4). So axor can and must make the **same *type* of claim as CaMeL:
+> a structural guarantee + its measured utility cost** — which does **not** go dark on
+> Claude 4 / o3. Flip the axis:
+> - **Primary (§6.2): structural guarantee at utility-cost Y.** CaMeL-*shaped* (not the
+>   same number — different harness). This is the load-bearing result and the direct
+>   answer to Haoyu's "motivation for adoption": *motivation = the guarantee; metric =
+>   its cost; not a scoreboard.*
+> - **Secondary colour (§6.3): ASR-delta where headroom exists** (GPT-4o 60.4→0, Qwen
+>   slack 76.2→0) — "here is where an undefended model self-owns, i.e. the threat the
+>   guarantee neutralizes is live." Explicitly note it degenerates to 0→0 on robust
+>   models *and that this is fine*, because it was never the load-bearing axis.
+>
+> This is the *same honesty as §5.4* (a guarantee with a named, bounded conditionality),
+> applied to the empirics. Smart models do not break a by-construction defense — they
+> make it look *better* (CaMeL v2's utility *rose* on smarter models, e.g. o3 ≈ +10% vs
+> o1, at the same structural guarantee). What goes dark is only the ASR-delta frame.
 
 > **Canon lock (do this before writing a single number).** The authoritative figures
 > are `examples/agentdojo/agentdojo_results.md`: banking GPT-4o **60.4% → 0.0% ASR at
@@ -381,109 +407,101 @@ susceptible-model supplement, **claude-haiku-4-5** robust contrast
 >   the exact per-suite deltas from the cited version's table; don't quote digits from
 >   the phone screenshot.
 
-**6.2 Headline security result — slack mass-exfiltration at *zero* utility cost (lead
-§6 with this).** Per Haoyu's "we need a motivation for adoption": the full slack suite
-against the consequential mass-exfiltration injection (concatenate all channel+inbox →
-POST to an attacker site), on the susceptible model that actually carries it out.
+**6.2 The guarantee and its measured cost — the PRIMARY result (lead §6 with this).**
+State the guarantee first, in §5's vocabulary: axor's gate denies by *projection*, so on
+every declared egress sink the exfiltration path is refused **structurally** —
+framing-invariant, ASR→0 by construction (enum/numeric outright; rich-syntax
+fuzz-discharged, §5.4), independent of whether the model would have fallen. The empirical
+question is then CaMeL's question, not a scoreboard: **what does the guarantee cost in
+benign utility?** Measured per suite on the *benign* task list:
 
-| suite · threat | n | undefended ASR | governed ASR | utility (undef → gov) | utility status |
-|---|---|---|---|---|---|
-| **slack** · mass exfiltration, **full suite** | 21 | **76.2%** | **0.0%** | 47.6% → **47.6%** | **preserved** (real zero-cost) |
-| **banking** · PII exfiltration (third-party IBAN) | 6 | 66.7% | **0.0%** | 0% → 0% | **degenerate** (utility 0 in *both* — see note) |
+| suite (full) | what the guarantee does | benign utility cost |
+|---|---|---|
+| **slack** · mass-exfiltration sink | every channel/inbox → external egress denied | 47.6% → **47.6%** — **zero cost** |
+| **banking** · transfer / exfil sink | tainted-recipient egress denied | 100% → **62.5%** — **−37.5pp** (the costed case) |
+| **workspace** · read-only email Qs | egress denied if driven by untrusted read | transparent (0 denials on Claude) |
 
-**The load-bearing claim is the slack row only: 76.2% → 0% ASR with utility *preserved*
-(47.6% → 47.6%)** — legitimate recipients come from the prompt/channel, not the
-attacker payload, so blocking the exfiltration costs no real-task completion. Keep the
-two rows visually distinct: the **banking-PII row is degenerate** — its 0% → 0% utility
-is *not* "zero cost," it is "there was no utility to begin with" (the bill file's content
-is itself replaced by the injection, so the task fails even undefended). Do **not** let
-it sit unlabeled next to the slack row as if both demonstrate preserved utility; it
-demonstrates only ASR → 0. Adoption headline = slack; banking (§6.3) is the harder
-*costed* case for the CaMeL comparison. (Roles, once: §2 illustrative = banking gate-walk;
-§6 headline = slack.)
+**This cost is well-defined on *any* model — it does not evaporate on Claude 4 / o3**,
+which is the entire reason to lead here and not on ASR-delta. Where the guarantee is free
+(slack: legitimate recipients come from the prompt/channel, not the attacker payload) it
+costs nothing; where data and instructions share a channel (banking) it costs −37.5pp.
+Decompose the 6 lost banking tasks into the three mechanisms (genuine shared channel /
+value-coincidence false positive / whole-args fallback) — this candor locates exactly
+where a content ledger is weaker than CaMeL's structural provenance, and it is a property
+of the *taxonomy + shared channel*, **not of the model** (it reproduces on claude-haiku,
+where ASR-delta is 0 — the cost is real even where the delta is not).
 
-> Footnote, not headline: a smaller 9-pair slice — *pre-registered as the pairs where the
-> undefended injection derailed the user's real task into failure* — shows utility rising
-> 33.3% → 88.9% under governance (a blocked attack stops the derailment). Report it only
-> with that principled slice definition **and** the small-n caveat (n=9, wide CI); it is
-> a mechanism illustration, not a headline number, and must never appear as a bare
-> "governance raises utility" claim.
+**6.3 CaMeL comparison — the *same kind* of claim, not the same number.** The honest,
+strong framing the axis-flip unlocks: axor and CaMeL now report the **same type of
+result** — a *structural* guarantee plus its *measured utility cost* — so they are
+comparable in *kind* even though the numbers are not (different harness / subset / model /
+version). Be precise:
+- **Not apples-to-apples on the number.** CaMeL's headline is reported, not re-run by us;
+  version matters (v1 ≈67% *with* GPT-4o; v2 ≈77%/75% on Claude 4 / Gemini 2.5 / o3 /
+  o4-mini, **no GPT-4o** — §6.1). Pin the version you cite.
+- **Cost, stated without inflation.** axor banking **−37.5pp** (100 → 62.5) vs CaMeL
+  ~**−27 to −30pp** (v1 secondary source, *Overall* benign column) — axor's is ~40%
+  larger and cross-model. Honest line: *higher but of the same order, on a different
+  model, bought with far lighter integration (a gate on an unmodified loop vs an
+  interpreter between the model and every tool) plus a non-interference theorem.* Do
+  **not** write "comparable" / "same ballpark." Verify the CaMeL number is **benign-only**
+  (Table 2, not under-attack Table 3) before quoting any delta.
+- **Smart models help a by-construction defense, don't break it** (true for both): CaMeL
+  v2's utility *rose* on smarter models (o3 ≈ +10% vs o1) at the same structural
+  guarantee. Only the ASR-delta frame goes dark on strong models — which is exactly why
+  §6.2 leads on cost, not delta.
 
-**6.3 Banking — the costed case and the CaMeL comparison (reported, not re-run).**
-Banking is where the defense *costs* utility (the legitimate action is driven by
-untrusted-read content), so it is the honest place to compare against CaMeL — with the
-comparison's limits stated, not buried.
+**6.4 ASR-delta — secondary colour, where headroom exists (NOT the load-bearing axis).**
+On a *foolable* model the undefended attack lands and the structural guarantee neutralizes
+it — useful to *show the threat is live*, not to carry the result:
 
-| condition | benign utility (16) | utility under attack (48) | ASR |
+| model · suite | undefended ASR | governed ASR | note |
 |---|---|---|---|
-| undefended | 100.0% | 79.2% | **60.4%** |
-| governed | **62.5%** | 58.3% | **0.0%** |
+| GPT-4o · banking | **60.4%** | **0.0%** | strong model self-owns |
+| Qwen · slack (full) | **76.2%** | **0.0%** | mass exfiltration neutralized |
+| Qwen · banking-PII | 66.7% | **0.0%** | **ASR-only — degenerate utility (0 in both), never a zero-cost win** |
+| claude-haiku · banking | 0% | 0% | **degenerates — robust model, no headroom; expected, not a failure** |
 
-**62.5% benign utility retained at 0.0% ASR**, against a model that undefended falls for
-60.4% of pairs. On the CaMeL comparison, be precise about what is and isn't comparable:
-- CaMeL's headline is *reported, not re-run by us*, on a different harness / subset /
-  model set, and is an aggregate "provable-security task-solve" figure — **not** an
-  apples-to-apples head-to-head and **not** a GPT-4o number. Version matters: v1 ≈67%
-  (and v1 *did* include GPT-4o), v2 ≈77%/75% on Claude 4 Sonnet / Gemini 2.5 / o3 /
-  o4-mini with **no GPT-4o** (§6.1). Pin the version you cite.
-- The *fair* framing is utility **cost** — but **do not call it "comparable" or "same
-  ballpark," a reviewer will check the arithmetic.** axor's banking cost is **−37.5pp**
-  (100% → 62.5%); CaMeL's reported per-model cost is ~**−27 to −30pp** (v1 secondary
-  source, *Overall* column) — i.e. axor's is **~40% larger**, and **cross-model** (axor
-  on GPT-4o, CaMeL on Claude 3.5 / Claude 4). The honest claim is therefore: *axor's
-  utility cost is higher, but of the **same order**, on a **different model**, bought
-  with **far lighter integration** (a gate on an unmodified loop vs an interpreter
-  between the model and every tool) **plus a non-interference theorem**.* Two verify-flags
-  before writing any CaMeL delta: (a) confirm the CaMeL number is **benign-only** (Table
-  2 "Utility results," not the under-attack Table 3) — if not, it is doubly incomparable
-  to our 62.5% benign; (b) quote the exact per-suite delta from the **cited version's**
-  Table 2/5, not from memory or the screenshot.
-- Decompose the 6 lost benign tasks into the three mechanisms (genuine shared channel /
-  value-coincidence false positive / whole-args fallback) — this candor locates exactly
-  where a content ledger is weaker than CaMeL's structural provenance.
+Say the quiet part: on a robust model this axis collapses to 0 → 0, and **that is not a
+failure of the defense** — the guarantee and its cost (§6.2) are untouched; only the
+delta-metric goes dark. (Footnote, principled: a 9-pair slice — *pre-registered* as the
+pairs where the undefended injection derailed the task into failure — shows utility
+33.3% → 88.9%; report only with that definition + the n=9 / wide-CI caveat, as a
+mechanism illustration, never a bare "governance raises utility.")
 
-**6.4 The motivation Haoyu asked for — why adopt when the model already resists.**
-The frame to defeat is *"just use a robust model."* **Three** arguments — and arguments
-1 and the old "robust model" point are *merged*, because as separate claims they
-contradict (one says model choice doesn't help, the other concedes a model that resists
-the bench). The honest version is a single synthesis with two prongs:
+**6.5 The adoption motivation, on the right axis (direct answer to Haoyu).** Haoyu asked
+for a *motivation for practical adoption* beyond "ASR is perfect for everyone." On the
+flipped axis the answer is clean and CaMeL-shaped: **the motivation is the guarantee; the
+metric is its cost.** You adopt a structural, framing-invariant guarantee (§5) *because*
+it does not erode with the next attack, and you pay a measured, bounded utility cost
+(§6.2) — not a promise, and not a scoreboard that vanishes on a good model. Two supporting
+points, kept as support (not the headline — see novelty arbitration, §1):
 
-1. **Model choice is not a *general* defense (state this as one argument, not a claim
-   and a walk-back).** Two prongs that only work *together*:
-   - A *strong* model still fools itself: undefended **GPT-4o** carries out the
-     data-exfiltration injection on **60.4%** of pairs (`agentdojo_results.md`).
-     Capability ≠ injection-safety, so "use a bigger model" does not save you.
-   - A model that *resists this bench* falls to the *next* attack: **claude-haiku-4-5**
-     resists AgentDojo's shallow single-injection attacks (0% ASR) yet falls to the NNSI
-     nested-document framing **62% of the time** undefended (`nnsi_results.md`, same
-     model, verified). So "use a model that passes the benchmark" does not save you
-     either — the benchmark is simply too weak to express the attack that breaks it.
-   Together: model selection only ever covers the specific attacks a given model has
-   already been hardened against; it is not general. It also exposes the bench's own
-   limit — where claude-haiku shows 0% ASR, "the model defended" and "the defense
-   defended" are indistinguishable, and only a structural guarantee covers what the
-   bench cannot express. Governed, GPT-4o sits at **0.0% ASR / 62.5% benign utility**.
-2. **Secure-by-design invariance (the qualitative reason).** The defense gates on
-   *argument provenance*, not on recognizing the injection — so a cleverer *frame* that
-   flips a model produces the *same* tainted egress and is refused identically (NNSI:
-   62% → 0%, depth-invariant). Model robustness is per-model, per-attack, and erodes
-   with the next framing; the structural guarantee does not. **You cannot benchmark your
-   way to this — it is a property, not a score.**
-3. **The numbers where headroom exists (the quantitative reason).** axor drives ASR to 0
-   on both a strong (GPT-4o, **60.4% → 0%**) and a susceptible (Qwen slack, **76.2% →
-   0%**) model. On the **genuinely zero-cost** case — slack — utility is *preserved*
-   (47.6% → 47.6%) because the legitimate recipient comes from the prompt/channel, not
-   the attacker payload. **Do not list the banking-PII 66.7% → 0% as a zero-cost win:**
-   its 0% → 0% utility is degenerate (no utility existed; §6.2), so it evidences ASR → 0
-   *only*, not zero cost — citing it as "ASR → 0 at zero cost" is circular.
+1. **Model choice is not a *general* defense — so the guarantee is what you're buying.**
+   A *strong* model still fools itself (undefended GPT-4o, 60.4%, `agentdojo_results.md`),
+   and a model that *passes this bench* can still fall to a stronger framing — the
+   established **indirect / nested prompt-injection** class (Greshake et al., AISec 2023,
+   "Not what you've signed up for," and the nested/recursive-injection follow-ups —
+   **cite the published prior art, pin the exact follow-up**). Model selection only ever
+   covers attacks a model was already hardened against; a by-construction gate covers the
+   whole projection-equivalence class regardless. That is *why* you want the guarantee.
+2. **NNSI is illustrative only, never load-bearing — it is *our own* attack.** A result
+   built on NNSI is **self-refereed** ("we built X and beat X"); a reviewer discounts it
+   to zero, and the 62%-undefended figure is self-reported on a non-standard attack that
+   would itself need independent validation. Use NNSI *only* as an illustrative stressor
+   for "standard benchmarks underestimate the attack surface," and *only* anchored to the
+   published class in point 1 — never as a bare number, never as the reason to adopt. The
+   reason to adopt is §6.2 (cost of a real guarantee) + §5 (the guarantee), both of which
+   stand without NNSI. Earlier drafts leaned on NNSI's 62% as a load-bearing prong;
+   demote it.
 
-**6.5 Honest accounting (a subsection, not buried).** Utility cost falls specifically on
+**6.6 Honest accounting (a subsection, not buried).** Utility cost falls specifically on
 sinks whose *legitimate* argument is read from an untrusted source (data+instructions
 sharing a channel). `driving_args` narrows it to the destination field; a strict-mode
 approved-recipient allowlist closes even the shared-channel residual at the price of
 enumerating destinations. Report what benchmarks do **not** prove (README "Benchmarks").
 
-**6.6 Containment benchmarks (secondary, security-relevant).** Topology containment —
+**6.7 Containment benchmarks (secondary, security-relevant).** Topology containment —
 100% of policy-blocked child spawns denied; export leak rate — 0 leaks observed across
 runs (README "Benchmarks"). These are structural-containment numbers, not the
 utility/ASR axis; frame as corroborating the gate sequence beyond the injection setting.
@@ -574,8 +592,10 @@ sound bound while the deterministic gates remain the only thing that can allow.
 Execution governance as a *framework-agnostic layer* with a *secure-by-design*
 core: framing-invariant defense from a non-interference theorem whose conditionality is
 stated, localized (the fuzzing fraction), and pinned to regressions — validated on
-AgentDojo with an honest utility/ASR tradeoff and a concrete adoption motivation that a
-benchmark alone cannot express. Agents should not self-govern execution.
+AgentDojo as a **structural guarantee at a measured utility cost** (the model-independent
+axis, not a headroom-dependent ASR-delta). The motivation for adoption is the guarantee;
+the metric is its cost — neither evaporates on a robust model. Agents should not
+self-govern execution.
 
 ---
 
@@ -593,8 +613,10 @@ benchmark alone cannot express. Agents should not self-govern execution.
 1. The reverse-osmosis gate stack (README) — *the* signature figure.
 2. Trust-ring diagram + three-interface adapter seam (§4).
 3. The attack → taint → theorem chain as a single diagram (§5.2) — the conceptual core.
-4. AgentDojo results tables — §6.2 slack zero-cost headline, §6.3 banking + CaMeL-cost
-   comparison.
+4. **The primary figure: guarantee-at-cost across suites** (§6.2 — slack zero cost,
+   banking −37.5pp, workspace transparent) — the CaMeL-shaped result that holds on robust
+   models. Put the ASR-delta table (§6.4) *second/smaller*, captioned "where headroom
+   exists," so layout itself signals which axis is load-bearing.
 5. The decidability split (enum/numeric = decidable vs path/carrier = fuzzing) (§5.4).
 
 ## Questions for Haoyu (blocking — resolve before drafting prose)
@@ -618,10 +640,15 @@ benchmark alone cannot express. Agents should not self-govern execution.
 
 ## Open decisions for the authors (some now resolved)
 
-- **Headline / example roles — RESOLVED (per review):** §2 illustrative = **banking**
-  (clean gate-walk, CaMeL-comparable); §6 headline = **slack** (76.2% → 0% at zero
-  cost). Two distinct roles, stated in §6.2. (Supersedes the earlier "open with banking"
-  note.)
+- **§6 measurement axis — RESOLVED (per review, the big one):** lead with
+  **structural-guarantee-at-utility-cost** (CaMeL-shaped, §6.2), *not* ASR-delta. ASR-delta
+  (§6.4) is secondary colour because it is headroom-dependent and degenerates to 0→0 on
+  robust models; the guarantee + cost does not. This is the empirical analogue of §5.4's
+  honesty and the real answer to Haoyu's "motivation for adoption."
+- **Headline / example roles — RESOLVED:** §2 illustrative = **banking** (clean gate-walk);
+  the §6 *primary* result = the cross-suite **cost-of-guarantee** table, with **slack** as
+  the zero-cost instance and **banking** as the −37.5pp costed case. (Supersedes both the
+  earlier "open with banking" note and the "§6 headline = slack ASR-delta" note.)
 - **Venue framing:** systems-security (USENIX/CCS/S&P) vs an LLM-agent-safety venue —
   changes how much §5 formalism vs §6 empiricism leads.
 - **How hard to push the theorem:** keep K4 as "stated + pinned + demonstrated on 2
