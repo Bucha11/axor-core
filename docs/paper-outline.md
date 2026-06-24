@@ -401,11 +401,16 @@ susceptible-model supplement, **claude-haiku-4-5** robust contrast
 > - **Pin one CaMeL version and cite its numbers consistently** (see Questions). Default:
 >   treat our GPT-4o result as *axor's own measurement* and CaMeL as a *version-pinned,
 >   reported reference point*, never a re-run head-to-head.
-> - Useful corroboration we *can* read off v2: CaMeL carries a real utility cost of its
->   own (the `Difference` rows in Tables 2/5 are negative), and its banking
->   normal/strict utility sits near **58.33%** (Table 8) — close to axor's 62.5%. Read
->   the exact per-suite deltas from the cited version's table; don't quote digits from
->   the phone screenshot.
+> - **The actual v2 per-suite cost (Table 2, Difference, no-attack) — use these, the
+>   earlier "−27 to −30pp" was a phantom and is wrong in the worse direction.** On
+>   **banking** CaMeL's cost is **≈ 0 or positive**: Claude 4 Sonnet +0.0%, Claude 4
+>   Sonnet\* +6.2%, o3-high +18.8%, o4-mini-high +18.8%, Gemini 2.5 Pro −6.2%, Gemini 2.5
+>   Flash −12.5% (mean ≈ **+4%**, 3/6 positive). On **slack** CaMeL's cost is **large and
+>   negative**: roughly **−24 to −43pp** (Claude 4 −33.3, Gemini Pro −42.9,
+>   o3/o4-mini/Claude 4\* −23.8, Gemini Flash −28.6). Do **not** write "Difference rows are
+>   negative" (false on banking) and do **not** cite Table 8's **58.33%** as utility — it
+>   is a *policy-trigger rate* ("rates ... when not under attack"), not utility; dropping
+>   it. Read deltas from the cited version's Table 2, not the screenshot.
 
 **6.2 The guarantee and its measured cost — the PRIMARY result (lead §6 with this).**
 State the guarantee first, in §5's vocabulary: axor's gate denies by *projection*, so on
@@ -439,13 +444,22 @@ version). Be precise:
 - **Not apples-to-apples on the number.** CaMeL's headline is reported, not re-run by us;
   version matters (v1 ≈67% *with* GPT-4o; v2 ≈77%/75% on Claude 4 / Gemini 2.5 / o3 /
   o4-mini, **no GPT-4o** — §6.1). Pin the version you cite.
-- **Cost, stated without inflation.** axor banking **−37.5pp** (100 → 62.5) vs CaMeL
-  ~**−27 to −30pp** (v1 secondary source, *Overall* benign column) — axor's is ~40%
-  larger and cross-model. Honest line: *higher but of the same order, on a different
-  model, bought with far lighter integration (a gate on an unmodified loop vs an
-  interpreter between the model and every tool) plus a non-interference theorem.* Do
-  **not** write "comparable" / "same ballpark." Verify the CaMeL number is **benign-only**
-  (Table 2, not under-attack Table 3) before quoting any delta.
+- **The cost profiles are *inverted* — this is the honest framing, and it is *stronger*
+  for axor than the false "same order" line (which hid the suite where axor wins).**
+  Neither defense dominates globally; each pays where its mechanism is expensive:
+  - **banking** (legitimate argument comes from an untrusted read — axor's hard case):
+    axor **−37.5pp**, CaMeL **≈ 0 / +4%** (3/6 models positive, §6.1). CaMeL is cheaper
+    here.
+  - **slack** (multi-step data-flow — CaMeL's interpreter is expensive): axor **≈ 0**
+    (47.6 → 47.6), CaMeL **≈ −24 to −43pp** (§6.1). axor is **strictly cheaper** here.
+  The mechanism reason: CaMeL's interpreter cost rises with data-flow depth; axor's
+  content-ledger cost rises when a legitimate sink argument is read from untrusted
+  content. Frame as *complementary cost profiles*, not "axor is somewhat worse." **Hard
+  caveat — compare deltas vs each system's own baseline, never absolutes:** the harnesses
+  and baselines differ (axor slack-undefended 47.6 ≠ CaMeL native-slack 95.2). "axor's
+  slack cost ≈ 0 vs CaMeL's ≈ −29pp" is a *delta* comparison and valid in kind; "axor's
+  slack 47.6 beats CaMeL's 61.9" is an absolute and **must not be written**. Verify every
+  CaMeL delta is benign/no-attack (Table 2, not under-attack Table 3) before quoting.
 - **Smart models help a by-construction defense, don't break it** (true for both): CaMeL
   v2's utility *rose* on smarter models (o3 ≈ +10% vs o1) at the same structural
   guarantee. Only the ASR-delta frame goes dark on strong models — which is exactly why
@@ -525,9 +539,12 @@ not belong in this paper.)
 - **CaMeL (Debenedetti et al., arXiv:2503.18813)** — security by construction via an
   interpreter between model and tools; stronger guarantee, heavier integration. Axor = a
   gate in front of an *unmodified* loop. **Comparison caveat (carry from §6.3):** CaMeL's
-  67% is reported, not re-run, not apples-to-apples; the fair axis is comparable utility
-  cost at lighter integration. Axor's integrity axis is a content ledger (sound-to-deny,
-  paraphrase residual); the confidentiality floor is the sound, paraphrase-proof part.
+  headline is reported, not re-run, not apples-to-apples; the honest framing is
+  **complementary cost profiles** — CaMeL ≈0/positive on banking but ≈ −24 to −43pp on
+  slack, axor the inverse — *not* "comparable utility cost" (a phantom; the v2 tables
+  show CaMeL cheaper on banking, axor cheaper on slack). Axor's integrity axis is a
+  content ledger (sound-to-deny, paraphrase residual); the confidentiality floor is the
+  sound, paraphrase-proof part.
 - **FIDES** — shares the explicit-flow-only scope boundary (O2); axor inherits the same
   honest limitation on implicit flows.
 - **Firewalls (LLM input-firewall)** — the public **T0 counterexample**: a model-produced
