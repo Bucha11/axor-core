@@ -354,9 +354,12 @@ sharing a channel). `driving_args` narrows it to the destination field; a strict
 approved-recipient allowlist closes even the shared-channel residual at the price of
 enumerating destinations. Report what benchmarks do **not** prove (README "Benchmarks").
 
-**6.6 Non-security benchmarks (secondary).** Token reduction 30.8% avg; topology
-containment 100% of policy-blocked spawns; export leak rate 0 (README "Benchmarks").
-Frame as "governance is also measurable and cheap," not as the main result.
+**6.6 Containment benchmarks (secondary, security-relevant).** Topology containment —
+100% of policy-blocked child spawns denied; export leak rate — 0 leaks observed across
+runs (README "Benchmarks"). These are structural-containment numbers, not the
+utility/ASR axis; frame as corroborating the gate sequence beyond the injection setting.
+(Token-economy figures are deliberately omitted — they are not a security result and do
+not belong in this paper.)
 
 ---
 
