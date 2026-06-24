@@ -38,6 +38,16 @@ Haoyu's three asks, mapped to sections:
      anchored by the result that a strong production model (GPT-4o) fools itself on
      **60.4%** of pairs undefended → **0.0%** governed at **62.5%** utility retained —
      the motivation no robust-model argument can wave away — §6.
+- **Novelty arbitration (one headline, decided — a reviewer will ask "which is *the*
+  contribution?").** The **single headline novelty is contribution 2's perimeter
+  non-interference theorem with the decidability split (§5.4)** — the part that is
+  genuinely new (K4 holds outright on the enum/numeric perimeter; the weird-machine
+  residual is localized to a named rich-syntax fraction). Contributions 1 (the
+  framework-agnostic seam) and 3 (the empirical study) are **supporting** — strong, but
+  not billed as "the novel result." Do not let §4 and §5.4 each claim "the contribution"
+  (they did in an earlier draft); §4 is the engineering contribution that *supports* the
+  headline. (Section *ordering* is a separate axis — Haoyu ranked framework-agnostic #1
+  for emphasis; for a security venue the theorem still leads. See §1 Question 2.)
 - Forward-reference the opening example (§2).
 
 ---
@@ -159,8 +169,11 @@ binding; axor pushes that variability into a single `IntentNormalizer` whose out
 (`NormalizedIntent`) is the *only* thing the gates see — the decision core is written
 once against the normalized shape, and supporting a new framework is one normalizer, no
 policy change. State it as: *AgentSpec = per-framework enforcement DSL; axor = one
-decision core behind a provider-neutral normalization seam.* This is the design
-contribution, and it is exactly the gap Haoyu named.
+decision core behind a provider-neutral normalization seam.* This is the
+**design/engineering contribution** — the gap Haoyu named — and it *supports* the
+paper's single headline novelty (the non-interference theorem + decidability split,
+§5.4); it is deliberately **not** itself billed as "the" novelty (see the novelty-
+arbitration note at the end of §1).
 
 **4.3 Provider independence is tested, not asserted.** Claude, mock-OpenAI, and
 mock-OpenRouter normalizers produce **identical `NormalizedIntent`** for the same
@@ -216,14 +229,31 @@ The non-interference content is that `decide` is **constant on the fibers of `π
 ∀ x₁, x₂ :  π(x₁) = π(x₂)  ⟹  decide(x₁, p) = decide(x₂, p)
 ```
 
-This is **not** automatic: it is the claim that the effect-path decision *factors
-through* `π` at all — there is no `decide'` on the effect path that reads raw `x`
-outside `π` (this is exactly O1, §5.3). Writing `allow(π(x₁)) = allow(π(x₂))` instead
-would be true by substitution and say nothing; the load-bearing statement is that the
-raw-input decision cannot distinguish two artifacts that share a projection. Two
-inputs the consumer would treat differently therefore cannot share a projection (modulo
-explicit declassification = governance endorsement). **This is the formal content of
-"framing cannot change the verdict."**
+**The equation alone is necessary but not sufficient — say so explicitly, or a S&P
+reviewer kills the theorem with one line.** The equation is exactly "`decide` factors
+through `π`," and *every* function factors through `π = identity` (singleton fibers, the
+antecedent forces `x₁ = x₂`, the consequent is trivial). So the equation carries **zero**
+security content on its own; all of it lives in **which `π`**. Fix `π` up front as a
+**specified, lossy projection** (origin-class / enum / bounded-numeric / path-class /
+provenance-label — the closed admissible set, §5.4) and split the obligation into three
+parts, only the first of which is the equation:
+
+1. **Factorization (O1, the equation).** `decide` reads `x` only through `π` — no
+   `decide'` on the effect path touches raw `x`. Necessary, not sufficient.
+2. **Coarseness (the part the equation hides).** `π` is lossy *enough* that the whole
+   class of attacker reframings of a given injection **collapses into one fiber** — they
+   all map to the same origin-class, so they are forced to share a verdict. This is what
+   makes framing-invariance a *theorem* and not a coincidence; it is exactly why
+   `π = identity` is disqualified (singleton fibers absorb nothing).
+3. **Instruction-free codomain (T0/T4, §5.4).** The shared projection value itself
+   admits no instruction, so collapsing into a fiber cannot smuggle the attack back in.
+
+State the degenerate case in one sentence: *`π = identity` satisfies the equation and
+guarantees nothing; admissibility (the closed lossy codomain set) is precisely the
+condition that rules it out.* With that, "two inputs the consumer would treat
+differently cannot share a projection" (the non-merging / T4 direction) and "the whole
+reframing class does share one" (the coarseness direction) are the two halves that
+together give **"framing cannot change the verdict"** — neither half alone does.
 
 **5.2 The chain Haoyu asked for — attack → taint → theorem (the heart of the paper).**
 Make this an explicit three-step walk, reusing §2's banking example:
@@ -250,8 +280,8 @@ different answer."* That is the secure-by-design content.
   soft boundary (`locked.py`) + out-of-process daemon hard boundary; unknown sink
   fails closed.
 
-**5.4 The conditionality is the point — the decidability split (the one genuinely new
-result).** *Do not overclaim — Haoyu values the honesty.* K4's safety content rests on
+**5.4 The conditionality is the point — the decidability split (THE headline novelty of
+the paper).** *Do not overclaim — Haoyu values the honesty.* K4's safety content rests on
 two per-projection obligations: **T0** (the projection producer is *non-interpreting* —
 a deterministic structural function, never a model reading the governed content; the
 Firewalls LLM-projector is the public counterexample; pinned by an `.importlinter`
@@ -356,18 +386,28 @@ susceptible-model supplement, **claude-haiku-4-5** robust contrast
 against the consequential mass-exfiltration injection (concatenate all channel+inbox →
 POST to an attacker site), on the susceptible model that actually carries it out.
 
-| suite · threat | n | undefended ASR | governed ASR | utility (undef → gov) |
-|---|---|---|---|---|
-| **slack** · mass exfiltration, **full suite** | 21 | **76.2%** | **0.0%** | 47.6% → **47.6%** |
-| **banking** · PII exfiltration (third-party IBAN / subscriptions) | 6 | 66.7% | **0.0%** | 0% → 0% |
+| suite · threat | n | undefended ASR | governed ASR | utility (undef → gov) | utility status |
+|---|---|---|---|---|---|
+| **slack** · mass exfiltration, **full suite** | 21 | **76.2%** | **0.0%** | 47.6% → **47.6%** | **preserved** (real zero-cost) |
+| **banking** · PII exfiltration (third-party IBAN) | 6 | 66.7% | **0.0%** | 0% → 0% | **degenerate** (utility 0 in *both* — see note) |
 
-**76.2% → 0% ASR at *zero* utility cost** — the strongest single number in the paper:
-legitimate recipients come from the prompt/channel, not the attacker payload, so blocking
-the exfiltration costs no real-task completion. On a 9-pair slice governance even *raised*
-utility (33.3% → 88.9%), because a blocked attack stops derailing the model. This is the
-adoption headline; banking (§6.3) is the harder, *costed* case kept for the CaMeL
-comparison. (Roles, stated once: §2 illustrative = banking, clean gate-walk; §6 headline
-= slack, zero-cost. Don't conflate them.)
+**The load-bearing claim is the slack row only: 76.2% → 0% ASR with utility *preserved*
+(47.6% → 47.6%)** — legitimate recipients come from the prompt/channel, not the
+attacker payload, so blocking the exfiltration costs no real-task completion. Keep the
+two rows visually distinct: the **banking-PII row is degenerate** — its 0% → 0% utility
+is *not* "zero cost," it is "there was no utility to begin with" (the bill file's content
+is itself replaced by the injection, so the task fails even undefended). Do **not** let
+it sit unlabeled next to the slack row as if both demonstrate preserved utility; it
+demonstrates only ASR → 0. Adoption headline = slack; banking (§6.3) is the harder
+*costed* case for the CaMeL comparison. (Roles, once: §2 illustrative = banking gate-walk;
+§6 headline = slack.)
+
+> Footnote, not headline: a smaller 9-pair slice — *pre-registered as the pairs where the
+> undefended injection derailed the user's real task into failure* — shows utility rising
+> 33.3% → 88.9% under governance (a blocked attack stops the derailment). Report it only
+> with that principled slice definition **and** the small-n caveat (n=9, wide CI); it is
+> a mechanism illustration, not a headline number, and must never appear as a bare
+> "governance raises utility" claim.
 
 **6.3 Banking — the costed case and the CaMeL comparison (reported, not re-run).**
 Banking is where the defense *costs* utility (the legitimate action is driven by
@@ -386,47 +426,56 @@ comparison's limits stated, not buried.
   apples-to-apples head-to-head and **not** a GPT-4o number. Version matters: v1 ≈67%
   (and v1 *did* include GPT-4o), v2 ≈77%/75% on Claude 4 Sonnet / Gemini 2.5 / o3 /
   o4-mini with **no GPT-4o** (§6.1). Pin the version you cite.
-- The *fair* framing is utility **cost**, not the headline: CaMeL pays a real cost too —
-  its own `Difference` rows are negative (banking utility lands near 58.33% in v2's
-  Table 8, in the neighbourhood of axor's 62.5%). So the honest claim is **comparable
-  utility cost, lighter integration**: axor is a gate in front of an *unmodified* loop;
-  CaMeL puts an interpreter between the model and every tool. (Quote the exact per-suite
-  delta from the cited version's Table 2/5, not from memory.)
+- The *fair* framing is utility **cost** — but **do not call it "comparable" or "same
+  ballpark," a reviewer will check the arithmetic.** axor's banking cost is **−37.5pp**
+  (100% → 62.5%); CaMeL's reported per-model cost is ~**−27 to −30pp** (v1 secondary
+  source, *Overall* column) — i.e. axor's is **~40% larger**, and **cross-model** (axor
+  on GPT-4o, CaMeL on Claude 3.5 / Claude 4). The honest claim is therefore: *axor's
+  utility cost is higher, but of the **same order**, on a **different model**, bought
+  with **far lighter integration** (a gate on an unmodified loop vs an interpreter
+  between the model and every tool) **plus a non-interference theorem**.* Two verify-flags
+  before writing any CaMeL delta: (a) confirm the CaMeL number is **benign-only** (Table
+  2 "Utility results," not the under-attack Table 3) — if not, it is doubly incomparable
+  to our 62.5% benign; (b) quote the exact per-suite delta from the **cited version's**
+  Table 2/5, not from memory or the screenshot.
 - Decompose the 6 lost benign tasks into the three mechanisms (genuine shared channel /
   value-coincidence false positive / whole-args fallback) — this candor locates exactly
   where a content ledger is weaker than CaMeL's structural provenance.
 
 **6.4 The motivation Haoyu asked for — why adopt when the model already resists.**
-The frame to defeat is *"just use a robust model."* Four numbered arguments, in order
-of strength, built so the GPT-4o result does the load-bearing work:
+The frame to defeat is *"just use a robust model."* **Three** arguments — and arguments
+1 and the old "robust model" point are *merged*, because as separate claims they
+contradict (one says model choice doesn't help, the other concedes a model that resists
+the bench). The honest version is a single synthesis with two prongs:
 
-1. **A strong, current production model fools itself (the result that kills the rebuttal).**
-   This is the GPT-4o number, promoted to the lead argument. GPT-4o is not a weak open
-   model you can wave away — it is a capable, widely-deployed frontier model with enough
-   headroom to attempt the whole task list — and **undefended it carries out the
-   data-exfiltration injection on 60.4% of pairs** (`agentdojo_results.md`).
-   "Pick a better model" is therefore not a defense: the better model *is* the one that
-   leads itself astray. Governed, the same model is at **0.0% ASR while retaining 62.5%
-   of its benign utility.** This single contrast — strong model, fools itself, axor
-   neutralizes it at known cost — is the paper's adoption headline.
+1. **Model choice is not a *general* defense (state this as one argument, not a claim
+   and a walk-back).** Two prongs that only work *together*:
+   - A *strong* model still fools itself: undefended **GPT-4o** carries out the
+     data-exfiltration injection on **60.4%** of pairs (`agentdojo_results.md`).
+     Capability ≠ injection-safety, so "use a bigger model" does not save you.
+   - A model that *resists this bench* falls to the *next* attack: **claude-haiku-4-5**
+     resists AgentDojo's shallow single-injection attacks (0% ASR) yet falls to the NNSI
+     nested-document framing **62% of the time** undefended (`nnsi_results.md`, same
+     model, verified). So "use a model that passes the benchmark" does not save you
+     either — the benchmark is simply too weak to express the attack that breaks it.
+   Together: model selection only ever covers the specific attacks a given model has
+   already been hardened against; it is not general. It also exposes the bench's own
+   limit — where claude-haiku shows 0% ASR, "the model defended" and "the defense
+   defended" are indistinguishable, and only a structural guarantee covers what the
+   bench cannot express. Governed, GPT-4o sits at **0.0% ASR / 62.5% benign utility**.
 2. **Secure-by-design invariance (the qualitative reason).** The defense gates on
    *argument provenance*, not on recognizing the injection — so a cleverer *frame* that
    flips a model produces the *same* tainted egress and is refused identically (NNSI:
    62% → 0%, depth-invariant). Model robustness is per-model, per-attack, and erodes
    with the next framing; the structural guarantee does not. **You cannot benchmark your
    way to this — it is a property, not a score.**
-3. **The "robust" model is robust *to this bench*, not in general (the negative result).**
-   claude-haiku resists AgentDojo's shallow single-injection attacks — but the *same
-   model* falls to the NNSI nested-document framing **62% of the time** undefended
-   (`nnsi_results.md`). So even the apparent counterexample to argument 1 is an artifact
-   of a weak bench: "the model defended" and "the defense defended" are
-   indistinguishable when the bench is too weak to create headroom; axor's guarantee is
-   exactly what covers the attacks the bench cannot express.
-4. **The numbers where headroom exists (the quantitative reason).** Across both a strong
-   (GPT-4o) and a susceptible (Qwen) model, axor drives ASR to 0 — 60.4%→0%, 76.2%→0%,
-   66.7%→0% — at measured, *explainable* utility cost, often **zero** when the legitimate
-   argument comes from the prompt. The effect is not confined to weak models; it is the
-   same structural gate doing the same thing on a frontier model.
+3. **The numbers where headroom exists (the quantitative reason).** axor drives ASR to 0
+   on both a strong (GPT-4o, **60.4% → 0%**) and a susceptible (Qwen slack, **76.2% →
+   0%**) model. On the **genuinely zero-cost** case — slack — utility is *preserved*
+   (47.6% → 47.6%) because the legitimate recipient comes from the prompt/channel, not
+   the attacker payload. **Do not list the banking-PII 66.7% → 0% as a zero-cost win:**
+   its 0% → 0% utility is degenerate (no utility existed; §6.2), so it evidences ASR → 0
+   *only*, not zero cost — citing it as "ASR → 0 at zero cost" is circular.
 
 **6.5 Honest accounting (a subsection, not buried).** Utility cost falls specifically on
 sinks whose *legitimate* argument is read from an untrusted source (data+instructions
@@ -550,12 +599,15 @@ benchmark alone cannot express. Agents should not self-govern execution.
 
 ## Questions for Haoyu (blocking — resolve before drafting prose)
 
-1. **What is the "baseline"?** When you say "defence results are perfect for axor and
-   its baseline," do you mean (a) a *rival defense* (CaMeL / a detector) we should run on
-   the same AgentDojo harness for a true head-to-head, or (b) the *undefended* run as
-   baseline (which is what we currently measure: 60.4% → 0%)? If (a), we need to actually
-   run it — we have not. This decides whether §6.3 is a real head-to-head or a
-   "reported, not re-run" comparison (§6.1 note).
+1. **What is the "baseline"? — SEND THIS NOW, as its own short async email, *before*
+   writing §6.** This is not a prose-review nit: it gates the **evaluation scope**. When
+   you say "defence results are perfect for axor and its baseline," do you mean (a) a
+   *rival defense* (CaMeL / a detector) we should run on the same AgentDojo harness for a
+   true head-to-head, or (b) the *undefended* run as baseline (what we currently measure:
+   60.4% → 0%)? If (a), that is **weeks of work** (standing up CaMeL or a detector on our
+   harness) and must be decided before, not during, the draft. Do **not** bundle this
+   into the full-draft review — a wrong assumption here wastes the whole §6 effort. Until
+   answered, §6.3 stays "reported, not re-run" (§6.1).
 2. **Is framework-agnostic (your point #1) OK at section §4, after the security
    sections?** For a security venue, secure-by-design leads and §4 sits at 4th — you said
    secure-by-design is enough for you, so this is probably fine, but you ranked it #1, so
