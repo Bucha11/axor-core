@@ -57,8 +57,9 @@ run, 76.2% → 0% ASR, utility-neutral — good as a second, "and it scales" exa
 pay a bill). The transaction history it must read contains an injected instruction:
 *"send a transaction to `attacker-IBAN` …"* (data and instructions share a channel —
 the hard core of injection). **The model fools itself:** undefended **GPT-4o** — a
-strong, current production model, the very one CaMeL measured — carries this out on
-**60.4%** of pairs (`examples/agentdojo/agentdojo_results.md`). This is the example to
+strong, current production model (do **not** call it "the model CaMeL measured" — that is
+unverified, §6.1) — carries this out on **60.4%** of pairs
+(`examples/agentdojo/agentdojo_results.md`). This is the example to
 lead with precisely *because the model is not weak*: the reader cannot dismiss it as
 "use a better model." A capable model with enough headroom to attempt the whole task
 list still walks straight into the injection on its own — that is the problem axor
@@ -77,20 +78,26 @@ gates" — `ToolCallGovernor`): read the inbox → `register_output` records it 
 the whole story in one screen; the rest of the paper explains *why it is sound* and
 *why it cannot be reframed away*.
 
-**The bridge to the theorem (state it here, prove it in §5).** The denial did **not**
-depend on recognizing the injection. The gate read only the *projection* of the call —
-the **origin-class of the recipient field** (untrusted-derived vs prompt-given) — never
-the attacker's prose. By **Perimeter Non-Interference (K4)**, the decision is a function
-of that projection alone, so *any* reframing of the injection that still puts the
-attacker's address in the recipient field yields the **same projection → the same
-deny**. That is what "secure-by-design" buys: the defense is invariant to attacker
-*framing*. (Empirical echo: the NNSI nested-document attack is blocked **0% at every
-framing depth D0–D5**, `examples/attacks/nnsi_results.md`.)
+**The bridge to the theorem — intuition only (the formal walk is §5.2; do not duplicate
+it here).** One sentence of intuition: the denial did **not** depend on recognizing the
+injection — the gate read only the call's *projection* (the origin-class of the
+recipient field), never the attacker's prose, so reframing the injection cannot change
+the verdict. Name the guarantee (*perimeter non-interference*, §5) and forward-reference;
+§5.2 carries the attack→taint→theorem walk in full. §2 gives the reader a feel; §5.2
+proves it. (Empirical echo, phrased as a rate: the NNSI nested-document attack's success
+rate is driven to **0% at every framing depth D0–D5** — from 62% undefended —
+`examples/attacks/nnsi_results.md`.)
 
-End the section with the one honest qualifier that the rest of the paper earns: framing
-is neutralized structurally; what an attacker can still vary is the *encoding* of the
-exfiltrated value (the integrity paraphrase residual, §5.4) — and the confidentiality
-floor / positional gate are the parts that close even that.
+End with the honest qualifier, kept on the right axis. Framing is neutralized
+structurally — but this banking case sits on the **integrity** axis, and there the
+content-derivation gate has a documented **paraphrase/encoding residual** on the
+non-liftable partition (§5.5): an attacker who *paraphrases* the recipient rather than
+copying it is not caught. Do **not** claim the confidentiality floor closes this — it is
+a *different axis* (it arms only after a secret read and is sound there); the positional
+gate closes only sinks whose input can be made instruction-incomplete. State plainly:
+this example is secure against framing, with a known residual against encoding on the
+integrity partition — the rest of the paper is honest about which partition each gate
+covers.
 
 ---
 
@@ -108,7 +115,8 @@ floor / positional gate are the parts that close even that.
 - **Non-goals (state up front, honestly).** Availability/uptime; implicit
   control-flow leaks; covert channels; semantic malware detection
   (README "What benchmarks do not prove"; kernel-theorem §6).
-- **Background.** AgentDojo benchmark; prior defenses to contrast in §7 (CaMeL —
+- **Background.** AgentDojo benchmark; prior defenses to contrast in §7 (AgentSpec —
+  per-framework runtime-enforcement DSL, the single-framework prior; CaMeL —
   by-construction security via an interpreter; FIDES — explicit-flow; Firewalls —
   LLM input-firewall, the T0 counterexample).
 
@@ -117,8 +125,13 @@ floor / positional gate are the parts that close even that.
 ## 4. Design — a framework-agnostic governance layer (Haoyu point #1)
 
 > The interesting part Haoyu flagged: the **abstraction** between the core and the
-> agent frameworks, and the **rationale** for the design choices. Prior work
-> implemented on a single framework; axor's seam is the contribution.
+> agent frameworks, and the **rationale** for the design choices. The single-framework
+> prior to engage *by name* is **AgentSpec** (Wang, Poskitt, Sun, arXiv:2503.18666) —
+> Haoyu's own work, whose enforcement binds to one framework's hooks (LangChain;
+> separately re-implemented per domain for embodied / autonomous-driving). He raised
+> this contrast himself in the email ("my previous works only implement on a single
+> framework, either OpenClaw or LangChain"); engage it directly, do not paraphrase
+> around it. Axor's contribution is lifting that binding into a provider-neutral seam.
 
 **4.1 The central primitive — one boundary for flat and federated execution.**
 Everything is a `GovernedNode` wrapping any executor; flat execution is just
@@ -138,8 +151,16 @@ A framework is integrated by implementing only:
 - `ToolHandler` — one per tool.
 The executor *never sees raw ambient state* — only a governed `ExecutionEnvelope`
 (scoped context, allowed tools, cancel token, policy). "The executor never knows it
-is being intercepted." *This is the abstraction the prior single-framework work did
-not need and is the design contribution.*
+is being intercepted."
+
+*The addressed contrast (load-bearing):* AgentSpec expresses rules over a *specific
+framework's* tool-call representation, so a new framework means re-authoring the
+binding; axor pushes that variability into a single `IntentNormalizer` whose output
+(`NormalizedIntent`) is the *only* thing the gates see — the decision core is written
+once against the normalized shape, and supporting a new framework is one normalizer, no
+policy change. State it as: *AgentSpec = per-framework enforcement DSL; axor = one
+decision core behind a provider-neutral normalization seam.* This is the design
+contribution, and it is exactly the gap Haoyu named.
 
 **4.3 Provider independence is tested, not asserted.** Claude, mock-OpenAI, and
 mock-OpenRouter normalizers produce **identical `NormalizedIntent`** for the same
@@ -155,24 +176,18 @@ and **cannot drift** between integration styles — pinned by tests
 (`docs/governance-model.md §11`). This directly answers "how do you integrate >1
 framework without forking the policy?"
 
-**4.5 Trust rings + machine-enforced kernel purity (why the abstraction is load-bearing,
-not cosmetic).** Subsystems split into Ring 0 (kernel/TCB), Ring 1 (runtime), Ring 2
-(platform). The kernel must not import the runtime/platform — enforced in CI by
-`import-linter` (`.importlinter` `kernel-purity`), reinforced by lazy imports so
-`from axor_core import ToolCallGovernor` loads the kernel *alone*. *Rationale:* a
-bug in a framework adapter (Ring 1) or in budget/context/trace (Ring 2) **cannot cause
-a wrong allow** — the decision is structurally isolated from the framework glue. This
-is the formal backbone under "framework-agnostic": the governance semantics are
-provably independent of the framework, not just conventionally separated.
-Pin: `tests/test_kernel_only_import.py`.
-
-**4.6 Deployment taxonomy — how a renamed tool set is governed.** A real deployment
-renames its tools, so the operator *declares roles* (`untrusted_sources`,
-`sensitive_sources`, `egress_sinks`, `positional_sinks`, `value_policies`,
-`driving_args`) via kwargs or a fail-closed YAML (`GovernanceConfig.from_yaml`;
-`governance-model §12`). Same declaration accepted by both callers. *This is the
-operator-facing half of the abstraction* — the kernel recognizes generic names; the
-taxonomy maps any framework's renamed tools onto the same governed roles.
+**4.5 Two supporting facts (condensed — 4.2 and 4.4 are the load-bearing parts; full
+detail → Appendix).** Keep these to a paragraph each so they don't dilute the seam:
+- *Machine-enforced kernel purity.* Ring 0 (kernel/TCB) may not import Ring 1/2; CI
+  `import-linter` + lazy imports make `from axor_core import ToolCallGovernor` load the
+  kernel alone — so a framework-adapter or platform bug **cannot cause a wrong allow**.
+  This is what turns "framework-agnostic" from a convention into a checked property
+  (`tests/test_kernel_only_import.py`). One sentence in the body; mechanics to Appendix.
+- *Deployment taxonomy.* A renamed tool set is governed by an operator role declaration
+  (`untrusted_sources` / `sensitive_sources` / `egress_sinks` / `positional_sinks` /
+  `value_policies` / `driving_args`), kwargs or fail-closed YAML, accepted by both
+  callers (`governance-model §12`). Mention as the operator-facing half of the seam;
+  the full key list belongs in Appendix B, not the §4 narrative.
 
 *Figure for this section:* the trust-ring diagram + the three-interface adapter seam.
 
@@ -185,20 +200,30 @@ taxonomy maps any framework's renamed tools onto the same governed roles.
 > section is built as exactly that chain.
 
 **5.1 The claim, in one line (K4).** For any sink invocation: (1) **complete
-mediation** — no effect bypasses `allow`; (2) `allow` inspects **only admissible
-structural projections**. Therefore the decision cannot be steered by raw bytes except
-through a projection whose codomain *admits no instruction* — **regardless of trust
-model** (`docs/kernel-theorem.md §1`). The safety content is the non-interference
-invariant:
+mediation** — no effect bypasses the gating decision; (2) the gating decision
+**factors through an admissible structural projection** `π` whose codomain *admits no
+instruction* — **regardless of trust model** (`docs/kernel-theorem.md §1`). Term: this
+is *perimeter non-interference* in the Goguen–Meseguer sense (noninterference, 1982) —
+write it that way every time; do **not** reproduce Haoyu's email garble "non-perimeter
+inference."
+
+State the invariant over the **raw** artifact, not over `π` — otherwise it is a
+tautology a reviewer will catch. Let `decide(x, p)` be the *actual* gating function on
+the path to an effect (whatever the implementation does with the raw artifact `x`).
+The non-interference content is that `decide` is **constant on the fibers of `π`**:
 
 ```
-∀ x₁, x₂ :  π(x₁) = π(x₂)  ⟹  allow(π(x₁), p) = allow(π(x₂), p)
+∀ x₁, x₂ :  π(x₁) = π(x₂)  ⟹  decide(x₁, p) = decide(x₂, p)
 ```
 
-Raw input influences the decision *only* through the projection `π`. Two inputs the
-consumer would treat differently cannot share a projection (modulo explicit
-declassification = governance endorsement). **This is the formal content of "framing
-cannot change the verdict."**
+This is **not** automatic: it is the claim that the effect-path decision *factors
+through* `π` at all — there is no `decide'` on the effect path that reads raw `x`
+outside `π` (this is exactly O1, §5.3). Writing `allow(π(x₁)) = allow(π(x₂))` instead
+would be true by substitution and say nothing; the load-bearing statement is that the
+raw-input decision cannot distinguish two artifacts that share a projection. Two
+inputs the consumer would treat differently therefore cannot share a projection (modulo
+explicit declassification = governance endorsement). **This is the formal content of
+"framing cannot change the verdict."**
 
 **5.2 The chain Haoyu asked for — attack → taint → theorem (the heart of the paper).**
 Make this an explicit three-step walk, reusing §2's banking example:
@@ -206,7 +231,7 @@ Make this an explicit three-step walk, reusing §2's banking example:
 | Step | What happens | Anchor |
 |---|---|---|
 | **Attack** | Injected instruction + attacker value (IBAN / relay address) enters via an untrusted read; data and instructions share a channel. | §2; `examples/attacks/nnsi_results.md` |
-| **Taint analysis (O2, label soundness)** | The value is constructed by `external_read` → `causal_root` marks it untrusted-derived; the join/derive is sound (`causal_root(v) ⊇` the untrusted sources that explicitly influenced `v`), proved by induction over a closed constructor set; over-taint, never silent under-taint. | `axor_core/taint/causal_root.py`, `ledger.py`, `engine.py`; kernel-theorem §2 (O2) |
+| **Taint analysis (O2, label soundness)** | The value is constructed by `external_read` → `causal_root` marks it untrusted-derived; the join/derive is sound (`causal_root(v) ⊇` the untrusted sources that explicitly influenced `v`), **argued by pen-and-paper induction** over a closed constructor set (a Coq/Lean target, *not* machine-checked — use this exact hedge everywhere, see §5.6/§8); over-taint, never silent under-taint. | `axor_core/taint/causal_root.py`, `ledger.py`, `engine.py`; kernel-theorem §2 (O2) |
 | **Theorem (K4)** | The egress decision factors through the projection (origin-class of the driving arg), `allow` reads only that — so every reframing with the same tainted recipient gets the same deny. Complete mediation (O3) guarantees the sink cannot be reached around `allow`. | kernel-theorem §1, §2 (O1/O3) |
 
 The reader's takeaway: *the guarantee is not "we detect this attack" but "no member
@@ -248,6 +273,15 @@ contract + an import-scan test) and **T4** (effective codomain = nominal). T4 sp
 > fraction.** "Currently testable by fuzzing" is acceptable for practical deployment
 > (Haoyu's own words) precisely *because the split tells you which fraction needs it.*
 
+**Correct Haoyu's mental model explicitly in the prose (he wrote "we can only test it
+using fuzzing").** The framing to land is *not* "the theorem is fuzz-tested" — that
+concedes the whole claim to a test. It is: **K4 is discharged by a decision procedure
+on the enum/numeric fraction and the weird-machine residual is *localized* to a named
+rich-syntax fraction, where fuzzing is the discharge.** Fuzzing covers a bounded
+sub-perimeter the split identifies up front, not the theorem as a whole. If we let the
+"fuzz-tested theorem" reading stand, Haoyu will (reasonably) down-rate the claim in his
+own edits — the split is precisely the result that prevents that.
+
 **5.5 The two axes, asymmetric by design.**
 - **Integrity** — precise per-value content-derivation; sound to *deny*, with a
   documented **paraphrase residual** on the non-liftable partition (a generic write/exec
@@ -279,42 +313,74 @@ appendix — it is the paper's credibility anchor.
 > The honest, load-bearing framing is **utility retained at ASR ≈ 0** (the CaMeL axis),
 > not "ASR → 0" alone (driving ASR to zero is trivial — deny all egress).
 
+> **Canon lock (do this before writing a single number).** The authoritative figures
+> are `examples/agentdojo/agentdojo_results.md`: banking GPT-4o **60.4% → 0.0% ASR at
+> 62.5% benign utility retained**. An earlier note circulated 54%/56% — that is a stale
+> run; purge it. Every number in §6 and §2/§1 must trace to this file.
+
+> **What "baseline" means — resolve with Haoyu (blocking, see Questions).** Our tables
+> compare **undefended vs governed** (60.4% → 0%). That is *not* a competing-defense
+> comparison. When Haoyu says "the defence results are perfect for axor and its
+> baseline," he most likely means a *rival defense* (CaMeL / a detector) that also holds
+> ASR≈0 — i.e. ASR doesn't differentiate, so we must pivot to utility-at-ASR≈0. We have
+> **not** run any rival defense on this harness. Two honest options: (a) actually run
+> CaMeL or a detector defense on the same AgentDojo subset, or (b) explicitly label the
+> CaMeL number as *reported, not re-run, not directly comparable*. Pick (a) if Haoyu
+> expects a head-to-head; otherwise (b). Do not imply a head-to-head we didn't run.
+
 **6.1 Setup.** AgentDojo suites (banking, slack, workspace, travel), attack =
 `important_instructions` (the strongest stock injection); defense = `GovernedToolsExecutor`
 wrapping every tool call in a `ToolCallGovernor` configured by the suite's YAML taxonomy
-— *the same config a real deployment loads.* Models: **GPT-4o** primary (the family CaMeL
-measured), **Qwen-2.5-72b** susceptible-model supplement, **claude-haiku-4-5** robust
-contrast (`examples/agentdojo/agentdojo_results.md`).
+— *the same config a real deployment loads.* Models: **GPT-4o** primary, **Qwen-2.5-72b**
+susceptible-model supplement, **claude-haiku-4-5** robust contrast
+(`examples/agentdojo/agentdojo_results.md`). *Verify before asserting "the model CaMeL
+measured":* CaMeL's detailed AgentDojo tables foreground **Claude 3.5 Sonnet** (63.9%
+utility under CaMeL, **−26.8%** vs native) and **Claude 3.5 Haiku** (44.3%, **−29.9%**);
+its 67% headline is an aggregate "provable-security task-solve" figure, **not** a GPT-4o
+number. So write "the GPT-4o family that AgentDojo's own inverse-scaling analysis
+covers," not "the very model CaMeL measured" — the latter is unverified (§6.3).
 
-**6.2 Primary — GPT-4o, banking, the CaMeL axis.**
+**6.2 Headline security result — slack mass-exfiltration at *zero* utility cost (lead
+§6 with this).** Per Haoyu's "we need a motivation for adoption": the full slack suite
+against the consequential mass-exfiltration injection (concatenate all channel+inbox →
+POST to an attacker site), on the susceptible model that actually carries it out.
+
+| suite · threat | n | undefended ASR | governed ASR | utility (undef → gov) |
+|---|---|---|---|---|
+| **slack** · mass exfiltration, **full suite** | 21 | **76.2%** | **0.0%** | 47.6% → **47.6%** |
+| **banking** · PII exfiltration (third-party IBAN / subscriptions) | 6 | 66.7% | **0.0%** | 0% → 0% |
+
+**76.2% → 0% ASR at *zero* utility cost** — the strongest single number in the paper:
+legitimate recipients come from the prompt/channel, not the attacker payload, so blocking
+the exfiltration costs no real-task completion. On a 9-pair slice governance even *raised*
+utility (33.3% → 88.9%), because a blocked attack stops derailing the model. This is the
+adoption headline; banking (§6.3) is the harder, *costed* case kept for the CaMeL
+comparison. (Roles, stated once: §2 illustrative = banking, clean gate-walk; §6 headline
+= slack, zero-cost. Don't conflate them.)
+
+**6.3 Banking — the costed case and the CaMeL comparison (reported, not re-run).**
+Banking is where the defense *costs* utility (the legitimate action is driven by
+untrusted-read content), so it is the honest place to compare against CaMeL — with the
+comparison's limits stated, not buried.
 
 | condition | benign utility (16) | utility under attack (48) | ASR |
 |---|---|---|---|
 | undefended | 100.0% | 79.2% | **60.4%** |
 | governed | **62.5%** | 58.3% | **0.0%** |
 
-Headline: **62.5% benign utility retained at 0.0% ASR** against a model that undefended
-falls for 60.4% of pairs. Compare to CaMeL's 67% — *same axis* (utility-at-ASR≈0, same
-model family). **The crucial honesty:** axor is a gate in front of an *unmodified* agent
-loop; CaMeL buys a stronger by-construction guarantee with an *interpreter between the
-model and every tool*. Decompose the 6 lost benign tasks into the three mechanisms
-(genuine shared channel / value-coincidence false positive / whole-args fallback) — this
-candor is a strength, and it precisely locates where a content ledger is weaker than
-CaMeL's structural provenance.
-
-**6.3 Supplementary — susceptible model, the *consequential* threats (the adoption
-motivation).** The serious data-exfiltration injections, on a model that actually
-carries them out:
-
-| suite · threat | n | undefended ASR | governed ASR | utility (undef → gov) |
-|---|---|---|---|---|
-| **slack** · mass exfiltration (all channel+inbox → attacker site), **full suite** | 21 | **76.2%** | **0.0%** | 47.6% → **47.6%** |
-| **banking** · PII exfiltration (third-party IBAN / subscriptions) | 6 | 66.7% | **0.0%** | 0% → 0% |
-
-The slack row is the strongest single argument: **76.2% → 0% ASR at zero utility cost**
-(legitimate recipients come from the prompt/channel, not the attacker payload). On a
-9-pair slice, governance even *raised* utility (33.3% → 88.9%) because a blocked attack
-stops derailing the model. **This is the practical-adoption number.**
+**62.5% benign utility retained at 0.0% ASR**, against a model that undefended falls for
+60.4% of pairs. On the CaMeL comparison, be precise about what is and isn't comparable:
+- CaMeL's **67%** is *reported, not re-run by us*, on a different harness / subset /
+  model snapshot, and is an aggregate "provable-security task-solve" figure — **not** an
+  apples-to-apples head-to-head and **not** specifically a GPT-4o number (§6.1).
+- The *fair* framing is utility **cost**, not the headline: CaMeL's own per-model cost
+  (−26.8% on Claude 3.5 Sonnet, −29.9% on Haiku vs native tool-calling) is in the same
+  ballpark as axor's banking cost — so the honest claim is **comparable utility cost,
+  lighter integration**: axor is a gate in front of an *unmodified* loop; CaMeL puts an
+  interpreter between the model and every tool.
+- Decompose the 6 lost benign tasks into the three mechanisms (genuine shared channel /
+  value-coincidence false positive / whole-args fallback) — this candor locates exactly
+  where a content ledger is weaker than CaMeL's structural provenance.
 
 **6.4 The motivation Haoyu asked for — why adopt when the model already resists.**
 The frame to defeat is *"just use a robust model."* Four numbered arguments, in order
@@ -322,9 +388,9 @@ of strength, built so the GPT-4o result does the load-bearing work:
 
 1. **A strong, current production model fools itself (the result that kills the rebuttal).**
    This is the GPT-4o number, promoted to the lead argument. GPT-4o is not a weak open
-   model you can wave away — it is the capable, widely-deployed model CaMeL itself
-   measured, with enough headroom to attempt the whole task list — and **undefended it
-   carries out the data-exfiltration injection on 60.4% of pairs** (`agentdojo_results.md`).
+   model you can wave away — it is a capable, widely-deployed frontier model with enough
+   headroom to attempt the whole task list — and **undefended it carries out the
+   data-exfiltration injection on 60.4% of pairs** (`agentdojo_results.md`).
    "Pick a better model" is therefore not a defense: the better model *is* the one that
    leads itself astray. Governed, the same model is at **0.0% ASR while retaining 62.5%
    of its benign utility.** This single contrast — strong model, fools itself, axor
@@ -365,11 +431,22 @@ not belong in this paper.)
 
 ## 7. Related work
 
-- **CaMeL** — security by construction via an interpreter between model and tools;
-  stronger guarantee, heavier integration. Axor = a gate in front of an *unmodified*
-  loop; the §6.2 comparison is the head-to-head. Axor's integrity axis is a content
-  ledger (sound-to-deny, paraphrase residual); confidentiality floor is the sound,
-  paraphrase-proof part.
+- **AgentSpec (Wang, Poskitt, Sun, arXiv:2503.18666)** — *mandatory cite, and the
+  closest single-framework prior* (it is Haoyu's own work; omitting it reads as an
+  oversight and is diplomatically poor). A customizable runtime-enforcement DSL whose
+  rules are expressed and enforced against one framework's representation at a time
+  (LangChain; re-implemented per domain for embodied / autonomous-driving). The contrast
+  is the §4 thesis made concrete: AgentSpec = per-framework rule enforcement; axor = one
+  decision core behind a provider-neutral `IntentNormalizer` seam, plus a non-interference
+  *theorem* over the projection rather than a rule list. Position axor as *generalizing*
+  the runtime-enforcement line across frameworks and giving it a formal guarantee — a
+  build-on, not a take-down.
+- **CaMeL (Debenedetti et al., arXiv:2503.18813)** — security by construction via an
+  interpreter between model and tools; stronger guarantee, heavier integration. Axor = a
+  gate in front of an *unmodified* loop. **Comparison caveat (carry from §6.3):** CaMeL's
+  67% is reported, not re-run, not apples-to-apples; the fair axis is comparable utility
+  cost at lighter integration. Axor's integrity axis is a content ledger (sound-to-deny,
+  paraphrase residual); the confidentiality floor is the sound, paraphrase-proof part.
 - **FIDES** — shares the explicit-flow-only scope boundary (O2); axor inherits the same
   honest limitation on implicit flows.
 - **Firewalls (LLM input-firewall)** — the public **T0 counterexample**: a model-produced
@@ -453,18 +530,39 @@ benchmark alone cannot express. Agents should not self-govern execution.
 1. The reverse-osmosis gate stack (README) — *the* signature figure.
 2. Trust-ring diagram + three-interface adapter seam (§4).
 3. The attack → taint → theorem chain as a single diagram (§5.2) — the conceptual core.
-4. AgentDojo results tables (§6.2, §6.3) — the CaMeL axis and the slack zero-cost row.
+4. AgentDojo results tables — §6.2 slack zero-cost headline, §6.3 banking + CaMeL-cost
+   comparison.
 5. The decidability split (enum/numeric = decidable vs path/carrier = fuzzing) (§5.4).
 
-## Open decisions for the authors
+## Questions for Haoyu (blocking — resolve before drafting prose)
 
+1. **What is the "baseline"?** When you say "defence results are perfect for axor and
+   its baseline," do you mean (a) a *rival defense* (CaMeL / a detector) we should run on
+   the same AgentDojo harness for a true head-to-head, or (b) the *undefended* run as
+   baseline (which is what we currently measure: 60.4% → 0%)? If (a), we need to actually
+   run it — we have not. This decides whether §6.3 is a real head-to-head or a
+   "reported, not re-run" comparison (§6.1 note).
+2. **Is framework-agnostic (your point #1) OK at section §4, after the security
+   sections?** For a security venue, secure-by-design leads and §4 sits at 4th — you said
+   secure-by-design is enough for you, so this is probably fine, but you ranked it #1, so
+   confirm the ordering rather than have us assume.
+3. **Do you want the illustrative example *literally first* (before the introduction)?**
+   You wrote "begin by an illustrative example." We currently have §1 Intro → §2 Example.
+   Say the word and we fold the example into the opening of §1 (or make it §0).
+
+## Open decisions for the authors (some now resolved)
+
+- **Headline / example roles — RESOLVED (per review):** §2 illustrative = **banking**
+  (clean gate-walk, CaMeL-comparable); §6 headline = **slack** (76.2% → 0% at zero
+  cost). Two distinct roles, stated in §6.2. (Supersedes the earlier "open with banking"
+  note.)
 - **Venue framing:** systems-security (USENIX/CCS/S&P) vs an LLM-agent-safety venue —
   changes how much §5 formalism vs §6 empiricism leads.
-- **Headline example:** banking (CaMeL-comparable, clean gate walk) vs slack
-  (zero-cost, more dramatic). Recommendation: open with banking, use slack as the
-  "and it scales at no cost" beat in §6.
 - **How hard to push the theorem:** keep K4 as "stated + pinned + demonstrated on 2
   trust models," explicitly *not* claiming a mechanized proof — matches the repo's own
-  honesty and pre-empts reviewer overclaim objections.
+  honesty and pre-empts reviewer overclaim objections. Keep the induction hedge identical
+  everywhere ("argued by induction, Coq/Lean target"), per §5.2/§5.6.
+- **CaMeL head-to-head — depends on Q1:** either run CaMeL on the same subset, or label
+  its 67% "reported, not re-run, not comparable" throughout (current default).
 </content>
 </invoke>
