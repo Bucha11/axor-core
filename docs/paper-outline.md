@@ -333,12 +333,23 @@ appendix — it is the paper's credibility anchor.
 wrapping every tool call in a `ToolCallGovernor` configured by the suite's YAML taxonomy
 — *the same config a real deployment loads.* Models: **GPT-4o** primary, **Qwen-2.5-72b**
 susceptible-model supplement, **claude-haiku-4-5** robust contrast
-(`examples/agentdojo/agentdojo_results.md`). *Verify before asserting "the model CaMeL
-measured":* CaMeL's detailed AgentDojo tables foreground **Claude 3.5 Sonnet** (63.9%
-utility under CaMeL, **−26.8%** vs native) and **Claude 3.5 Haiku** (44.3%, **−29.9%**);
-its 67% headline is an aggregate "provable-security task-solve" figure, **not** a GPT-4o
-number. So write "the GPT-4o family that AgentDojo's own inverse-scaling analysis
-covers," not "the very model CaMeL measured" — the latter is unverified (§6.3).
+(`examples/agentdojo/agentdojo_results.md`).
+
+> **CaMeL-model finding — RESOLVED from the v2 PDF tables (do not write "the model
+> CaMeL measured").** CaMeL **v2** (arXiv:2503.18813v2, Tables 2–4) evaluates **Claude 4
+> Sonnet, Gemini 2.5 Flash, Gemini 2.5 Pro, o3-high, o4-mini-high — *not* GPT-4o.**
+> GPT-4o appears only in CaMeL **v1** (March 2025), and the headline differs by version
+> (≈67% v1 vs the ≈77%/75% overall in v2's abstract/Table 5). So:
+> - There is **no shared model** between our GPT-4o run and CaMeL v2. The phrase "the
+>   model CaMeL measured" is only defensible against v1, and then with v1's numbers.
+> - **Pin one CaMeL version and cite its numbers consistently** (see Questions). Default:
+>   treat our GPT-4o result as *axor's own measurement* and CaMeL as a *version-pinned,
+>   reported reference point*, never a re-run head-to-head.
+> - Useful corroboration we *can* read off v2: CaMeL carries a real utility cost of its
+>   own (the `Difference` rows in Tables 2/5 are negative), and its banking
+>   normal/strict utility sits near **58.33%** (Table 8) — close to axor's 62.5%. Read
+>   the exact per-suite deltas from the cited version's table; don't quote digits from
+>   the phone screenshot.
 
 **6.2 Headline security result — slack mass-exfiltration at *zero* utility cost (lead
 §6 with this).** Per Haoyu's "we need a motivation for adoption": the full slack suite
@@ -370,14 +381,17 @@ comparison's limits stated, not buried.
 
 **62.5% benign utility retained at 0.0% ASR**, against a model that undefended falls for
 60.4% of pairs. On the CaMeL comparison, be precise about what is and isn't comparable:
-- CaMeL's **67%** is *reported, not re-run by us*, on a different harness / subset /
-  model snapshot, and is an aggregate "provable-security task-solve" figure — **not** an
-  apples-to-apples head-to-head and **not** specifically a GPT-4o number (§6.1).
-- The *fair* framing is utility **cost**, not the headline: CaMeL's own per-model cost
-  (−26.8% on Claude 3.5 Sonnet, −29.9% on Haiku vs native tool-calling) is in the same
-  ballpark as axor's banking cost — so the honest claim is **comparable utility cost,
-  lighter integration**: axor is a gate in front of an *unmodified* loop; CaMeL puts an
-  interpreter between the model and every tool.
+- CaMeL's headline is *reported, not re-run by us*, on a different harness / subset /
+  model set, and is an aggregate "provable-security task-solve" figure — **not** an
+  apples-to-apples head-to-head and **not** a GPT-4o number. Version matters: v1 ≈67%
+  (and v1 *did* include GPT-4o), v2 ≈77%/75% on Claude 4 Sonnet / Gemini 2.5 / o3 /
+  o4-mini with **no GPT-4o** (§6.1). Pin the version you cite.
+- The *fair* framing is utility **cost**, not the headline: CaMeL pays a real cost too —
+  its own `Difference` rows are negative (banking utility lands near 58.33% in v2's
+  Table 8, in the neighbourhood of axor's 62.5%). So the honest claim is **comparable
+  utility cost, lighter integration**: axor is a gate in front of an *unmodified* loop;
+  CaMeL puts an interpreter between the model and every tool. (Quote the exact per-suite
+  delta from the cited version's Table 2/5, not from memory.)
 - Decompose the 6 lost benign tasks into the three mechanisms (genuine shared channel /
   value-coincidence false positive / whole-args fallback) — this candor locates exactly
   where a content ledger is weaker than CaMeL's structural provenance.
@@ -563,6 +577,11 @@ benchmark alone cannot express. Agents should not self-govern execution.
   honesty and pre-empts reviewer overclaim objections. Keep the induction hedge identical
   everywhere ("argued by induction, Coq/Lean target"), per §5.2/§5.6.
 - **CaMeL head-to-head — depends on Q1:** either run CaMeL on the same subset, or label
-  its 67% "reported, not re-run, not comparable" throughout (current default).
+  its headline "reported, not re-run, not comparable" throughout (current default).
+- **Pin the CaMeL version — RESOLVED-pending-choice (from the v2 PDF):** v1 (Mar 2025)
+  includes **GPT-4o** at ≈67%; v2 (current arXiv:2503.18813v2) drops GPT-4o for **Claude
+  4 Sonnet / Gemini 2.5 Flash+Pro / o3 / o4-mini** at ≈77%/75%. There is **no shared
+  model** with our GPT-4o run under v2. Choose one version, cite its table, and never
+  write "the model CaMeL measured" except against v1 with v1's numbers.
 </content>
 </invoke>
