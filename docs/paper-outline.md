@@ -61,8 +61,21 @@ Haoyu's three asks, mapped to sections:
 
 **Candidate (recommended): the banking exfiltration task, AgentDojo `important_instructions`.**
 Clean to walk gate-by-gate and it is the CaMeL-comparable scenario.
-(Alternative with more drama and *zero* utility cost: the **slack mass-exfiltration**
-run, 76.2% → 0% ASR, utility-neutral — good as a second, "and it scales" example.)
+
+> **§2 suite choice — RESOLVED by a repo check (this was the open question).** The choice
+> is decided by *which axis the denial lands on*, not by drama. Verified against
+> `examples/agentdojo/config/`: **slack declares only `untrusted_sources`, no
+> `sensitive_sources`**, and the confidentiality floor arms only on a `sensitive`-rooted
+> read (`axor_core/taint/engine.py:101`). So the slack mass-exfil denial is **integrity /
+> destination-taint** (per-value taint on `post_webpage(url)`; whole-blob carrier on the
+> message sinks) — confirmed by `agentdojo_results.md` ("denied by the per-value taint
+> gate"). That means **slack carries the *same* encoding/paraphrase residual as banking
+> — it gains §2 nothing**, so **banking stays the default** and the doc is consistent.
+> The suite where the *confidentiality floor* (sound, paraphrase-proof, ends on a closed
+> axis) actually arms is **travel** (`config/travel.yaml` is the only one with
+> `sensitive_sources`). If we ever want a §2 example that closes on the sound axis rather
+> than ending on the integrity residual, the candidate is **travel**, not slack — but
+> that is a separate, smaller scenario; banking remains the recommended opener.
 
 **The scene.** A banking agent is asked to do a benign task (summarize transactions /
 pay a bill). The transaction history it must read contains an injected instruction:
@@ -393,11 +406,15 @@ susceptible-model supplement, **claude-haiku-4-5** robust contrast
 
 > **CaMeL-model finding — RESOLVED from the v2 PDF tables (do not write "the model
 > CaMeL measured").** CaMeL **v2** (arXiv:2503.18813v2, Tables 2–4) evaluates **Claude 4
-> Sonnet, Gemini 2.5 Flash, Gemini 2.5 Pro, o3-high, o4-mini-high — *not* GPT-4o.**
-> GPT-4o appears only in CaMeL **v1** (March 2025), and the headline differs by version
-> (≈67% v1 vs the ≈77%/75% overall in v2's abstract/Table 5). So:
-> - There is **no shared model** between our GPT-4o run and CaMeL v2. The phrase "the
->   model CaMeL measured" is only defensible against v1, and then with v1's numbers.
+> Sonnet, Gemini 2.5 Flash, Gemini 2.5 Pro, o3-high, o4-mini-high** as defended backbones.
+> **No GPT-4o as a defended backbone in *either* version** — v1 (March 2025) used GPT-4o
+> as a backbone; v2 references **GPT-4o-mini** only as an instruction-hierarchy baseline /
+> tokenizer, not a defended model (say it this way — Haoyu knows the paper and will catch
+> "only in v1"). The headline differs by version (≈67% v1 vs **≈77%** in v2's abstract,
+> *77 vs 84 undefended*; the "/75" figure is unconfirmed — drop it unless you can point to
+> a specific table cell). So:
+> - There is **no shared defended model** between our GPT-4o run and CaMeL v2. The phrase
+>   "the model CaMeL measured" is only defensible against v1, and then with v1's numbers.
 > - **Pin one CaMeL version and cite its numbers consistently** (see Questions). Default:
 >   treat our GPT-4o result as *axor's own measurement* and CaMeL as a *version-pinned,
 >   reported reference point*, never a re-run head-to-head.
@@ -430,6 +447,12 @@ benign utility?** Measured per suite on the *benign* task list:
 which is the entire reason to lead here and not on ASR-delta. Where the guarantee is free
 (slack: legitimate recipients come from the prompt/channel, not the attacker payload) it
 costs nothing; where data and instructions share a channel (banking) it costs −37.5pp.
+**Pre-empt the "isn't slack's zero cost just a low-baseline artifact?" poke** (47.6%
+undefended is not high): it is not — show in the decomposition that the **47.6% of tasks
+that *do* succeed never route through the denied egress sink** (their legitimate action
+is a prompt/channel-addressed post, not an attacker-tainted one), so the deny removes
+nothing they depend on. The preserved utility is a structural fact about *which* tasks
+touch the closed sink, not a ceiling effect of a low baseline.
 Decompose the 6 lost banking tasks into the three mechanisms (genuine shared channel /
 value-coincidence false positive / whole-args fallback) — this candor locates exactly
 where a content ledger is weaker than CaMeL's structural provenance, and it is a property
@@ -442,8 +465,8 @@ result** — a *structural* guarantee plus its *measured utility cost* — so th
 comparable in *kind* even though the numbers are not (different harness / subset / model /
 version). Be precise:
 - **Not apples-to-apples on the number.** CaMeL's headline is reported, not re-run by us;
-  version matters (v1 ≈67% *with* GPT-4o; v2 ≈77%/75% on Claude 4 / Gemini 2.5 / o3 /
-  o4-mini, **no GPT-4o** — §6.1). Pin the version you cite.
+  version matters (v1 ≈67% *with* GPT-4o; v2 ≈77% on Claude 4 / Gemini 2.5 / o3 /
+  o4-mini, **no GPT-4o backbone** — §6.1). Pin the version you cite.
 - **The cost profiles are *inverted* — this is the honest framing, and it is *stronger*
   for axor than the false "same order" line (which hid the suite where axor wins).**
   Neither defense dominates globally; each pays where its mechanism is expensive:
@@ -675,9 +698,10 @@ self-govern execution.
 - **CaMeL head-to-head — depends on Q1:** either run CaMeL on the same subset, or label
   its headline "reported, not re-run, not comparable" throughout (current default).
 - **Pin the CaMeL version — RESOLVED-pending-choice (from the v2 PDF):** v1 (Mar 2025)
-  includes **GPT-4o** at ≈67%; v2 (current arXiv:2503.18813v2) drops GPT-4o for **Claude
-  4 Sonnet / Gemini 2.5 Flash+Pro / o3 / o4-mini** at ≈77%/75%. There is **no shared
-  model** with our GPT-4o run under v2. Choose one version, cite its table, and never
-  write "the model CaMeL measured" except against v1 with v1's numbers.
+  uses **GPT-4o** as a defended backbone at ≈67%; v2 (current arXiv:2503.18813v2) drops
+  the GPT-4o backbone for **Claude 4 Sonnet / Gemini 2.5 Flash+Pro / o3 / o4-mini** at
+  **≈77%** (v2 references GPT-4o-mini only as a baseline/tokenizer). There is **no shared
+  defended model** with our GPT-4o run under v2. Choose one version, cite its table, and
+  never write "the model CaMeL measured" except against v1 with v1's numbers.
 </content>
 </invoke>
