@@ -406,15 +406,15 @@ appendix — it is the paper's credibility anchor.
 > 62.5% benign utility retained**. An earlier note circulated 54%/56% — that is a stale
 > run; purge it. Every number in §6 and §2/§1 must trace to this file.
 
-> **What "baseline" means — resolve with Haoyu (blocking, see Questions).** Our tables
-> compare **undefended vs governed** (60.4% → 0%). That is *not* a competing-defense
-> comparison. When Haoyu says "the defence results are perfect for axor and its
-> baseline," he most likely means a *rival defense* (CaMeL / a detector) that also holds
-> ASR≈0 — i.e. ASR doesn't differentiate, so we must pivot to utility-at-ASR≈0. We have
-> **not** run any rival defense on this harness. Two honest options: (a) actually run
-> CaMeL or a detector defense on the same AgentDojo subset, or (b) explicitly label the
-> CaMeL number as *reported, not re-run, not directly comparable*. Pick (a) if Haoyu
-> expects a head-to-head; otherwise (b). Do not imply a head-to-head we didn't run.
+> **What "baseline" means — DECISION TAKEN (option b), per the §6.3 methods statement.**
+> Our tables compare **undefended vs governed**; that is each defense's *own-baseline*
+> cost, not a competing-defense head-to-head. We **do not re-run CaMeL** — a faithful
+> re-implementation of its interpreter is a project in itself, and an imperfect one would
+> mislead more than a version-pinned reported reference (§6.3, verbatim). So we report
+> **cost profiles vs own baseline**, CaMeL's figures taken from its v2 tables. The only
+> residual for Haoyu (Q1, now a *confirmation*, not a fork): confirm he wasn't expecting a
+> rival-defense re-run; if he was, that is weeks of interpreter work and a separate
+> decision. Until he says otherwise, the §6.3 statement stands.
 
 **6.1 Setup.** AgentDojo suites (banking, slack, workspace, travel), attack =
 `important_instructions` (the strongest stock injection); defense = `GovernedToolsExecutor`
@@ -491,7 +491,19 @@ where ASR-delta is 0 — the cost is real even where the delta is not).
 strong framing the axis-flip unlocks: axor and CaMeL now report the **same type of
 result** — a *structural* guarantee plus its *measured utility cost* — so they are
 comparable in *kind* even though the numbers are not (different harness / subset / model /
-version). Be precise:
+version).
+
+> **Paper-ready methods statement (use verbatim).** "We compare each defense's per-suite
+> utility cost against its own undefended baseline; absolute utilities are not comparable
+> across harnesses, so we report cost profiles rather than a head-to-head. CaMeL's figures
+> are taken from its v2 tables (Claude 4 / Gemini 2.5 / o3 / o4-mini backbones — note v2
+> reports no GPT-4o, so this is a comparison of mechanism cost profiles, not model-matched
+> numbers), not re-run on our harness: a faithful re-implementation of CaMeL's interpreter
+> is a project in itself, and an imperfect one would mislead more than a version-pinned
+> reported reference."
+
+This statement *resolves the Q1 "do we re-run CaMeL" question* (we do not, and we say why
+in print). The bullets below are the supporting detail behind it. Be precise:
 - **Not apples-to-apples on the number.** CaMeL's headline is reported, not re-run by us;
   version matters (v1 ≈67% *with* GPT-4o; v2 ≈77% on Claude 4 / Gemini 2.5 / o3 /
   o4-mini, **no GPT-4o backbone** — §6.1). Pin the version you cite.
@@ -723,18 +735,20 @@ self-govern execution.
    way a unit test is shown, *not* as a benchmark bar. Caption names the asymmetry:
    integrity is *measured* (fig. 4), confidentiality is *proven* (fig. 6).
 
-## Questions for Haoyu (blocking — resolve before drafting prose)
+## Questions for Haoyu (confirmations now — none is a hard blocker after the §6.3 decision)
 
-**Send all three in one short async email *now*, before drafting §6 — Q1 is the gating
-one (it sets eval scope); Q2/Q3 are cheap and ride along.**
+**Send all three in one short async email. None is a hard blocker anymore — Q1 is now a
+confirmation (the §6.3 methods statement already takes the decision), Q2/Q3 are cheap
+ordering choices. Worth sending early so a surprise ("I did expect a CaMeL re-run") lands
+before, not during, the draft.**
 
-1. **What is the "baseline"? — the gating question.** It sets the **evaluation scope**.
-   When you say "defence results are perfect for axor and its baseline," do you mean (a) a
-   *rival defense* (CaMeL / a detector) we should run on the same AgentDojo harness for a
-   true head-to-head, or (b) the *undefended* run as baseline (what we currently measure:
-   60.4% → 0%)? If (a), that is **weeks of work** (standing up CaMeL or a detector on our
-   harness) and must be decided before, not during, the draft — a wrong assumption wastes
-   the whole §6 effort. Until answered, §6.3 stays "reported, not re-run" (§6.1).
+1. **The "baseline" — now a *confirmation*, not a fork (we took option b).** We have
+   adopted the §6.3 methods statement: **own-baseline cost profiles, CaMeL not re-run**
+   (faithful interpreter re-implementation is its own project; an imperfect one misleads
+   more than a version-pinned reference). One-line confirmation needed: you weren't
+   expecting a rival-defense *re-run* on our harness? If you were, that is weeks of
+   interpreter work and we should scope it separately before drafting §6. Absent that,
+   the methods statement stands and §6 needs no rival-defense run.
 2. **(cheap) Is framework-agnostic (your point #1) OK at section §4, after the security
    sections?** For a security venue, secure-by-design leads and §4 sits at 4th — you said
    secure-by-design is enough for you, so this is probably fine, but you ranked it #1, so
@@ -771,8 +785,13 @@ one (it sets eval scope); Q2/Q3 are cheap and ride along.**
   trust models," explicitly *not* claiming a mechanized proof — matches the repo's own
   honesty and pre-empts reviewer overclaim objections. Keep the induction hedge identical
   everywhere ("argued by induction, Coq/Lean target"), per §5.2/§5.6.
-- **CaMeL head-to-head — depends on Q1:** either run CaMeL on the same subset, or label
-  its headline "reported, not re-run, not comparable" throughout (current default).
+- **CaMeL head-to-head — RESOLVED (no re-run):** we report own-baseline **cost profiles**,
+  not a head-to-head; CaMeL's figures are the version-pinned v2 reference, not re-run on
+  our harness (a faithful interpreter re-implementation is its own project; an imperfect
+  one misleads more). This is fixed by the §6.3 paper-ready methods statement; Q1 is only a
+  courtesy confirmation now. (Cost was never the blocker — a full slack run on our harness
+  at CaMeL's params is ~$5 on `claude-sonnet-4`; the blocker is re-implementing CaMeL's
+  interpreter faithfully.)
 - **Pin the CaMeL version — RESOLVED-pending-choice (from the v2 PDF):** v1 (Mar 2025)
   uses **GPT-4o** as a defended backbone at ≈67%; v2 (current arXiv:2503.18813v2) drops
   the GPT-4o backbone for **Claude 4 Sonnet / Gemini 2.5 Flash+Pro / o3 / o4-mini** at
