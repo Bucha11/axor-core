@@ -446,7 +446,7 @@ benign utility?** Measured per suite on the *benign* task list:
 | **slack** · mass-exfiltration sink | integrity | every channel/inbox → external egress denied | 47.6% → **47.6%** — **zero cost** |
 | **banking** · transfer / exfil sink | integrity | tainted-recipient egress denied | 100% → **62.5%** — **−37.5pp** (the costed case) |
 | **workspace** · read-only email Qs | integrity | egress denied if driven by untrusted read | transparent (0 denials on Claude) |
-| **travel** · secret read → email | **confidentiality (sound floor)** | egress refused on the *fact* of the `get_user_information` read, paraphrase-proof | **TO RUN** — see below |
+| **travel** · secret read → email | **confidentiality (sound floor)** | floor arms on `get_user_information`, refuses egress, **paraphrase-proof** | **mechanism proven (controlled demo ✓); AgentDojo slice integrity-dominated + noisy — see below** |
 
 **This cost is well-defined on *any* model — it does not evaporate on Claude 4 / o3**,
 which is the entire reason to lead here and not on ASR-delta. Where the guarantee is free
@@ -464,32 +464,38 @@ where a content ledger is weaker than CaMeL's structural provenance, and it is a
 of the *taxonomy + shared channel*, **not of the model** (it reproduces on claude-haiku,
 where ASR-delta is 0 — the cost is real even where the delta is not).
 
-**The sound (confidentiality) axis — travel, the floor-armed run, and the one run still
-worth the compute.** This closes a real **§6 gap a reviewer hits first**: §5.5 claims a
-*sound, paraphrase-proof* confidentiality floor, but every benchmark suite shown so far
-is **integrity** (slack / banking) or read-only (workspace) — the sound half of the model
-has **zero benchmark backing** (it is currently validated only in `live_governance_demo.py`
-and the unit suite, not in an AgentDojo run). **travel is the suite that arms the floor**:
-`config/travel.yaml` declares `sensitive_sources: [get_user_information]` (passport / ID /
-bank account), so any subsequent `send_email` is refused **on the fact of the secret
-read**, regardless of which field or encoding carries it. Why this is *the* run to do
-(unlike the CaMeL re-run and NNSI-on-robust, which we cut):
-- **Not headroom-dependent.** The floor is structural — it fires whether or not the model
-  would have leaked. This is exactly why ASR-delta made travel look empty (the model
-  *refuses* the overt "email my passport to the attacker" injection on its own, so
-  ASR-delta ≈ 0 — `agentdojo_results.md`), and exactly why the *flipped* axis (§6.2)
-  rescues it: measure the **floor's utility cost**, not a delta.
-- **Not self-refereed.** It is AgentDojo's own travel suite plus a standard secret read —
-  no bespoke attack of ours (contrast NNSI).
-- **Closes a named gap.** It is the empirical leg under §5.5's strongest, paraphrase-proof
-  claim; without it, the sound axis is an assertion.
-What to measure (don't fabricate — *run it first*): (a) the floor **arms** on the secret
-read and **refuses** the subsequent egress; (b) a **paraphrase/encoding micro-test** — the
-secret re-encoded / restructured is *still* refused (the thing the integrity ledger cannot
-do, §5.5); (c) the floor's **benign utility cost** = the legitimate travel tasks that must
-email *after* reading `get_user_information` (the honest price of the sound guarantee,
-reported the same cost-axis way as banking). If the run hasn't happened yet, this is the
-single highest-value compute left in the eval.
+**The sound (confidentiality) axis — travel: floor *mechanism* proven, AgentDojo slice
+does *not* isolate it (RAN on OpenRouter / GPT-4o).** Status: **run, with a split result.**
+§5.5 claims a *sound, paraphrase-proof* confidentiality floor; the sound half needed
+empirical backing. We ran travel on OpenRouter/GPT-4o. Two findings, both reported:
+
+- **The floor mechanism is proven — by a deterministic controlled scenario, and it is the
+  artifact to put in the paper.** On the travel taxonomy: a `get_user_information` read
+  (a `sensitive_source`) **arms the floor**; the subsequent `send_email` is **refused**
+  with the floor reason ("egress under the sound floor — a secret read is outstanding");
+  the **paraphrase micro-test passes** — re-wording/re-encoding the secret is *still*
+  refused (the thing the integrity ledger cannot do); and the **control** (a fresh session
+  with no secret read) **allows** the same email. That is (a)+(b)+(c) of the sound-axis
+  claim, deterministic and reproducible — the right way to demonstrate a *structural*
+  guarantee (not a noisy benchmark average). Ship this as the floor figure.
+- **The standard AgentDojo travel *slice* does not cleanly exercise the floor — say so.**
+  In the live GPT-4o run, ASR is ≈0 and noisy (two runs: undefended 0% then 16.7% on n=6
+  — GPT-4o resists the overt "email my passport" injection on its own), and the **one
+  benign denial was *integrity*, not the floor** (reason: "untrusted-derived value into a
+  high-risk operation" — the email content derived from an untrusted review, and the
+  integrity gate fired before any read-secret-then-egress path). So the **travel benchmark
+  *utility number* is not a clean floor-cost measurement** — it is integrity-dominated and
+  n=6-noisy. Do **not** report a "floor utility cost" from this slice.
+
+**Conclusion (honest, and it still closes the §5.5 gap):** the sound axis is demonstrated
+by the *controlled* floor scenario (deterministic, paraphrase-proof), not by an AgentDojo
+travel average. This is *better* than a benchmark number for a structural guarantee — a
+by-construction floor should be shown to *hold*, not measured as a percentage. To get a
+benchmark *cost* for the floor specifically (if a reviewer insists), you'd need user tasks
+that *benignly* read `get_user_information` then email — the slice doesn't isolate that;
+flag it as a small targeted harness, not the stock travel suite. Why this run beat the two
+we cut (CaMeL re-run / NNSI-on-robust): it is structural (not headroom-dependent) and not
+self-refereed — it stands even though GPT-4o's ASR headroom on travel is ≈0.
 
 **6.3 CaMeL comparison — the *same kind* of claim, not the same number.** The honest,
 strong framing the axis-flip unlocks: axor and CaMeL now report the **same type of
@@ -647,11 +653,14 @@ Pull together, as first-class content (the kernel-theorem already states these a
 - "Any trust model" demonstrated on 2 instances, not mechanized.
 - AgentDojo coverage: 3 serious injections × 16 tasks, not the full 9-injection matrix;
   benches go dark on robust models.
-- **Confidentiality (sound) axis — benchmark leg pending.** Until the travel floor-armed
-  run lands (§6.2), the sound, paraphrase-proof floor is demonstrated only in
-  `live_governance_demo.py` + the unit suite, not on an AgentDojo suite. State this
-  honestly *and* resolve it with the travel run — it is the cheapest credibility gain
-  available and the answer to "where is the sound axis in the experiment?"
+- **Confidentiality (sound) axis — RAN, split result (§6.2).** The floor *mechanism* is
+  demonstrated (controlled scenario on the travel taxonomy, GPT-4o: arms on the secret
+  read, refuses egress, paraphrase-proof, control passes) — but the **stock AgentDojo
+  travel slice does not isolate the floor**: GPT-4o resists the overt injection (ASR ≈0,
+  noisy), and the live benign denial was *integrity*, not the floor. Honest scope: the
+  sound axis is shown by the controlled demonstration, **not** by an AgentDojo travel
+  average; a benchmark floor-*cost* would need a targeted benign read-secret-then-email
+  harness the stock suite doesn't provide.
 
 **Future direction (one paragraph).** The integrity paraphrase residual and the fuzzing
 fraction of the perimeter (§5.4) are where a *probabilistic* predicate would help most.
@@ -728,14 +737,14 @@ self-govern execution.
   the §6 *primary* result = the cross-suite **cost-of-guarantee** table, with **slack** as
   the zero-cost instance and **banking** as the −37.5pp costed case. (Supersedes both the
   earlier "open with banking" note and the "§6 headline = slack ASR-delta" note.)
-- **The travel floor-armed run — ACTION, the one run worth the compute (§6.2).** The
-  confidentiality (sound) axis has no benchmark backing yet; `config/travel.yaml` already
-  arms the floor (`sensitive_sources: get_user_information`), so the run is set up — it
-  just hasn't been executed under the cost axis. Distinct from the two runs we *rejected*:
-  unlike a CaMeL re-run (loses on harness mismatch) and NNSI-on-robust (self-refereed,
-  headroom-dependent), this one is structural, not self-refereed, and closes the named
-  §5.5 gap. Do this run; report floor-arms + paraphrase micro-test + benign cost. Do not
-  write travel numbers until it is run.
+- **The travel floor-armed run — DONE (OpenRouter / GPT-4o), split result (§6.2).** The
+  floor mechanism is proven by a controlled scenario (arms on the `get_user_information`
+  secret read, refuses `send_email`, paraphrase-proof, control passes) — ship that as the
+  sound-axis figure. The stock AgentDojo travel *slice* does **not** isolate the floor
+  (GPT-4o resists → ASR ≈0/noisy; the live benign denial was integrity, not the floor),
+  so do not report a "floor utility cost" from it. Remaining optional compute: a small
+  targeted benign read-secret-then-email harness if a reviewer insists on a floor *cost*
+  number — lower priority than Q1.
 - **Venue framing:** systems-security (USENIX/CCS/S&P) vs an LLM-agent-safety venue —
   changes how much §5 formalism vs §6 empiricism leads.
 - **How hard to push the theorem:** keep K4 as "stated + pinned + demonstrated on 2
