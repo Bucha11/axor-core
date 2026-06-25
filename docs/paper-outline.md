@@ -280,7 +280,7 @@ Make this an explicit three-step walk, reusing §2's banking example:
 
 | Step | What happens | Anchor |
 |---|---|---|
-| **Attack** | Injected instruction + attacker value (IBAN / relay address) enters via an untrusted read; data and instructions share a channel. | §2; `examples/attacks/nnsi_results.md` |
+| **Attack** | The §2 banking scene: an injected instruction + the attacker's IBAN enter via an untrusted transaction-history read; data and instructions share a channel. | §2; `examples/agentdojo/agentdojo_results.md` (banking, `important_instructions`) |
 | **Taint analysis (O2, label soundness)** | The value is constructed by `external_read` → `causal_root` marks it untrusted-derived; the join/derive is sound (`causal_root(v) ⊇` the untrusted sources that explicitly influenced `v`), **argued by pen-and-paper induction** over a closed constructor set (a Coq/Lean target, *not* machine-checked — use this exact hedge everywhere, see §5.6/§8); over-taint, never silent under-taint. | `axor_core/taint/causal_root.py`, `ledger.py`, `engine.py`; kernel-theorem §2 (O2) |
 | **Theorem (K4)** | The egress decision factors through the projection (origin-class of the driving arg), `allow` reads only that — so every reframing with the same tainted recipient gets the same deny. Complete mediation (O3) guarantees the sink cannot be reached around `allow`. | kernel-theorem §1, §2 (O1/O3) |
 
