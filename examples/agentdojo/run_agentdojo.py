@@ -130,9 +130,13 @@ if os.environ.get("AXOR_BENCH_INJECTIONS"):
 
 
 def _make_llm():
+    # Reasoning models (o3/o4-mini) spend completion budget on hidden reasoning
+    # tokens before any tool call, so 1024 can truncate them; AXOR_BENCH_MAXTOK
+    # lets a run raise the ceiling without touching the default.
+    max_tokens = int(os.environ.get("AXOR_BENCH_MAXTOK", "1024"))
     if BACKEND == "openrouter":
-        return OpenRouterLLM(model=MODEL)
-    return RawAnthropicLLM(model=MODEL)
+        return OpenRouterLLM(model=MODEL, max_tokens=max_tokens)
+    return RawAnthropicLLM(model=MODEL, max_tokens=max_tokens)
 
 
 # A model-id token AgentDojo's MODEL_NAMES recognises, so important_instructions
