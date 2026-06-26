@@ -48,6 +48,59 @@ below; the Qwen run there is the susceptible-model comparison. The supplementary
 runs that follow show the broader threat coverage (mass exfiltration, PII leak) on
 a model that actually carries those injections out.
 
+## Capable-model utility cost — o4-mini across three suites (full CAMEL_MODE)
+
+Run on **o4-mini** (`openai/o4-mini` via OpenRouter), one of the CaMeL **v2** backbone
+models, full `AXOR_BENCH_CAMEL=1` (every user task benign *and* under attack, undefended
+*and* governed). This is the honest capable-model picture, and it **corrects two earlier
+overclaims** that were artifacts of a weak model (Qwen).
+
+| suite | benign undef → gov | utility cost | retention | benign denials | ASR (u/g) |
+|---|---|---|---|---|---|
+| **banking** | 87.5% → 50.0% | **−37.5pp** | 57.1% | 5 (`send_money`) | 0% / 0% |
+| **slack** | 85.7% → 47.6% | **−38.1pp** | 55.6% | 15 (egress sinks) | 0% / 0% |
+| **travel** | 65.0% → 65.0% | **0pp** | 100.0% | 0 | 0% / 0% |
+
+(Total spend on o4-mini for the three full CAMEL_MODE runs: ~$9 via OpenRouter; ASR is 0
+everywhere because o4-mini resists the overt injections on its own — the headroom-dark
+case, which is exactly why the cost axis, not ASR-delta, is the load-bearing measurement.)
+
+**What this shows, stated honestly:**
+
+1. **The utility cost is *localized to the shared-channel partition*, not universal.** It
+   is ~−38pp on banking and slack (the legitimate egress argument is read from an
+   untrusted source — a transaction file, a channel message) and **exactly 0 on travel
+   (0 denials), because travel's legitimate egress recipient comes from the user's
+   prompt, not an untrusted read.** Cost = (tasks the model can do) ∩ (egress derived
+   from an untrusted read).
+
+2. **The cost grows with model capability on that partition.** On Qwen, slack cost was ~0
+   (47.6% → 47.6%) — but that was because Qwen *fails the shared-channel tasks anyway*, so
+   there was nothing to block. o4-mini *completes* those tasks undefended (85.7%), so the
+   gate's block now subtracts real utility. The governed floor (~47.6% slack, ~50% banking)
+   is roughly the prompt-driven partition and is model-independent; the *cost* is the
+   capable model's extra competence on the shared-channel partition. **"slack zero-cost"
+   was a Qwen artifact and does not survive a capable model.** travel's 0, by contrast, is
+   *structural* (prompt-driven egress) and is robust across models.
+
+3. **Versus CaMeL on a capable model, axor does not win on utility — and CaMeL is strictly
+   better on the value-coincidence partition.** CaMeL v2 banking cost ≈ 0/+4% vs axor
+   −37.5pp (CaMeL's structural provenance distinguishes a prompt-bound recipient from a
+   quarantine-derived one; axor's content-derivation ledger cannot, so it over-blocks).
+   On slack both pay comparably (axor −38pp, CaMeL −24…−43pp); on travel both are ~free.
+   The honest framing is **complementary cost profiles with CaMeL ahead on banking**, not
+   a head-to-head axor wins anywhere on utility.
+
+4. **The confidentiality floor did not fire in the travel benchmark (0 denials).** The
+   benign travel tasks do not read the secret (`get_user_information`) and then egress, and
+   o4-mini resists the overt passport-theft injection on its own. So the floor remains a
+   *structural property* shown by the controlled unit-level demonstration, not a
+   benchmark-measurable cost — the stock AgentDojo travel suite does not exercise it.
+
+The takeaway axor honestly stands on is **not** utility (CaMeL is better) but the cost of
+*adoption*: axor is a gate in front of an unmodified agent loop, framework-agnostic, on any
+model — CaMeL requires re-architecting the agent into an interpreter-mediated plan emitter.
+
 ## Supplementary — serious threats on a susceptible open model (Qwen-2.5-72b)
 
 Run via OpenRouter on the injections that are *consequential*, not toy "ignore

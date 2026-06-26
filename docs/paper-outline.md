@@ -35,10 +35,11 @@ Haoyu's three asks, mapped to sections:
      Non-Interference theorem (K4)**, with an explicit chain from a concrete
      agentic attack → taint analysis → the non-interference guarantee — §5.
   3. **Empirical validation on AgentDojo**, framed as CaMeL frames it — a **structural
-     guarantee at a measured utility cost** (slack: zero cost; banking: −37.5pp), *not* a
-     headroom-dependent ASR-delta that vanishes on a robust model. The ASR-delta (GPT-4o
-     60.4% → 0%, Qwen slack 76.2% → 0%) is secondary colour showing the threat is live
-     where headroom exists — §6.
+     guarantee at a measured utility cost** (capable model, o4-mini: banking −37.5pp,
+     slack −38pp, travel 0pp), *not* a headroom-dependent ASR-delta that vanishes on a
+     robust model. Reported honestly: the cost is localized to the shared-channel partition
+     and CaMeL is ahead on utility there; axor's contribution is *not* utility but the
+     adoption cost of a drop-in, framework-agnostic governance layer (§6.5, §6.3) — §6.
 - **Novelty arbitration (one headline, decided — a reviewer will ask "which is *the*
   contribution?").** The **single headline novelty is contribution 2's perimeter
   non-interference theorem with the decidability split (§5.4)** — the part that is
@@ -456,42 +457,47 @@ fuzz-discharged, §5.4), independent of whether the model would have fallen. The
 question is then CaMeL's question, not a scoreboard: **what does the guarantee cost in
 benign utility?** Measured per suite on the *benign* task list:
 
-| suite (full) | axis | what the guarantee does | benign utility cost |
-|---|---|---|---|
-| **slack** · mass-exfiltration sink | integrity | every channel/inbox → external egress denied | 47.6% → **47.6%** — **zero cost** |
-| **banking** · transfer / exfil sink | integrity | tainted-recipient egress denied | 100% → **62.5%** — **−37.5pp** (the costed case) |
-| **workspace** · read-only email Qs | integrity | egress denied if driven by untrusted read | transparent (0 denials on Claude) |
+Measured on **o4-mini** (a capable CaMeL-v2 backbone), full CAMEL_MODE, ASR 0% everywhere
+(it resists on its own — the headroom-dark case the cost axis exists for):
 
-All three rows are the **integrity** axis. The **confidentiality (sound floor)** axis is
-deliberately *not* a row here — it is a structural property, not a benchmark cost, and is
-demonstrated at unit level in **Appendix A-floor** (see §5.5 on why the two axes are shown
-differently). One honest sentence belongs in §6: we ran travel on OpenRouter/GPT-4o and
-the stock slice **does not isolate the floor** — GPT-4o resists the overt injection
-(ASR ≈0, n=6-noisy: 0% then 16.7% across two runs) and the single benign denial was
-*integrity*, not the floor — so there is **no clean benchmark floor-cost** to report from
-it, and we do not invent one.
+| suite (full) | benign undef → gov | cost | denials | mechanism |
+|---|---|---|---|---|
+| **banking** | 87.5% → 50.0% | **−37.5pp** | 5 (`send_money`) | shared channel — payee read from an untrusted file |
+| **slack** | 85.7% → 47.6% | **−38.1pp** | 15 (egress sinks) | shared channel — post derived from channel reads |
+| **travel** | 65.0% → 65.0% | **0pp** | **0** | egress recipient comes from the **prompt**, not a read |
 
-**This cost is well-defined on *any* model — it does not evaporate on Claude 4 / o3**,
-which is the entire reason to lead here and not on ASR-delta. Where the guarantee is free
-(slack: legitimate recipients come from the prompt/channel, not the attacker payload) it
-costs nothing; where data and instructions share a channel (banking) it costs −37.5pp.
-**Pre-empt the "isn't slack's zero cost just a low-baseline artifact?" poke** (47.6%
-undefended is not high): it is not — show in the decomposition that the **47.6% of tasks
-that *do* succeed never route through the denied egress sink** (their legitimate action
-is a prompt/channel-addressed post, not an attacker-tainted one), so the deny removes
-nothing they depend on. The preserved utility is a structural fact about *which* tasks
-touch the closed sink, not a ceiling effect of a low baseline.
-Decompose the 6 lost banking tasks into the three mechanisms (genuine shared channel /
-value-coincidence false positive / whole-args fallback) — this candor locates exactly
-where a content ledger is weaker than CaMeL's structural provenance, and it is a property
-of the *taxonomy + shared channel*, **not of the model** (it reproduces on claude-haiku,
-where ASR-delta is 0 — the cost is real even where the delta is not).
+**The load-bearing, honest finding: the cost is *localized to the shared-channel
+partition*, not universal.** axor pays ~−38pp where the legitimate egress argument is read
+from an untrusted source (banking/slack) and **exactly 0 (zero denials) where the
+legitimate recipient is prompt-given (travel)**. Cost = (tasks the model can do) ∩ (egress
+derived from an untrusted read).
 
-**6.3 CaMeL comparison — the *same kind* of claim, not the same number.** The honest,
-strong framing the axis-flip unlocks: axor and CaMeL now report the **same type of
-result** — a *structural* guarantee plus its *measured utility cost* — so they are
-comparable in *kind* even though the numbers are not (different harness / subset / model /
-version).
+**Two corrections to retire (both were weak-model artifacts — do not reuse them):**
+- *"slack = zero cost"* is **dead**. That 47.6% → 47.6% was on **Qwen**, which fails the
+  shared-channel tasks anyway, so there was nothing to block. On o4-mini, which *completes*
+  them undefended (85.7%), the gate's block costs a real −38pp. The governed floor (~47.6%)
+  is the prompt-driven partition (model-independent); the **cost grows with model
+  capability** on the shared-channel partition. Only **travel's 0 is structural** (egress
+  from the prompt) and robust across models — that is the one transparency claim that
+  survives.
+- The integrity-axis "preserved utility is a property of the taxonomy, not the model" line
+  is **wrong as stated** — the cost *does* scale with the model (Qwen ~0, o4-mini −38pp).
+  State it correctly: the *partition* is taxonomy-fixed; the *cost on it* scales with how
+  many of those tasks a stronger model can actually complete.
+
+Decompose the lost banking tasks into the three mechanisms (genuine shared channel /
+value-coincidence false positive / whole-args fallback) — this is exactly where a content
+ledger is weaker than CaMeL's structural provenance (§6.3), and the gap *widens* on a
+capable model. The **confidentiality (sound floor)** axis is deliberately not a row here —
+it is a structural property (Appendix A-floor, §5.5), and the stock travel suite does not
+exercise it (0 floor denials in the o4-mini run; the floor never armed because benign
+travel tasks don't read-secret-then-egress and o4-mini resisted the overt injection).
+
+**6.3 CaMeL comparison — the *same kind* of claim, and CaMeL is ahead on utility.** axor
+and CaMeL report the **same type of result** — a *structural* guarantee plus its *measured
+utility cost* — so they are comparable in *kind* (not in number: different harness /
+subset / model / version). On the measured numbers, **CaMeL is ahead** (below); axor's
+case rests on *adoption cost*, not utility (§6.5).
 
 > **Paper-ready methods statement (use verbatim).** "We compare each defense's per-suite
 > utility cost against its own undefended baseline; absolute utilities are not comparable
@@ -507,26 +513,27 @@ in print). The bullets below are the supporting detail behind it. Be precise:
 - **Not apples-to-apples on the number.** CaMeL's headline is reported, not re-run by us;
   version matters (v1 ≈67% *with* GPT-4o; v2 ≈77% on Claude 4 / Gemini 2.5 / o3 /
   o4-mini, **no GPT-4o backbone** — §6.1). Pin the version you cite.
-- **The cost profiles are *inverted* — this is the honest framing, and it is *stronger*
-  for axor than the false "same order" line (which hid the suite where axor wins).**
-  Neither defense dominates globally; each pays where its mechanism is expensive:
-  - **banking** (legitimate argument comes from an untrusted read — axor's hard case):
-    axor **−37.5pp**, CaMeL **≈ 0 / +4%** (3/6 models positive, §6.1). CaMeL is cheaper
-    here.
-  - **slack** (multi-step data-flow — CaMeL's interpreter is expensive): axor **≈ 0**
-    (47.6 → 47.6), CaMeL **≈ −24 to −43pp** (§6.1). axor is **strictly cheaper** here.
-  The mechanism reason: CaMeL's interpreter cost rises with data-flow depth; axor's
-  content-ledger cost rises when a legitimate sink argument is read from untrusted
-  content. Frame as *complementary cost profiles*, not "axor is somewhat worse." **Hard
-  caveat — compare deltas vs each system's own baseline, never absolutes:** the harnesses
-  and baselines differ (axor slack-undefended 47.6 ≠ CaMeL native-slack 95.2). "axor's
-  slack cost ≈ 0 vs CaMeL's ≈ −29pp" is a *delta* comparison and valid in kind; "axor's
-  slack 47.6 beats CaMeL's 61.9" is an absolute and **must not be written**. Verify every
-  CaMeL delta is benign/no-attack (Table 2, not under-attack Table 3) before quoting.
-- **Smart models help a by-construction defense, don't break it** (true for both): CaMeL
-  v2's utility *rose* on smarter models (o3 ≈ +10% vs o1) at the same structural
-  guarantee. Only the ASR-delta frame goes dark on strong models — which is exactly why
-  §6.2 leads on cost, not delta.
+- **The cost profiles — measured on a capable model (o4-mini), CaMeL is ahead; axor does
+  not win on utility anywhere. State this plainly.** (The earlier "inverted profiles, axor
+  strictly cheaper on slack" was a **Qwen artifact** and is retracted — on o4-mini slack
+  cost is −38pp, not ≈0.)
+  - **banking** (value-coincidence — axor's hard case): axor **−37.5pp** vs CaMeL **≈ 0 /
+    +4%** → **CaMeL strictly better.** Its structural provenance distinguishes a
+    prompt-bound recipient from a quarantine-derived one; axor's content-derivation ledger
+    cannot, so it over-blocks.
+  - **slack** (multi-step): axor **−38.1pp** vs CaMeL **≈ −24 to −43pp** → **comparable.**
+  - **travel** (prompt-driven egress): axor **0pp** (0 denials); CaMeL likely also ~0 →
+    **tie / both free.**
+  Honest summary: *CaMeL ahead on banking, comparable on slack/travel; axor wins on
+  utility nowhere on a capable model.* **Hard caveat — compare deltas vs each system's own
+  baseline, never absolutes** (axor slack-undefended 85.7 ≠ CaMeL native-slack 95.2); and
+  verify every CaMeL delta is benign/no-attack (Table 2, not Table 3).
+- **The asymmetry that actually matters — the gap *widens* with model capability, against
+  axor.** CaMeL v2's utility *rises* on smarter models (o3 ≈ +10% vs o1); axor's governed
+  utility *plateaus* (capped at the prompt-driven partition) because the content ledger
+  blocks the shared-channel tasks no matter how capable the model. So a stronger model
+  converts to completed tasks under CaMeL but not under axor on that partition. This is a
+  real point *for* CaMeL and the paper must own it — axor's value is **not** utility.
 
 **6.4 ASR-delta — secondary colour, where headroom exists (NOT the load-bearing axis).**
 On a *foolable* model the undefended attack lands and the structural guarantee neutralizes
@@ -546,13 +553,35 @@ pairs where the undefended injection derailed the task into failure — shows ut
 33.3% → 88.9%; report only with that definition + the n=9 / wide-CI caveat, as a
 mechanism illustration, never a bare "governance raises utility.")
 
-**6.5 The adoption motivation, on the right axis (direct answer to Haoyu).** Haoyu asked
-for a *motivation for practical adoption* beyond "ASR is perfect for everyone." On the
-flipped axis the answer is clean and CaMeL-shaped: **the motivation is the guarantee; the
-metric is its cost.** You adopt a structural, framing-invariant guarantee (§5) *because*
-it does not erode with the next attack, and you pay a measured, bounded utility cost
-(§6.2) — not a promise, and not a scoreboard that vanishes on a good model. Two supporting
-points, kept as support (not the headline — see novelty arbitration, §1):
+**6.5 The adoption motivation — and the head-on "why not just use CaMeL?" answer.** Be
+blunt, because the measured numbers force it: **CaMeL gives more utility (§6.3), so axor's
+case is *not* utility.** axor's one honest differentiator is **adoption cost**:
+
+- **axor is a gate in front of an *unmodified* agent loop** — you keep your existing
+  agent (any provider, any framework) and drop a `ToolCallGovernor` in front of its tool
+  calls. **CaMeL requires re-architecting the agent into an interpreter-mediated plan
+  emitter** (the model emits a restricted-Python program a custom interpreter executes);
+  their own repo flags it as a research artifact that "likely contains bugs ... might
+  crash." Most production agents will not be rewritten that way.
+- **axor works on any model**, including weak ones; CaMeL needs a model capable of writing
+  valid plans (its utility drops on weaker models).
+- **axor is framework-agnostic** (the §4 seam); CaMeL's interpreter approach is a heavier,
+  more invasive integration.
+
+So the honest pitch: *if you can adopt CaMeL (rewrite your agent, accept the interpreter)
+and want maximum utility-at-security, use CaMeL — axor does not beat it there. axor is for
+the common case where you have an existing agent you will not rewrite, across arbitrary
+frameworks, and want a structural, framing-invariant guarantee as a thin governance layer
+— at a measured utility cost on the shared-channel partition (§6.2).* **Do not claim
+parity; claim a different point on the cost/assurance/integration frontier.** (This is the
+open question for Haoyu, §1 Q-venue: is "secure-by-design governance layer, framework-
+agnostic, drop-in, honest utility cost" enough — knowing CaMeL wins on utility? If the bar
+is "best utility-at-security on AgentDojo," CaMeL already cleared it and axor should not
+contest that ground.)
+
+The motivation, restated on the right axis: **the value is the guarantee + low adoption
+cost; the metric for the guarantee is its utility cost** (§6.2), not a scoreboard that
+vanishes on a good model. Two supporting points (support, not headline — §1 novelty):
 
 1. **Model choice is not a *general* defense — so the guarantee is what you're buying.**
    A *strong* model still fools itself (undefended GPT-4o, 60.4%, `agentdojo_results.md`),
@@ -600,14 +629,15 @@ not belong in this paper.)
   the runtime-enforcement line across frameworks and giving it a formal guarantee — a
   build-on, not a take-down.
 - **CaMeL (Debenedetti et al., arXiv:2503.18813)** — security by construction via an
-  interpreter between model and tools; stronger guarantee, heavier integration. Axor = a
-  gate in front of an *unmodified* loop. **Comparison caveat (carry from §6.3):** CaMeL's
-  headline is reported, not re-run, not apples-to-apples; the honest framing is
-  **complementary cost profiles** — CaMeL ≈0/positive on banking but ≈ −24 to −43pp on
-  slack, axor the inverse — *not* "comparable utility cost" (a phantom; the v2 tables
-  show CaMeL cheaper on banking, axor cheaper on slack). Axor's integrity axis is a
-  content ledger (sound-to-deny, paraphrase residual); the confidentiality floor is the
-  sound, paraphrase-proof part.
+  interpreter between model and tools; **stronger guarantee and more utility**, heavier
+  integration. Axor = a gate in front of an *unmodified* loop. **Comparison caveat (carry
+  from §6.3, measured on o4-mini):** CaMeL is **ahead on utility** — banking CaMeL ≈0 vs
+  axor −37.5pp (structural provenance beats a content ledger on value-coincidence),
+  comparable on slack (both ~−38pp), tie on travel (both ~free). Axor does **not** win on
+  utility anywhere on a capable model; its case is *adoption cost* (drop-in, framework-
+  agnostic, any model), not utility. Axor's integrity axis is a content ledger
+  (sound-to-deny, paraphrase residual); the confidentiality floor is the sound,
+  paraphrase-proof part.
 - **FIDES** — shares the explicit-flow-only scope boundary (O2); axor inherits the same
   honest limitation on implicit flows.
 - **Firewalls (LLM input-firewall)** — the public **T0 counterexample**: a model-produced
@@ -680,10 +710,13 @@ sound bound while the deterministic gates remain the only thing that can allow.
 Execution governance as a *framework-agnostic layer* with a *secure-by-design*
 core: framing-invariant defense from a non-interference theorem whose conditionality is
 stated, localized (the fuzzing fraction), and pinned to regressions — validated on
-AgentDojo as a **structural guarantee at a measured utility cost** (the model-independent
-axis, not a headroom-dependent ASR-delta). The motivation for adoption is the guarantee;
-the metric is its cost — neither evaporates on a robust model. Agents should not
-self-govern execution.
+AgentDojo as a **structural guarantee at a measured utility cost**, reported honestly:
+the cost is localized to the shared-channel partition (≈−38pp on banking/slack on a
+capable model, 0 where egress is prompt-driven) and **grows with model capability**, where
+CaMeL's heavier interpreter is ahead on utility. axor's contribution is **not** utility but
+the *adoption cost* of a guarantee that drops in front of an unmodified, framework-agnostic
+agent loop on any model. The guarantee is the value; its utility cost is the price. Agents
+should not self-govern execution.
 
 ---
 
@@ -723,10 +756,11 @@ self-govern execution.
 1. The reverse-osmosis gate stack (README) — *the* signature figure.
 2. Trust-ring diagram + three-interface adapter seam (§4).
 3. The attack → taint → theorem chain as a single diagram (§5.2) — the conceptual core.
-4. **The primary figure: guarantee-at-cost across the *integrity* suites** (§6.2 — slack
-   zero cost, banking −37.5pp, workspace transparent) — the CaMeL-shaped result that holds
-   on robust models. Note this figure is the **integrity axis only**; the confidentiality
-   axis is a *property*, shown separately (figure 6), not a cost row here. Put the ASR-delta
+4. **The primary figure: measured utility cost across suites (o4-mini)** (§6.2 — banking
+   −37.5pp, slack −38pp, travel 0pp) with the CaMeL cost overlaid (banking ≈0, slack
+   ≈−30s, travel ≈0) — shows the cost is localized to the shared-channel partition and
+   **CaMeL ahead on banking**. Integrity axis only; the confidentiality floor is a
+   *property*, shown separately (figure 6), not a cost row. Put the ASR-delta
    table (§6.4) *second/smaller*, captioned "where headroom exists," so layout itself
    signals which axis is load-bearing.
 5. The decidability split (enum/numeric = decidable vs path/carrier = fuzzing) (§5.4).
@@ -765,9 +799,11 @@ before, not during, the draft.**
   robust models; the guarantee + cost does not. This is the empirical analogue of §5.4's
   honesty and the real answer to Haoyu's "motivation for adoption."
 - **Headline / example roles — RESOLVED:** §2 illustrative = **banking** (clean gate-walk);
-  the §6 *primary* result = the cross-suite **cost-of-guarantee** table, with **slack** as
-  the zero-cost instance and **banking** as the −37.5pp costed case. (Supersedes both the
-  earlier "open with banking" note and the "§6 headline = slack ASR-delta" note.)
+  the §6 *primary* result = the cross-suite **cost-of-guarantee** table (o4-mini: banking
+  −37.5pp, slack −38pp, travel **0pp**). **travel is the transparent instance** (egress
+  from the prompt), not slack — the old "slack zero-cost" was a Qwen artifact and is
+  retracted (§6.2/§6.3). (Supersedes the earlier "open with banking" and "§6 headline =
+  slack ASR-delta" notes.)
 - **The confidentiality floor — DONE, placed as structural unit-level (Appendix A-floor),
   *not* a §6 result.** The floor is demonstrated by the by-construction argument (the gate
   reads a session boolean, never the egress bytes — so paraphrase-proof by signature) plus
