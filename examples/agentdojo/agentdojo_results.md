@@ -83,13 +83,16 @@ case, which is exactly why the cost axis, not ASR-delta, is the load-bearing mea
    was a Qwen artifact and does not survive a capable model.** travel's 0, by contrast, is
    *structural* (prompt-driven egress) and is robust across models.
 
-3. **Versus CaMeL on a capable model, axor does not win on utility — and CaMeL is strictly
-   better on the value-coincidence partition.** CaMeL v2 banking cost ≈ 0/+4% vs axor
-   −37.5pp (CaMeL's structural provenance distinguishes a prompt-bound recipient from a
-   quarantine-derived one; axor's content-derivation ledger cannot, so it over-blocks).
-   On slack both pay comparably (axor −38pp, CaMeL −24…−43pp); on travel both are ~free.
-   The honest framing is **complementary cost profiles with CaMeL ahead on banking**, not
-   a head-to-head axor wins anywhere on utility.
+3. **Versus CaMeL on a capable model, axor does not win on utility with a *generic*
+   config — but the banking over-block is *recoverable* with a decidable deployment
+   config (see "Recovering the banking cost" below).** With the generic banking taxonomy,
+   CaMeL v2 banking cost ≈ 0/+4% vs axor −37.5pp (CaMeL's structural provenance
+   distinguishes a prompt-bound recipient from a quarantine-derived one; axor's
+   content-derivation ledger cannot, so it over-blocks the value-coincidence cases). On
+   slack both pay comparably (axor −38pp, CaMeL −24…−43pp); on travel both are ~free.
+   Honest framing with the generic config: **complementary cost profiles, CaMeL ahead on
+   banking**. But the banking gap is **not fundamental** — an approved-payee allowlist
+   (which a real bank has) plus the decidable-supersession rule recovers it to ~0 cost.
 
 4. **The confidentiality floor did not fire in the travel benchmark (0 denials).** The
    benign travel tasks do not read the secret (`get_user_information`) and then egress, and
@@ -97,9 +100,54 @@ case, which is exactly why the cost axis, not ASR-delta, is the load-bearing mea
    *structural property* shown by the controlled unit-level demonstration, not a
    benchmark-measurable cost — the stock AgentDojo travel suite does not exercise it.
 
-The takeaway axor honestly stands on is **not** utility (CaMeL is better) but the cost of
-*adoption*: axor is a gate in front of an unmodified agent loop, framework-agnostic, on any
-model — CaMeL requires re-architecting the agent into an interpreter-mediated plan emitter.
+### Recovering the banking cost — decidable value-policies supersede the content-taint
+
+The −37.5pp banking cost is **not fundamental to the content ledger** — it is the generic
+config not using the *decidable* controls a real deployment has. With an **approved-payee
+allowlist** (an `enum` value policy on the transfer recipient, plus a bounded `amount`
+range — `config/banking_tuned.yaml`) and the **decidable-supersession** rule, the
+value-coincidence over-block is recovered at no security cost.
+
+Mechanism (kernel): when *every* driving arg of an egress sink is guarded by a *satisfied*
+decidable predicate (enum / numeric_range, the sound fraction of §5.4), that predicate is
+a content-blind, provenance-independent control strictly stronger than content-derivation
+on the same arg — so the integrity content-taint check is superseded. An attacker
+destination is not in the allowlist (denied by the enum); an attacker amount is out of
+range (denied by the numeric); the **confidentiality floor is *not* superseded** (a secret
+read still blocks egress even to an approved payee). Pinned by
+`tests/adversarial/test_decidable_supersession.py`.
+
+**Paired run, o4-mini, banking, same session** (generic vs tuned back-to-back, so the
+undefended baselines are under the same conditions):
+
+| config | benign undef → gov | cost | retention | benign denials | ASR (gov) |
+|---|---|---|---|---|---|
+| **generic** | 68.8% → 50.0% | −18.8pp | 72.7% | **7 × `taint_enforcement`** (integrity over-block) | 0% |
+| **tuned** (approved-payee allowlist) | 62.5% → 62.5% | **0pp** | **100%** | **5 × `value_policy`, 0 × `taint_enforcement`** | 0% |
+
+Two things are clean here despite o4-mini's run-to-run non-determinism on the undefended
+baseline (68.8% vs 62.5%):
+- **Tuned governed (62.5%) beats generic governed (50.0%) by +12.5pp** even from a *lower*
+  undefended baseline — so it is the supersession recovering utility, not sampling luck.
+  Tuned retention is **100%** (and was 100% in a separate earlier run too — stable).
+- **Deterministic denial shift:** the 7 integrity `taint_enforcement` over-blocks vanish
+  (0 in tuned); the remaining 5 `value_policy` denials are the *genuine* shared-channel
+  tasks whose payee exists only in an untrusted read (correctly blocked — that residual
+  needs structural provenance and is unrecoverable by config, but the model fails those
+  undefended anyway, hence 100% retention).
+
+**So the honest, corrected banking picture:** with a decidable deployment config, axor
+**matches CaMeL's ~0 banking cost** at 0% ASR. The difference is *how*: CaMeL recovers the
+value-coincidence cases automatically (structural provenance); axor recovers them with an
+**operator-supplied approved-payee allowlist** (deployment knowledge a real bank has) plus
+the supersession rule. The generic-config −37.5pp is the cost of *not declaring* the
+decidable controls, not a fundamental limit.
+
+The takeaway axor honestly stands on is **not** raw utility (CaMeL recovers for free) but
+the cost of *adoption*: axor is a gate in front of an unmodified agent loop,
+framework-agnostic, on any model — CaMeL requires re-architecting the agent into an
+interpreter-mediated plan emitter. Where the operator can declare decidable controls, axor
+closes the utility gap too.
 
 ## Supplementary — serious threats on a susceptible open model (Qwen-2.5-72b)
 
@@ -203,7 +251,11 @@ This is exactly where CaMeL's structural provenance is **strictly better** than 
 content ledger: CaMeL knows the recipient literal is bound to a user-prompt
 variable, not derived from the quarantined read, so it keeps 3/4/6 *and* the bill
 task while staying secure. axor's substring derivation conflates origin with
-value and pays all of them.
+value and pays all of them — **with a generic config.** With an approved-payee
+allowlist + the decidable-supersession rule, axor recovers the value-coincidence
+cases (3/4/6) too (see "Recovering the banking cost" above); the genuine
+shared-channel tasks (0/11, payee only in the read) stay blocked — that residual
+is the part that needs CaMeL's structural provenance and is unrecoverable by config.
 
 **Qwen-2.5-72b** (the susceptible open model the rest of this document uses):
 
