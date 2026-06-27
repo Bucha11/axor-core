@@ -235,14 +235,22 @@ def main_camel() -> int:
     print(f"attack axis: {len(USER_TASKS)} user x {len(INJECTION_TASKS)} injection "
           f"= {len(USER_TASKS) * len(INJECTION_TASKS)} pairs per condition\n")
 
+    # AXOR_BENCH_BENIGN_ONLY=1 skips the (expensive) attack axis — useful for
+    # averaging the benign utility-cost over many passes cheaply (ASR is already
+    # established at 0 on a robust model).
+    benign_only = os.environ.get("AXOR_BENCH_BENIGN_ONLY") == "1"
     print("BENIGN / UNDEFENDED ...")
     ub_util, _ = run_benign(False, suite)
     print("\nBENIGN / GOVERNED ...")
     gb_util, gb_exec = run_benign(True, suite)
-    print("\nATTACK / UNDEFENDED ...")
-    ua_util, ua_asr, _ = run_condition(False, suite, ATTACK)
-    print("\nATTACK / GOVERNED ...")
-    ga_util, ga_asr, ga_exec = run_condition(True, suite, ATTACK)
+    if benign_only:
+        ua_util = ua_asr = ga_util = ga_asr = float("nan")
+        ga_exec = gb_exec
+    else:
+        print("\nATTACK / UNDEFENDED ...")
+        ua_util, ua_asr, _ = run_condition(False, suite, ATTACK)
+        print("\nATTACK / GOVERNED ...")
+        ga_util, ga_asr, ga_exec = run_condition(True, suite, ATTACK)
 
     retention = 100.0 * _pct(gb_util) / _pct(ub_util) if _pct(ub_util) else float("nan")
     print("\n" + "=" * 72)
