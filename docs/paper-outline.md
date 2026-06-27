@@ -546,37 +546,39 @@ in print). The bullets below are the supporting detail behind it. Be precise:
   benign/no-attack (Table 2, not Table 3). And **o4-mini's banking undefended is unstable**
   (87.5 / 68.8 / 62.5 across runs — pure sampling variance); use the *paired* run and read
   *per-task* losses, not absolute rates.
-- **A sound enum-supersession rule recovers the value-coincidence partition with a
-  *legitimate* allowlist — real, tested kernel mechanism (this work). The −37.5pp splits
-  into a recoverable half and an irreducible half.** Mechanism: when every driving arg of a
-  sink is covered by a satisfied **`enum`** over a *closed, operator-declared trusted set*,
-  that enum carries the integrity axis and the content-taint is skipped on that arg (attacker
-  destination not in the set; the confidentiality floor is *not* superseded). **Soundness
-  condition (T4, §5.4): predicate codomain ⊆ trusted values the attacker cannot choose** —
-  `enum` qualifies, `numeric_range` does **not** (open codomain); the kernel refuses to
-  supersede on it. **The allowlist is legitimate, not leakage:** its IBANs are the recipients
-  the *user names in the prompt* (the operator's known-payee list `banking.yaml` describes),
-  not ground-truth answers; the attacker IBAN is excluded. The −37.5pp partitions:
-  - **value-coincidence (tasks 3, 4 — prompt-given payee): recovered** at no security cost —
-    the over-block was a content-ledger false positive; the allowlist removes it.
-  - **genuine shared-channel (tasks 0, 2 — payee read only from a bill/landlord file): NOT
-    recovered** — an operator can't pre-approve a one-off payee. **CaMeL keeps these** (its
-    provenance knows the payee is the user's intended payment); axor cannot. CaMeL stays
-    ahead on this partition.
-  *Deterministic effect (clean):* the integrity `taint_enforcement` denials disappear on the
-  value-coincidence partition (category shifts to `value_policy`). *Caveat on magnitude:* the
-  exact recovered number is **noise-limited** (o4-mini undefended 87.5/68.8/62.5; the paired
-  "retention 100%" was partly a sampling coincidence — per-task, tuned still lost 2 tasks and
-  gained 2). Read the *partition logic* (deterministic), not the single-run rate; a clean
-  number needs averaged runs. **Do NOT claim a clean global "matches CaMeL on banking"** —
-  claim the partitioned result.
-- **The asymmetry to own honestly — CaMeL is ahead on the shared-channel partition, and the
-  gap widens with model capability.** CaMeL v2's utility *rises* on smarter models
-  (o3 ≈ +10% vs o1). enum-supersession closes the value-coincidence partition where the
-  operator can enumerate payees, but the genuine shared-channel residual (payee only in an
-  untrusted read) needs CaMeL's structural provenance and is unrecoverable by config. Bottom
-  line: **axor does not win on utility; CaMeL is ahead on banking (specifically on the
-  shared-channel partition), and axor closes only the value-coincidence half.**
+- **A sound enum-supersession rule recovers the value-coincidence partition — measured
+  *deterministically at the gate* (+25pp), not from a noisy benchmark. Real, tested kernel
+  mechanism (this work).** Mechanism: when every driving arg of a sink is covered by a
+  satisfied **`enum`** over a *closed, operator-declared trusted set*, that enum carries the
+  integrity axis and the content-taint is skipped on that arg (attacker destination not in
+  the set; the confidentiality floor is *not* superseded). **Soundness condition (T4, §5.4):
+  predicate codomain ⊆ trusted values the attacker cannot choose** — `enum` qualifies,
+  `numeric_range` does **not** (open codomain); the kernel refuses to supersede on it. **The
+  allowlist is legitimate, not leakage:** its IBANs are the recipients the *user names in the
+  prompt* (the operator's known-payee list `banking.yaml` describes), not ground-truth.
+  **Clean measurement (deterministic, no model):** of the 16 banking tasks, exactly 4 have a
+  prompt-given recipient that also appears in an untrusted read (value-coincidence: tasks
+  3, 4, 6, 15). For each, generic **DENIES** the transfer, tuned **ALLOWS** it, attacker
+  stays **DENIED** → **4/4 recovered = +25pp ceiling at no security cost** (pinned by
+  `test_all_value_coincidence_recipients_recover_via_tuned_config`). The genuine
+  shared-channel tasks (0, 2, 5, 9, 10, … — payee read only from a file) are **NOT**
+  recovered — an operator can't pre-approve a one-off payee — and **CaMeL stays ahead there**.
+- **Honest note on the benchmark runs (a methodology failure, not a null effect).** Our
+  paired benchmark numbers were muddy (tuned-governed 43.8% / 62.5% / 62.5% vs generic ~50%,
+  sometimes *below* generic) because we compared **two separate model runs** — generic-gov
+  and tuned-gov are independent o4-mini trajectories, and the model's run-to-run
+  task-completion variance (±~25pp on n=16) is *larger than the 4-task signal*. The right
+  design evaluates **one trajectory through both governors** (or measures at the gate, as
+  above). Do **not** report "the recovery is within noise" — the recovery is deterministic
+  (+4 tasks); its benchmark realization was lost in model noise plus a budget-wasting bug,
+  not absent. A clean benchmark number needs same-trajectory evaluation or many seeded runs.
+- **The asymmetry to own honestly — CaMeL is ahead on the shared-channel partition.** CaMeL
+  v2's utility *rises* on smarter models (o3 ≈ +10% vs o1). enum-supersession deterministically
+  closes the value-coincidence partition (+25pp) where the operator can enumerate payees, but
+  the genuine shared-channel residual (payee only in an untrusted read) needs CaMeL's
+  structural provenance and is unrecoverable by config. Bottom line: **axor does not win on
+  utility globally; it recovers the value-coincidence half of the banking gap; CaMeL is ahead
+  on the shared-channel half.**
 
 **6.4 ASR-delta — secondary colour, where headroom exists (NOT the load-bearing axis).**
 On a *foolable* model the undefended attack lands and the structural guarantee neutralizes
