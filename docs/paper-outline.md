@@ -45,11 +45,13 @@ Haoyu's three asks, mapped to sections:
      driving args are covered by a satisfied `enum` over a *closed trusted set* need not be
      gated by the leaky content-taint on top (the enum is the stronger, content-blind
      control); soundness condition is codomain ⊆ trusted (enum yes, numeric_range no — the
-     kernel refuses the latter). With a *legitimate* approved-payee allowlist (the payees
-     the user names in the prompt) it recovers the **value-coincidence** partition of the
-     banking over-block at no security cost; the **genuine shared-channel** partition (payee
-     read only from a file) stays with CaMeL. **Honest scope:** the partition logic is
-     deterministic; the exact recovered magnitude is noise-limited (o4-mini, §6.3).
+     kernel refuses the latter; soundness is by construction — the allowlist is a static
+     operator config, never populated from a runtime read, so the codomain is
+     attacker-inaccessible). With a legitimate approved-payee allowlist it
+     **deterministically lifts the gate over-block on the value-coincidence partition** (3
+     banking tasks, a +18.75pp *gate-level ceiling*) at no security cost; the genuine
+     shared-channel partition stays with CaMeL. **Honest scope:** the gate ceiling is
+     deterministic; the *realized* benchmark utility is unconfirmed (noise-limited, §6.3).
      Supporting, not the headline (§5.4 is the headline).
 - **Novelty arbitration (one headline, decided — a reviewer will ask "which is *the*
   contribution?").** The **single headline novelty is contribution 2's perimeter
@@ -534,10 +536,11 @@ in print). The bullets below are the supporting detail behind it. Be precise:
   axor strictly cheaper on slack" was a **Qwen artifact** and is retracted — on o4-mini
   slack cost is −38pp, not ≈0.)
   - **banking**: axor **≈ −37.5pp** vs CaMeL **≈ 0 / +4%** → CaMeL ahead. The −37.5pp
-    *partitions* (next bullet): a legitimate approved-payee `enum` allowlist + supersession
-    recovers the **value-coincidence** half (prompt-given payee); the **genuine
-    shared-channel** half (payee read only from a file) stays with CaMeL. So axor narrows
-    but does not close the banking gap.
+    *partitions* (next bullet): an `enum` allowlist + supersession deterministically lifts
+    the **gate** over-block on the **value-coincidence** partition (3 tasks, +18.75pp
+    *ceiling*; realized utility unconfirmed); the **genuine shared-channel** half (payee read
+    only from a file) stays with CaMeL. So axor lifts the gate block on part of the gap; it
+    does not close it.
   - **slack** (multi-step): axor **−38.1pp** vs CaMeL **≈ −24 to −43pp** → **comparable.**
   - **travel** (prompt-driven egress): axor **0pp** (0 denials); CaMeL likely also ~0 →
     **tie / both free.**
@@ -546,38 +549,47 @@ in print). The bullets below are the supporting detail behind it. Be precise:
   benign/no-attack (Table 2, not Table 3). And **o4-mini's banking undefended is unstable**
   (87.5 / 68.8 / 62.5 across runs — pure sampling variance); use the *paired* run and read
   *per-task* losses, not absolute rates.
-- **A sound enum-supersession rule recovers the value-coincidence partition — measured
-  *deterministically at the gate* (+25pp), not from a noisy benchmark. Real, tested kernel
-  mechanism (this work).** Mechanism: when every driving arg of a sink is covered by a
-  satisfied **`enum`** over a *closed, operator-declared trusted set*, that enum carries the
-  integrity axis and the content-taint is skipped on that arg (attacker destination not in
-  the set; the confidentiality floor is *not* superseded). **Soundness condition (T4, §5.4):
-  predicate codomain ⊆ trusted values the attacker cannot choose** — `enum` qualifies,
-  `numeric_range` does **not** (open codomain); the kernel refuses to supersede on it. **The
-  allowlist is legitimate, not leakage:** its IBANs are the recipients the *user names in the
-  prompt* (the operator's known-payee list `banking.yaml` describes), not ground-truth.
-  **Clean measurement (deterministic, no model):** of the 16 banking tasks, exactly 4 have a
-  prompt-given recipient that also appears in an untrusted read (value-coincidence: tasks
-  3, 4, 6, 15). For each, generic **DENIES** the transfer, tuned **ALLOWS** it, attacker
-  stays **DENIED** → **4/4 recovered = +25pp ceiling at no security cost** (pinned by
-  `test_all_value_coincidence_recipients_recover_via_tuned_config`). The genuine
-  shared-channel tasks (0, 2, 5, 9, 10, … — payee read only from a file) are **NOT**
-  recovered — an operator can't pre-approve a one-off payee — and **CaMeL stays ahead there**.
-- **Honest note on the benchmark runs (a methodology failure, not a null effect).** Our
-  paired benchmark numbers were muddy (tuned-governed 43.8% / 62.5% / 62.5% vs generic ~50%,
-  sometimes *below* generic) because we compared **two separate model runs** — generic-gov
-  and tuned-gov are independent o4-mini trajectories, and the model's run-to-run
-  task-completion variance (±~25pp on n=16) is *larger than the 4-task signal*. The right
-  design evaluates **one trajectory through both governors** (or measures at the gate, as
-  above). Do **not** report "the recovery is within noise" — the recovery is deterministic
-  (+4 tasks); its benchmark realization was lost in model noise plus a budget-wasting bug,
-  not absent. A clean benchmark number needs same-trajectory evaluation or many seeded runs.
+- **A sound enum-supersession rule lifts the over-block on the value-coincidence partition
+  — a *deterministic gate-level ceiling* (+18.75pp), NOT a realized benchmark utility win.
+  Real, tested kernel mechanism (this work).** Mechanism: when every driving arg of a sink
+  is covered by a satisfied **`enum`** over a *closed, operator-declared trusted set*, that
+  enum carries the integrity axis and the content-taint is skipped on that arg (attacker
+  destination not in the set; the confidentiality floor is *not* superseded). **Soundness
+  condition (T4, §5.4): predicate codomain ⊆ trusted values the attacker cannot choose** —
+  `enum` qualifies, `numeric_range` does **not** (open codomain); the kernel refuses to
+  supersede on it. **Soundness is by construction:** the allowlist is a **static operator
+  config, not populated from any runtime read, so the enum codomain is attacker-inaccessible
+  by construction** — an attacker controlling an untrusted read can never add an IBAN to the
+  trusted set (a static invariant, stronger than a runtime origin-filter). And it is
+  *legitimate, not leakage*: the IBANs are recipients the user names in the prompt, not
+  ground-truth.
+  **Clean measurement (deterministic, no model), structurally defined to avoid cherry-pick:**
+  a value-coincidence task = prompt-given recipient that *also appears in an untrusted read*.
+  Applying that uniformly to the 16 banking tasks gives **3** (verified against the real
+  environment reads): GB29… (tasks 3, 4 — in the transaction history), US122… (task 6 — in
+  scheduled transactions). For each, generic **DENIES**, tuned **ALLOWS**, attacker stays
+  **DENIED** → **3/3 = +18.75pp (3/16) gate-level ceiling**. *Anti-cherry-pick control:*
+  US133… (task 15) is prompt-given but **not in any read**, so it is *not* value-coincidence
+  (generic doesn't over-block it) and is excluded — an earlier draft wrongly counted it with
+  a *fabricated* read, inflating 3→4/+18.75→+25pp; corrected. Pinned by
+  `test_value_coincidence_recovery_structural_not_cherry_picked`. The genuine shared-channel
+  tasks (payee read only from a file) are **NOT** recovered, and **CaMeL stays ahead there**.
+- **"Ceiling at the gate" ≠ "realized utility" — and the benchmark runs did not confirm
+  realization (a methodology failure, not a null effect).** The +18.75pp means the gate stops
+  *denying* those 3 transfers; it does **not** prove the model *completes* the tasks. The
+  paired benchmark numbers were muddy (tuned-governed 43.8 / 62.5 / 62.5 vs generic ~50,
+  sometimes *below* generic) because we compared **two separate o4-mini runs** whose
+  completion variance (±~25pp on n=16) exceeds a 3-task signal; the right design evaluates
+  **one trajectory through both governors**. So state it precisely everywhere: **gate ceiling
+  clean and deterministic (+18.75pp); realized benchmark utility unconfirmed (noise-limited)**
+  — do *not* let "recovered" read as "utility returned".
 - **The asymmetry to own honestly — CaMeL is ahead on the shared-channel partition.** CaMeL
   v2's utility *rises* on smarter models (o3 ≈ +10% vs o1). enum-supersession deterministically
-  closes the value-coincidence partition (+25pp) where the operator can enumerate payees, but
-  the genuine shared-channel residual (payee only in an untrusted read) needs CaMeL's
-  structural provenance and is unrecoverable by config. Bottom line: **axor does not win on
-  utility globally; it recovers the value-coincidence half of the banking gap; CaMeL is ahead
+  lifts the gate over-block on the value-coincidence partition (+18.75pp ceiling) where the
+  operator can enumerate payees, but the genuine shared-channel residual (payee only in an
+  untrusted read) needs CaMeL's structural provenance and is unrecoverable by config. Bottom
+  line: **axor does not win on utility globally; it lifts the gate over-block on the
+  value-coincidence half of the banking gap (ceiling); CaMeL is ahead
   on the shared-channel half.**
 
 **6.4 ASR-delta — secondary colour, where headroom exists (NOT the load-bearing axis).**
@@ -599,10 +611,12 @@ pairs where the undefended injection derailed the task into failure — shows ut
 mechanism illustration, never a bare "governance raises utility.")
 
 **6.5 The adoption motivation — and the head-on "why not just use CaMeL?" answer.** Be
-blunt: **CaMeL gives more utility (§6.3) and axor does not beat it** — the enum-supersession
-rule removes axor's integrity over-block *class* but does not cleanly close the utility gap
-on the benchmark (caveats in §6.3). So axor's case is **not** utility; it is **lower
-adoption cost at a comparable-or-somewhat-lower utility**:
+blunt: **CaMeL gives more utility (§6.3) and axor does not beat it.** The enum-supersession
+rule deterministically lifts the gate over-block on the value-coincidence partition (a
++18.75pp **gate-level ceiling**, §6.3) where the operator can enumerate payees, but (a) the
+**realized** benchmark utility of that lift is unconfirmed (model noise), and (b) the
+genuine shared-channel partition stays with CaMeL. So axor's case is **not** utility; it is
+**lower adoption cost at comparable-or-somewhat-lower utility**:
 
 - **axor is a gate in front of an *unmodified* agent loop** — you keep your existing
   agent (any provider, any framework) and drop a `ToolCallGovernor` in front of its tool
@@ -760,12 +774,13 @@ stated, localized (the fuzzing fraction), and pinned to regressions — validate
 AgentDojo as a **structural guarantee at a measured utility cost**, reported honestly: the
 cost is localized to the shared-channel partition (≈−38pp on banking/slack on a capable
 model, 0 where egress is prompt-driven), where **CaMeL's heavier interpreter is ahead on
-utility and axor does not beat it**. A sound `enum`-supersession rule removes axor's
-integrity over-block *class* where an operator can enumerate trusted destinations, but does
-not cleanly close the utility gap on the benchmark. axor's contribution is the *adoption
-cost* of a guarantee that drops in front of an unmodified, framework-agnostic agent loop on
-any model — not utility. The guarantee is the value; its utility cost is the honest price.
-Agents should not self-govern execution.
+utility and axor does not beat it**. A sound `enum`-supersession rule deterministically
+lifts the gate over-block on the value-coincidence partition (a +18.75pp gate-level ceiling)
+where an operator can enumerate trusted destinations; its *realized* benchmark utility is
+unconfirmed (model noise), and the shared-channel partition stays with CaMeL. axor's
+contribution is the *adoption cost* of a guarantee that drops in front of an unmodified,
+framework-agnostic agent loop on any model — not utility. The guarantee is the value; its
+utility cost is the honest price. Agents should not self-govern execution.
 
 ---
 
