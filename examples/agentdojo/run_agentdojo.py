@@ -244,7 +244,7 @@ def main_camel() -> int:
     print("\nBENIGN / GOVERNED ...")
     gb_util, gb_exec = run_benign(True, suite)
     if benign_only:
-        ua_util = ua_asr = ga_util = ga_asr = float("nan")
+        ua_util = ua_asr = ga_util = ga_asr = []  # _pct([]) -> nan, formats cleanly
         ga_exec = gb_exec
     else:
         print("\nATTACK / UNDEFENDED ...")
