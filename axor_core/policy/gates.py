@@ -180,35 +180,43 @@ def integrity_superseded_by_decidable(
     value_policies: dict | None,
 ) -> bool:
     """True iff *every* driving arg of ``tool_name`` is present in this call and
-    guarded by a *decidable* value predicate (``enum`` / ``numeric_range``).
+    guarded by an ``enum`` value predicate over a **closed, operator-declared
+    trusted set**.
 
-    Soundness (this is why it is safe to skip the integrity taint on such a call):
-    the value-policy gate runs *before* the taint gate, so reaching the taint gate
-    means those predicates already PASSED. A satisfied decidable predicate on the
-    driving arg (membership / bounded range) is a content-blind,
-    provenance-independent control that is **strictly stronger** than
-    content-derivation on the same arg — it cannot be defeated by paraphrase or by
-    value-coincidence (the documented false positive of the content ledger). So the
-    integrity content-taint check on that arg is *redundant*, and removing it
-    eliminates the value-coincidence over-block at no security cost: an
-    attacker-chosen destination is not in the allowlist (denied by the enum), and
-    an attacker-chosen amount is out of range (denied by the numeric predicate).
+    Soundness condition (the T4 argument, §5.4) — supersession is sound **iff the
+    predicate's codomain is a subset of operator-trusted values the attacker cannot
+    choose.** Only an ``enum`` allowlist meets this: its codomain is the finite set
+    the operator declared trusted, so even a value *derived from an untrusted read*
+    can only ever be one of those approved members — the attacker cannot inject
+    themselves. A satisfied enum is therefore content-blind, provenance-independent,
+    and strictly stronger than content-derivation on the same arg, so the integrity
+    content-taint check there is redundant (it only adds the value-coincidence false
+    positive). Removing it recovers that over-block at no security cost.
+
+    ``numeric_range`` is **NOT** admissible for supersession: its codomain is an open
+    interval the attacker *can* satisfy (an attacker-derived amount that happens to
+    be in range), so it is not a subset of trusted values. The kernel refuses to
+    supersede on it — exactly as it refuses to make an instruction-complete sink
+    positional. A numeric range still *denies* an out-of-range value at the value-
+    policy gate; it just does not exempt the arg from integrity taint.
 
     Scope: supersedes the **integrity** axis only. The confidentiality floor is
     unaffected (a secret read still blocks egress, even to an approved destination).
-    Requires *all* driving args present and covered — a missing driving arg means
-    the taint check fell back to the whole blob, where no per-arg decidable cover
-    exists, so no supersession (fail-closed)."""
+    Requires *all* driving args present and enum-covered — a missing driving arg
+    means the taint check fell back to the whole blob, where no per-arg cover exists,
+    so no supersession (fail-closed)."""
     drivers = (driving_args or {}).get(tool_name)
     if not drivers:
         return False
     preds = (value_policies or {}).get(tool_name) or []
-    decidable = {
+    # Only `enum` (closed trusted codomain) is admissible; `numeric_range` (open
+    # codomain the attacker can satisfy) is deliberately excluded — see docstring.
+    enum_covered = {
         getattr(p, "arg", None)
         for p in preds
-        if getattr(p, "kind", None) in ("enum", "numeric_range")
+        if getattr(p, "kind", None) == "enum"
     }
-    return all(d in args and d in decidable for d in drivers)
+    return all(d in args and d in enum_covered for d in drivers)
 
 
 def taint_gate(

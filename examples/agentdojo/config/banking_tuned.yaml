@@ -1,22 +1,25 @@
 # axor governance for the AgentDojo *banking* suite — a TUNED deployment taxonomy.
 #
 # Same tool roles as banking.yaml, plus what a real bank deployment WOULD declare:
-# an approved-payee allowlist (an `enum` value policy on the transfer recipient) and
-# a bounded amount range. These are DECIDABLE predicates (membership / bounded range,
-# §5.4), so per the decidable-supersession rule they carry the integrity axis for
-# these sinks — a control strictly stronger than the content-derivation taint ledger,
-# which removes the value-coincidence false positive (a prompt-given recipient that
-# also happens to appear in an untrusted read) at no security cost:
-#   - an attacker-chosen destination is not in the allowlist  -> denied by the enum;
-#   - an attacker-chosen amount is out of range               -> denied by the range;
-#   - the confidentiality floor is NOT superseded             -> a secret read still
-#     blocks egress even to an approved payee.
+# an approved-payee allowlist (an `enum` value policy on the recipient). The `enum` is
+# the predicate that triggers DECIDABLE SUPERSESSION (§5.4): its codomain is a closed,
+# operator-trusted set, so even a recipient value derived from an untrusted read can only
+# be an approved payee — the enum is a control strictly stronger than content-derivation,
+# and the integrity content-taint on the recipient is skipped, removing the value-
+# coincidence false positive at no security cost. An attacker destination is not in the
+# allowlist (denied by the enum); the confidentiality floor is NOT superseded.
 #
-# The approved payees are the legitimate recipients the benchmark's user tasks pay
-# (what an operator's payee list would contain). Genuine shared-channel tasks whose
-# payee exists ONLY in an untrusted read (e.g. "pay the bill in bill-*.txt") are NOT
-# in the list and remain blocked — that residual needs structural provenance, not a
-# config knob.
+# NB: the `amount` numeric_range below is a normal value-policy constraint (it DENIES
+# out-of-range amounts), but it does NOT trigger supersession — a numeric range has an
+# open codomain an attacker-derived value can satisfy, so the kernel refuses to supersede
+# on it. Only the `enum` recipient drives supersession here.
+#
+# CAVEAT (read with the results): this allowlist's IBANs were taken from the benchmark
+# tasks, so it is train-on-test — an optimistic upper bound, not a clean recovery
+# measurement (see agentdojo_results.md "Recovering the banking cost"). Genuine
+# shared-channel tasks whose payee exists ONLY in an untrusted read (e.g. "pay the bill
+# in bill-*.txt") are NOT in the list and remain blocked — that residual needs structural
+# provenance, not a config knob.
 mode: production
 
 untrusted_sources:

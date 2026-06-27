@@ -84,6 +84,33 @@ def test_amount_range_still_catches_attacker_amount():
     assert huge.allowed is False, "out-of-range amount must be denied by the numeric predicate"
 
 
+def test_numeric_range_does_not_supersede_open_codomain():
+    """A numeric_range has an OPEN codomain the attacker can satisfy (an in-range
+    value), so it must NOT supersede integrity — only a closed enum may. Tested on
+    the predicate directly (an end-to-end check is confounded by whether a numeric
+    value substring-taints at all)."""
+    from axor_core.policy.gates import integrity_superseded_by_decidable
+    args = {"amount": 5000}
+    # numeric_range on the driving arg => NOT superseded (open codomain)
+    assert integrity_superseded_by_decidable(
+        "send_money", args, {"send_money": ["amount"]},
+        {"send_money": [numeric_range("amount", 0, 100000)]},
+    ) is False
+    # enum on the driving arg => superseded (closed trusted codomain)
+    assert integrity_superseded_by_decidable(
+        "send_money", {"recipient": "GB29NWBK60161331926819"},
+        {"send_money": ["recipient"]},
+        {"send_money": [enum("recipient", _APPROVED)]},
+    ) is True
+    # mixed: a driving arg covered only by numeric_range blocks supersession even if
+    # another arg has an enum (every driving arg must be enum-covered)
+    assert integrity_superseded_by_decidable(
+        "send_money", {"recipient": "GB29NWBK60161331926819", "amount": 5000},
+        {"send_money": ["recipient", "amount"]},
+        {"send_money": [enum("recipient", _APPROVED), numeric_range("amount", 0, 100000)]},
+    ) is False
+
+
 def test_confidentiality_floor_is_not_superseded():
     """Supersession is integrity-only: after a secret read the confidentiality
     floor still blocks egress, even to an approved recipient."""

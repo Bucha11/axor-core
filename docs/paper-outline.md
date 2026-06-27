@@ -35,17 +35,20 @@ Haoyu's three asks, mapped to sections:
      Non-Interference theorem (K4)**, with an explicit chain from a concrete
      agentic attack → taint analysis → the non-interference guarantee — §5.
   3. **Empirical validation on AgentDojo**, framed as CaMeL frames it — a **structural
-     guarantee at a measured utility cost** (capable model, o4-mini: generic-config banking
-     −37.5pp, slack −38pp, travel 0pp), *not* a headroom-dependent ASR-delta that vanishes
-     on a robust model. Reported honestly: the cost is localized to the shared-channel
-     partition; with a *generic* config CaMeL is ahead on utility there, but a **decidable
-     deployment config (approved-payee allowlist + supersession, §6.3) recovers banking to
-     0 cost**, matching CaMeL. axor's primary contribution is still the adoption cost of a
-     drop-in, framework-agnostic governance layer (§6.5), not raw utility — §6.
-  4. **A kernel result: decidable value-policies supersede the content-taint gate** (§6.3,
-     §5.4) — a sink fully guarded by satisfied enum/numeric predicates need not be subject
-     to the leaky content-derivation ledger on top, recovering the value-coincidence
-     over-block at no security cost. Supporting, not the headline (§5.4 is the headline).
+     guarantee at a measured utility cost** (capable model, o4-mini: banking ≈−37.5pp,
+     slack −38pp, travel 0pp), *not* a headroom-dependent ASR-delta that vanishes on a
+     robust model. Reported honestly: the cost is localized to the shared-channel partition,
+     **CaMeL is ahead on utility there, and axor does not beat it**. axor's contribution is
+     the adoption cost of a drop-in, framework-agnostic governance layer (§6.5), not raw
+     utility — §6.
+  4. **A kernel result: a sound `enum`-supersession rule** (§6.3, §5.4) — a sink whose
+     driving args are covered by a satisfied `enum` over a *closed trusted set* need not be
+     gated by the leaky content-taint on top (the enum is the stronger, content-blind
+     control); soundness condition is codomain ⊆ trusted (enum yes, numeric_range no — the
+     kernel refuses the latter). It removes the integrity over-block *class* at no security
+     cost. **Honest scope:** this is the mechanism; the benchmark does *not* establish a
+     clean utility recovery (train-on-test allowlist + non-determinism, §6.3). Supporting,
+     not the headline (§5.4 is the headline).
 - **Novelty arbitration (one headline, decided — a reviewer will ask "which is *the*
   contribution?").** The **single headline novelty is contribution 2's perimeter
   non-interference theorem with the decidability split (§5.4)** — the part that is
@@ -468,9 +471,14 @@ Measured on **o4-mini** (a capable CaMeL-v2 backbone), full CAMEL_MODE, ASR 0% e
 
 | suite (full) | benign undef → gov | cost | denials | mechanism |
 |---|---|---|---|---|
-| **banking** | 87.5% → 50.0% | **−37.5pp** | 5 (`send_money`) | shared channel — payee read from an untrusted file |
+| **banking** | 87.5% → 50.0% | **≈ −37.5pp** | 5 (`send_money`) | shared channel — payee read from an untrusted file |
 | **slack** | 85.7% → 47.6% | **−38.1pp** | 15 (egress sinks) | shared channel — post derived from channel reads |
 | **travel** | 65.0% → 65.0% | **0pp** | **0** | egress recipient comes from the **prompt**, not a read |
+
+*Caveat on the banking row:* o4-mini's **undefended** benign rate is unstable across runs
+(87.5% here, 68.8% / 62.5% in a later paired run — pure sampling variance on n=16); the
+**governed** rate is the stable signal (~50%). Read banking as "≈ −37.5pp, undefended
+noisy"; cite the paired run (§6.3) and per-task losses, not a single absolute.
 
 **The load-bearing, honest finding: the cost is *localized to the shared-channel
 partition*, not universal.** axor pays ~−38pp where the legitimate egress argument is read
@@ -519,44 +527,46 @@ in print). The bullets below are the supporting detail behind it. Be precise:
 - **Not apples-to-apples on the number.** CaMeL's headline is reported, not re-run by us;
   version matters (v1 ≈67% *with* GPT-4o; v2 ≈77% on Claude 4 / Gemini 2.5 / o3 /
   o4-mini, **no GPT-4o backbone** — §6.1). Pin the version you cite.
-- **The cost profiles — measured on a capable model (o4-mini). With a generic config CaMeL
-  is ahead; with a decidable config axor *matches* on banking but never *beats* CaMeL on
-  utility. State this plainly.** (The earlier "inverted profiles, axor strictly cheaper on
-  slack" was a **Qwen artifact** and is retracted — on o4-mini slack cost is −38pp, not ≈0.)
-  - **banking** (value-coincidence — axor's hard case): with the **generic** config axor
-    **−37.5pp** vs CaMeL **≈ 0 / +4%** → CaMeL ahead. *But the gap is **recoverable**, not
-    fundamental* (next bullet): with an approved-payee allowlist + the decidable-supersession
-    rule, axor reaches **0 cost** (retention 100%), matching CaMeL's banking cost.
+- **The cost profiles — measured on a capable model (o4-mini). CaMeL is ahead on utility;
+  axor does not beat it anywhere. State this plainly.** (The earlier "inverted profiles,
+  axor strictly cheaper on slack" was a **Qwen artifact** and is retracted — on o4-mini
+  slack cost is −38pp, not ≈0.)
+  - **banking** (value-coincidence — axor's hard case): axor **≈ −37.5pp** vs CaMeL
+    **≈ 0 / +4%** → CaMeL ahead. A decidable `enum` allowlist + supersession *removes the
+    integrity over-block class* (next bullet), but does **not** cleanly close the utility
+    gap on the benchmark (the recovery number is not established — see the three caveats).
   - **slack** (multi-step): axor **−38.1pp** vs CaMeL **≈ −24 to −43pp** → **comparable.**
   - **travel** (prompt-driven egress): axor **0pp** (0 denials); CaMeL likely also ~0 →
     **tie / both free.**
-  Honest summary: *with a generic config CaMeL is ahead on banking and comparable on
-  slack/travel; given a decidable deployment config axor matches CaMeL on banking too.*
   **Hard caveat — compare deltas vs each system's own baseline, never absolutes** (axor
   slack-undefended 85.7 ≠ CaMeL native-slack 95.2); verify every CaMeL delta is
-  benign/no-attack (Table 2, not Table 3).
-- **The banking over-block is recoverable — decidable value-policies supersede the
-  content-taint (a kernel result, motivated by §5.4).** The −37.5pp is the *generic config
-  not using the decidable controls a real deployment has*. When every driving arg of an
-  egress sink is guarded by a satisfied decidable predicate (enum/numeric — the sound
-  fraction of §5.4), that predicate is strictly stronger than content-derivation on the
-  same arg, so the integrity content-taint is superseded; attacker destinations/amounts are
-  still denied (enum/range), and the confidentiality floor is *not* superseded.
-  **Measured (paired o4-mini, same session):** generic banking 68.8% → 50.0% (7
-  `taint_enforcement` over-blocks) vs tuned (approved-payee allowlist) 62.5% → **62.5%, 0pp,
-  retention 100%** (0 `taint_enforcement`, 5 `value_policy` denials = the genuine
-  shared-channel residual). ASR stays 0%. So axor recovers the value-coincidence partition
-  via an **operator-supplied allowlist** + supersession, where CaMeL recovers it
-  automatically (structural provenance) — *same utility, different route; the residual that
-  stays needs structural provenance and the model fails it undefended anyway.*
-- **The asymmetry to still own honestly — with a *generic* config, the gap widens with
-  model capability.** CaMeL v2's utility *rises* on smarter models (o3 ≈ +10% vs o1);
-  axor's *generic-config* governed utility plateaus, because the content ledger blocks
-  shared-channel tasks regardless of model strength. The decidable-config recovery above
-  closes this on the value-coincidence partition; the genuine shared-channel residual
-  (payee only in an untrusted read) remains a content-ledger limit. Don't overclaim either
-  way: generic axor loses utility to CaMeL on capable models; decidable-config axor matches
-  it on banking.
+  benign/no-attack (Table 2, not Table 3). And **o4-mini's banking undefended is unstable**
+  (87.5 / 68.8 / 62.5 across runs — pure sampling variance); use the *paired* run and read
+  *per-task* losses, not absolute rates.
+- **The integrity over-block is reducible via a sound enum-supersession rule — a real,
+  tested kernel mechanism (this work), but the utility *recovery number is not cleanly
+  established*; do NOT claim "matches CaMeL".** Mechanism: when every driving arg of a sink
+  is covered by a satisfied **`enum`** predicate over a *closed, operator-declared trusted
+  set*, that enum carries the integrity axis and the content-taint is skipped on that arg
+  (an attacker destination is not in the set; the confidentiality floor is *not*
+  superseded). **Soundness condition (T4, §5.4): the predicate codomain must be ⊆ trusted
+  values the attacker cannot choose** — `enum` qualifies, `numeric_range` does **not** (open
+  codomain), and the kernel refuses to supersede on it. *Clean, deterministic effect:* the
+  integrity `taint_enforcement` denials disappear (category shifts to `value_policy`).
+  *What is NOT clean (three caveats, all real):* (1) the headline "retention 100% / 0 cost"
+  was a **non-determinism coincidence** — per-task, tuned still *lost* 2 benign tasks
+  (10, 12) to `value_policy` denials and gained 2 by sampling; real losses 4 → 2, not → 0;
+  (2) the allowlist was **train-on-test** (IBANs extracted from the AgentDojo tasks), an
+  upper bound, not an honest measurement; (3) the undefended baseline is unstable. So the
+  honest claim is the *mechanism* (sound, removes the integrity over-block class), **not** a
+  utility win. A clean recovery number needs a leakage-free operator allowlist + seeded runs.
+- **The asymmetry to own honestly — CaMeL is ahead on the value-coincidence partition and
+  the gap widens with model capability.** CaMeL v2's utility *rises* on smarter models
+  (o3 ≈ +10% vs o1); axor's governed utility plateaus, because the content ledger blocks
+  shared-channel tasks regardless of model strength. enum-supersession helps *only* where
+  the operator can enumerate the destinations; the genuine shared-channel residual (payee
+  only in an untrusted read) needs CaMeL's structural provenance and is unrecoverable by
+  config. Bottom line: **axor does not win on utility; CaMeL is ahead on banking.**
 
 **6.4 ASR-delta — secondary colour, where headroom exists (NOT the load-bearing axis).**
 On a *foolable* model the undefended attack lands and the structural guarantee neutralizes
@@ -577,10 +587,10 @@ pairs where the undefended injection derailed the task into failure — shows ut
 mechanism illustration, never a bare "governance raises utility.")
 
 **6.5 The adoption motivation — and the head-on "why not just use CaMeL?" answer.** Be
-blunt: with a *generic* config **CaMeL gives more utility (§6.3)**; with a *decidable*
-deployment config (approved-payee allowlist + supersession) **axor matches CaMeL on banking
-at 0 cost**. So axor's case is not "more utility than CaMeL" — it is **equal-or-slightly-less
-utility at far lower adoption cost**:
+blunt: **CaMeL gives more utility (§6.3) and axor does not beat it** — the enum-supersession
+rule removes axor's integrity over-block *class* but does not cleanly close the utility gap
+on the benchmark (caveats in §6.3). So axor's case is **not** utility; it is **lower
+adoption cost at a comparable-or-somewhat-lower utility**:
 
 - **axor is a gate in front of an *unmodified* agent loop** — you keep your existing
   agent (any provider, any framework) and drop a `ToolCallGovernor` in front of its tool
@@ -735,15 +745,15 @@ sound bound while the deterministic gates remain the only thing that can allow.
 Execution governance as a *framework-agnostic layer* with a *secure-by-design*
 core: framing-invariant defense from a non-interference theorem whose conditionality is
 stated, localized (the fuzzing fraction), and pinned to regressions — validated on
-AgentDojo as a **structural guarantee at a measured utility cost**, reported honestly: with
-a generic config the cost is localized to the shared-channel partition (≈−38pp on
-banking/slack on a capable model, 0 where egress is prompt-driven), where CaMeL's heavier
-interpreter is ahead; with a **decidable deployment config (approved-payee allowlist +
-supersession) axor recovers banking to 0 cost**, matching CaMeL — the gap was the generic
-config, not a fundamental limit. axor's primary contribution is the *adoption cost* of a
-guarantee that drops in front of an unmodified, framework-agnostic agent loop on any model.
-The guarantee is the value; its utility cost is the price, and a decidable config pays much
-of it down. Agents should not self-govern execution.
+AgentDojo as a **structural guarantee at a measured utility cost**, reported honestly: the
+cost is localized to the shared-channel partition (≈−38pp on banking/slack on a capable
+model, 0 where egress is prompt-driven), where **CaMeL's heavier interpreter is ahead on
+utility and axor does not beat it**. A sound `enum`-supersession rule removes axor's
+integrity over-block *class* where an operator can enumerate trusted destinations, but does
+not cleanly close the utility gap on the benchmark. axor's contribution is the *adoption
+cost* of a guarantee that drops in front of an unmodified, framework-agnostic agent loop on
+any model — not utility. The guarantee is the value; its utility cost is the honest price.
+Agents should not self-govern execution.
 
 ---
 

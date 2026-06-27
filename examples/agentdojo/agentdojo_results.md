@@ -102,46 +102,56 @@ case, which is exactly why the cost axis, not ASR-delta, is the load-bearing mea
 
 ### Recovering the banking cost — decidable value-policies supersede the content-taint
 
-The −37.5pp banking cost is **not fundamental to the content ledger** — it is the generic
-config not using the *decidable* controls a real deployment has. With an **approved-payee
-allowlist** (an `enum` value policy on the transfer recipient, plus a bounded `amount`
-range — `config/banking_tuned.yaml`) and the **decidable-supersession** rule, the
-value-coincidence over-block is recovered at no security cost.
-
-Mechanism (kernel): when *every* driving arg of an egress sink is guarded by a *satisfied*
-decidable predicate (enum / numeric_range, the sound fraction of §5.4), that predicate is
-a content-blind, provenance-independent control strictly stronger than content-derivation
-on the same arg — so the integrity content-taint check is superseded. An attacker
-destination is not in the allowlist (denied by the enum); an attacker amount is out of
-range (denied by the numeric); the **confidentiality floor is *not* superseded** (a secret
-read still blocks egress even to an approved payee). Pinned by
+A natural hypothesis: the integrity over-block is the *generic config not using the
+decidable controls a real bank has* — an **approved-payee allowlist** (an `enum` value
+policy on the recipient — `config/banking_tuned.yaml`). The kernel supports this via
+**decidable supersession**: when every driving arg of an egress sink is covered by a
+satisfied **`enum`** predicate (a *closed, operator-declared trusted set* — the soundness
+condition, see below), that enum carries the integrity axis and the content-taint check is
+skipped on that arg. An attacker destination is not in the allowlist (denied by the enum);
+the **confidentiality floor is *not* superseded**. Real, tested code (added in this work):
+`integrity_superseded_by_decidable` in `policy/gates.py`, both enforcement paths,
 `tests/adversarial/test_decidable_supersession.py`.
 
-**Paired run, o4-mini, banking, same session** (generic vs tuned back-to-back, so the
-undefended baselines are under the same conditions):
+**Soundness condition (enum only, not numeric_range).** Supersession is sound **iff the
+predicate's codomain is a subset of operator-trusted values the attacker cannot choose.**
+A finite `enum` allowlist meets this. A `numeric_range` does **not** — its codomain is an
+open interval an attacker-derived value can land in — so the kernel **refuses to supersede
+on it** (it still *denies* out-of-range values, it just does not exempt the arg from
+taint). Pinned by `test_numeric_range_does_not_supersede_open_codomain`.
 
-| config | benign undef → gov | cost | retention | benign denials | ASR (gov) |
-|---|---|---|---|---|---|
-| **generic** | 68.8% → 50.0% | −18.8pp | 72.7% | **7 × `taint_enforcement`** (integrity over-block) | 0% |
-| **tuned** (approved-payee allowlist) | 62.5% → 62.5% | **0pp** | **100%** | **5 × `value_policy`, 0 × `taint_enforcement`** | 0% |
+**What the benchmark actually shows — and three caveats that stop it from being a clean
+"matches CaMeL" claim.** Paired o4-mini run (generic vs tuned, same session), with the
+*per-task* truth, not just the headline rates:
 
-Two things are clean here despite o4-mini's run-to-run non-determinism on the undefended
-baseline (68.8% vs 62.5%):
-- **Tuned governed (62.5%) beats generic governed (50.0%) by +12.5pp** even from a *lower*
-  undefended baseline — so it is the supersession recovering utility, not sampling luck.
-  Tuned retention is **100%** (and was 100% in a separate earlier run too — stable).
-- **Deterministic denial shift:** the 7 integrity `taint_enforcement` over-blocks vanish
-  (0 in tuned); the remaining 5 `value_policy` denials are the *genuine* shared-channel
-  tasks whose payee exists only in an untrusted read (correctly blocked — that residual
-  needs structural provenance and is unrecoverable by config, but the model fails those
-  undefended anyway, hence 100% retention).
+| config | benign undef → gov | benign denials | tasks undef-solved-but-gov-denied |
+|---|---|---|---|
+| **generic** | 11/16 → 8/16 | 7 × `taint_enforcement` | **4** (tasks 0, 2, 3, 4) |
+| **tuned** (enum allowlist) | 10/16 → 10/16 | 5 × `value_policy` | **2** (tasks 10, 12) |
 
-**So the honest, corrected banking picture:** with a decidable deployment config, axor
-**matches CaMeL's ~0 banking cost** at 0% ASR. The difference is *how*: CaMeL recovers the
-value-coincidence cases automatically (structural provenance); axor recovers them with an
-**operator-supplied approved-payee allowlist** (deployment knowledge a real bank has) plus
-the supersession rule. The generic-config −37.5pp is the cost of *not declaring* the
-decidable controls, not a fundamental limit.
+- **The "100% retention / 0 cost" headline is *not* real — it is a non-determinism
+  coincidence.** Tuned governance *did* fail 2 benign tasks (10, 12) the model solved
+  undefended (via `value_policy` denials on recipients not in the allowlist); o4-mini
+  happened to *gain* 2 other tasks between the undefended and governed passes, netting the
+  count back to 10/16. So tuned is **not** zero-cost — it moved cost from
+  `taint_enforcement` to `value_policy`. The *clean* signal is the per-task losses (4 → 2),
+  not the rate (which is noise-dominated on n=16).
+- **The allowlist is train-on-test (leakage).** Its IBANs were *extracted from the
+  AgentDojo task data*, so it knows the legitimate answers — an upper bound, not an honest
+  measurement. A real evaluation needs an operator allowlist defined *before* the run.
+  Tellingly, even with the leaked allowlist, tasks 10/12 still cost utility.
+- **The undefended baseline is unstable** (87.5% first run, 68.8% paired-generic, 62.5%
+  paired-tuned — pure o4-mini sampling variance). Treat the *paired* run as canonical and
+  read the per-task losses, not absolute rates.
+
+**Honest conclusion.** What is solid: supersession is a **real, sound (enum-only) kernel
+mechanism** that *eliminates the integrity `taint_enforcement` over-block class* (a clean,
+deterministic effect — the denial category shifts to `value_policy`). What is **not**
+established: a clean utility *recovery number*, and therefore **we do not claim axor
+"matches CaMeL on banking"** — that would need a leakage-free allowlist and seeded runs,
+and even then value-coincidence recipients absent from the allowlist (genuine
+shared-channel, e.g. a payee read only from a bill file) stay blocked, which is the
+residual that needs CaMeL's structural provenance.
 
 The takeaway axor honestly stands on is **not** raw utility (CaMeL recovers for free) but
 the cost of *adoption*: axor is a gate in front of an unmodified agent loop,
