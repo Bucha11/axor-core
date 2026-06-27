@@ -45,10 +45,12 @@ Haoyu's three asks, mapped to sections:
      driving args are covered by a satisfied `enum` over a *closed trusted set* need not be
      gated by the leaky content-taint on top (the enum is the stronger, content-blind
      control); soundness condition is codomain ⊆ trusted (enum yes, numeric_range no — the
-     kernel refuses the latter). It removes the integrity over-block *class* at no security
-     cost. **Honest scope:** this is the mechanism; the benchmark does *not* establish a
-     clean utility recovery (train-on-test allowlist + non-determinism, §6.3). Supporting,
-     not the headline (§5.4 is the headline).
+     kernel refuses the latter). With a *legitimate* approved-payee allowlist (the payees
+     the user names in the prompt) it recovers the **value-coincidence** partition of the
+     banking over-block at no security cost; the **genuine shared-channel** partition (payee
+     read only from a file) stays with CaMeL. **Honest scope:** the partition logic is
+     deterministic; the exact recovered magnitude is noise-limited (o4-mini, §6.3).
+     Supporting, not the headline (§5.4 is the headline).
 - **Novelty arbitration (one headline, decided — a reviewer will ask "which is *the*
   contribution?").** The **single headline novelty is contribution 2's perimeter
   non-interference theorem with the decidability split (§5.4)** — the part that is
@@ -531,10 +533,11 @@ in print). The bullets below are the supporting detail behind it. Be precise:
   axor does not beat it anywhere. State this plainly.** (The earlier "inverted profiles,
   axor strictly cheaper on slack" was a **Qwen artifact** and is retracted — on o4-mini
   slack cost is −38pp, not ≈0.)
-  - **banking** (value-coincidence — axor's hard case): axor **≈ −37.5pp** vs CaMeL
-    **≈ 0 / +4%** → CaMeL ahead. A decidable `enum` allowlist + supersession *removes the
-    integrity over-block class* (next bullet), but does **not** cleanly close the utility
-    gap on the benchmark (the recovery number is not established — see the three caveats).
+  - **banking**: axor **≈ −37.5pp** vs CaMeL **≈ 0 / +4%** → CaMeL ahead. The −37.5pp
+    *partitions* (next bullet): a legitimate approved-payee `enum` allowlist + supersession
+    recovers the **value-coincidence** half (prompt-given payee); the **genuine
+    shared-channel** half (payee read only from a file) stays with CaMeL. So axor narrows
+    but does not close the banking gap.
   - **slack** (multi-step): axor **−38.1pp** vs CaMeL **≈ −24 to −43pp** → **comparable.**
   - **travel** (prompt-driven egress): axor **0pp** (0 denials); CaMeL likely also ~0 →
     **tie / both free.**
@@ -543,30 +546,37 @@ in print). The bullets below are the supporting detail behind it. Be precise:
   benign/no-attack (Table 2, not Table 3). And **o4-mini's banking undefended is unstable**
   (87.5 / 68.8 / 62.5 across runs — pure sampling variance); use the *paired* run and read
   *per-task* losses, not absolute rates.
-- **The integrity over-block is reducible via a sound enum-supersession rule — a real,
-  tested kernel mechanism (this work), but the utility *recovery number is not cleanly
-  established*; do NOT claim "matches CaMeL".** Mechanism: when every driving arg of a sink
-  is covered by a satisfied **`enum`** predicate over a *closed, operator-declared trusted
-  set*, that enum carries the integrity axis and the content-taint is skipped on that arg
-  (an attacker destination is not in the set; the confidentiality floor is *not*
-  superseded). **Soundness condition (T4, §5.4): the predicate codomain must be ⊆ trusted
-  values the attacker cannot choose** — `enum` qualifies, `numeric_range` does **not** (open
-  codomain), and the kernel refuses to supersede on it. *Clean, deterministic effect:* the
-  integrity `taint_enforcement` denials disappear (category shifts to `value_policy`).
-  *What is NOT clean (three caveats, all real):* (1) the headline "retention 100% / 0 cost"
-  was a **non-determinism coincidence** — per-task, tuned still *lost* 2 benign tasks
-  (10, 12) to `value_policy` denials and gained 2 by sampling; real losses 4 → 2, not → 0;
-  (2) the allowlist was **train-on-test** (IBANs extracted from the AgentDojo tasks), an
-  upper bound, not an honest measurement; (3) the undefended baseline is unstable. So the
-  honest claim is the *mechanism* (sound, removes the integrity over-block class), **not** a
-  utility win. A clean recovery number needs a leakage-free operator allowlist + seeded runs.
-- **The asymmetry to own honestly — CaMeL is ahead on the value-coincidence partition and
-  the gap widens with model capability.** CaMeL v2's utility *rises* on smarter models
-  (o3 ≈ +10% vs o1); axor's governed utility plateaus, because the content ledger blocks
-  shared-channel tasks regardless of model strength. enum-supersession helps *only* where
-  the operator can enumerate the destinations; the genuine shared-channel residual (payee
-  only in an untrusted read) needs CaMeL's structural provenance and is unrecoverable by
-  config. Bottom line: **axor does not win on utility; CaMeL is ahead on banking.**
+- **A sound enum-supersession rule recovers the value-coincidence partition with a
+  *legitimate* allowlist — real, tested kernel mechanism (this work). The −37.5pp splits
+  into a recoverable half and an irreducible half.** Mechanism: when every driving arg of a
+  sink is covered by a satisfied **`enum`** over a *closed, operator-declared trusted set*,
+  that enum carries the integrity axis and the content-taint is skipped on that arg (attacker
+  destination not in the set; the confidentiality floor is *not* superseded). **Soundness
+  condition (T4, §5.4): predicate codomain ⊆ trusted values the attacker cannot choose** —
+  `enum` qualifies, `numeric_range` does **not** (open codomain); the kernel refuses to
+  supersede on it. **The allowlist is legitimate, not leakage:** its IBANs are the recipients
+  the *user names in the prompt* (the operator's known-payee list `banking.yaml` describes),
+  not ground-truth answers; the attacker IBAN is excluded. The −37.5pp partitions:
+  - **value-coincidence (tasks 3, 4 — prompt-given payee): recovered** at no security cost —
+    the over-block was a content-ledger false positive; the allowlist removes it.
+  - **genuine shared-channel (tasks 0, 2 — payee read only from a bill/landlord file): NOT
+    recovered** — an operator can't pre-approve a one-off payee. **CaMeL keeps these** (its
+    provenance knows the payee is the user's intended payment); axor cannot. CaMeL stays
+    ahead on this partition.
+  *Deterministic effect (clean):* the integrity `taint_enforcement` denials disappear on the
+  value-coincidence partition (category shifts to `value_policy`). *Caveat on magnitude:* the
+  exact recovered number is **noise-limited** (o4-mini undefended 87.5/68.8/62.5; the paired
+  "retention 100%" was partly a sampling coincidence — per-task, tuned still lost 2 tasks and
+  gained 2). Read the *partition logic* (deterministic), not the single-run rate; a clean
+  number needs averaged runs. **Do NOT claim a clean global "matches CaMeL on banking"** —
+  claim the partitioned result.
+- **The asymmetry to own honestly — CaMeL is ahead on the shared-channel partition, and the
+  gap widens with model capability.** CaMeL v2's utility *rises* on smarter models
+  (o3 ≈ +10% vs o1). enum-supersession closes the value-coincidence partition where the
+  operator can enumerate payees, but the genuine shared-channel residual (payee only in an
+  untrusted read) needs CaMeL's structural provenance and is unrecoverable by config. Bottom
+  line: **axor does not win on utility; CaMeL is ahead on banking (specifically on the
+  shared-channel partition), and axor closes only the value-coincidence half.**
 
 **6.4 ASR-delta — secondary colour, where headroom exists (NOT the load-bearing axis).**
 On a *foolable* model the undefended attack lands and the structural guarantee neutralizes

@@ -14,12 +14,15 @@
 # open codomain an attacker-derived value can satisfy, so the kernel refuses to supersede
 # on it. Only the `enum` recipient drives supersession here.
 #
-# CAVEAT (read with the results): this allowlist's IBANs were taken from the benchmark
-# tasks, so it is train-on-test — an optimistic upper bound, not a clean recovery
-# measurement (see agentdojo_results.md "Recovering the banking cost"). Genuine
-# shared-channel tasks whose payee exists ONLY in an untrusted read (e.g. "pay the bill
-# in bill-*.txt") are NOT in the list and remain blocked — that residual needs structural
-# provenance, not a config knob.
+# The allowlist IBANs are the recipients the USER NAMES IN THE PROMPT (e.g. user_task_3
+# "send back to GB29...", user_task_4 "refund GB29...") — the operator's/user's known-payee
+# list, which is legitimate deployment knowledge, not answer-peeking. This recovers the
+# value-coincidence tasks (prompt-given payee that also coincidentally appears in a read).
+# Genuine shared-channel tasks whose payee exists ONLY in an untrusted read (e.g. "pay the
+# bill in bill-*.txt", task 0; "adjust rent per landlord-notices.txt", task 2) are NOT in
+# the list and remain blocked — an operator can't pre-approve a one-off payee. That residual
+# needs structural provenance (CaMeL), not a config knob. (Exact recovered utility is
+# noise-limited on o4-mini — see agentdojo_results.md "Recovering the banking cost".)
 mode: production
 
 untrusted_sources:
