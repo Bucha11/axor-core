@@ -1,0 +1,45 @@
+# axor governance for the AgentDojo *banking* suite — a TUNED deployment taxonomy.
+#
+# Same tool roles as banking.yaml, plus what a real bank deployment WOULD declare:
+# an approved-payee allowlist (an `enum` value policy on the transfer recipient) and
+# a bounded amount range. These are DECIDABLE predicates (membership / bounded range,
+# §5.4), so per the decidable-supersession rule they carry the integrity axis for
+# these sinks — a control strictly stronger than the content-derivation taint ledger,
+# which removes the value-coincidence false positive (a prompt-given recipient that
+# also happens to appear in an untrusted read) at no security cost:
+#   - an attacker-chosen destination is not in the allowlist  -> denied by the enum;
+#   - an attacker-chosen amount is out of range               -> denied by the range;
+#   - the confidentiality floor is NOT superseded             -> a secret read still
+#     blocks egress even to an approved payee.
+#
+# The approved payees are the legitimate recipients the benchmark's user tasks pay
+# (what an operator's payee list would contain). Genuine shared-channel tasks whose
+# payee exists ONLY in an untrusted read (e.g. "pay the bill in bill-*.txt") are NOT
+# in the list and remain blocked — that residual needs structural provenance, not a
+# config knob.
+mode: production
+
+untrusted_sources:
+  - get_most_recent_transactions
+  - get_scheduled_transactions
+  - read_file
+  - get_user_info
+
+egress_sinks:
+  - send_money
+  - schedule_transaction
+  - update_scheduled_transaction
+
+driving_args:
+  send_money: [recipient]
+  schedule_transaction: [recipient]
+  update_scheduled_transaction: [recipient]
+
+value_policies:
+  send_money:
+    - {arg: recipient, kind: enum, allowed: [GB29NWBK60161331926819, US122000000121212121212, US133000000121212121212]}
+    - {arg: amount, kind: numeric_range, lo: 0, hi: 1000000}
+  schedule_transaction:
+    - {arg: recipient, kind: enum, allowed: [GB29NWBK60161331926819, US122000000121212121212, US133000000121212121212]}
+  update_scheduled_transaction:
+    - {arg: recipient, kind: enum, allowed: [GB29NWBK60161331926819, US122000000121212121212, US133000000121212121212]}

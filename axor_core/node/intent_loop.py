@@ -16,6 +16,7 @@ from axor_core.policy.gates import (
     carrier_gate,
     consequence_gate,
     driving_subset,
+    integrity_superseded_by_decidable,
     positional_gate,
     ssrf_gate,
     taint_gate,
@@ -706,8 +707,15 @@ class IntentLoop:
             # on the leaky per-value `sensitive` derivation; a backend that omits it
             # fails loudly rather than silently downgrading the guarantee.
             floor_active = self._taint_engine.confidentiality_floor_active()
+            # A sink whose driving args are fully guarded by satisfied decidable
+            # predicates carries its integrity axis there (a stronger, content-blind
+            # control), so the content-taint integrity check is superseded; the
+            # confidentiality floor still applies.
             gd = taint_gate(
-                tool_name, normalized, driving_root, floor_active, self._egress_sinks
+                tool_name, normalized, driving_root, floor_active, self._egress_sinks,
+                integrity_superseded=integrity_superseded_by_decidable(
+                    tool_name, tool_args, self._driving_args, self._value_policies
+                ),
             )
             if gd is not None:
                 return _gate_denial(gd)

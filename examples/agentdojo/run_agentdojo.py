@@ -68,7 +68,11 @@ _CONFIG_DIR = os.path.join(os.path.dirname(__file__), "config")
 
 
 def make_governor() -> ToolCallGovernor:
-    cfg = GovernanceConfig.from_yaml(os.path.join(_CONFIG_DIR, f"{SUITE}.yaml"))
+    # AXOR_BENCH_CONFIG overrides the config file (default: <suite>.yaml) so a run
+    # can swap in a tuned deployment taxonomy (e.g. an approved-payee allowlist)
+    # while the suite name still selects the AgentDojo tasks.
+    cfg_name = os.environ.get("AXOR_BENCH_CONFIG", f"{SUITE}.yaml")
+    cfg = GovernanceConfig.from_yaml(os.path.join(_CONFIG_DIR, cfg_name))
     return ToolCallGovernor(**cfg.as_governor_kwargs())
 
 

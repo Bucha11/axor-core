@@ -33,6 +33,7 @@ from axor_core.policy.gates import (
     carrier_gate,
     consequence_gate,
     driving_subset,
+    integrity_superseded_by_decidable,
     positional_gate,
     ssrf_gate,
     taint_gate,
@@ -226,10 +227,16 @@ class ToolCallGovernor:
         if gd is not None:
             return _deny(gd)
 
-        # 6. per-value taint — integrity + confidentiality floor.
+        # 6. per-value taint — integrity + confidentiality floor. A sink whose
+        # driving args are fully guarded by satisfied decidable predicates carries
+        # its integrity axis there (a stronger, content-blind control), so the
+        # content-taint integrity check is superseded; the floor still applies.
         gd = taint_gate(
             tool_name, normalized, driving_root,
             self._taint.confidentiality_floor_active(), self._egress_sinks,
+            integrity_superseded=integrity_superseded_by_decidable(
+                tool_name, args, self._driving_args, self._value_policies
+            ),
         )
         if gd is not None:
             return _deny(gd)

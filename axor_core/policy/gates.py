@@ -173,22 +173,66 @@ def carrier_gate(
     return None
 
 
+def integrity_superseded_by_decidable(
+    tool_name: str,
+    args: dict,
+    driving_args: dict | None,
+    value_policies: dict | None,
+) -> bool:
+    """True iff *every* driving arg of ``tool_name`` is present in this call and
+    guarded by a *decidable* value predicate (``enum`` / ``numeric_range``).
+
+    Soundness (this is why it is safe to skip the integrity taint on such a call):
+    the value-policy gate runs *before* the taint gate, so reaching the taint gate
+    means those predicates already PASSED. A satisfied decidable predicate on the
+    driving arg (membership / bounded range) is a content-blind,
+    provenance-independent control that is **strictly stronger** than
+    content-derivation on the same arg — it cannot be defeated by paraphrase or by
+    value-coincidence (the documented false positive of the content ledger). So the
+    integrity content-taint check on that arg is *redundant*, and removing it
+    eliminates the value-coincidence over-block at no security cost: an
+    attacker-chosen destination is not in the allowlist (denied by the enum), and
+    an attacker-chosen amount is out of range (denied by the numeric predicate).
+
+    Scope: supersedes the **integrity** axis only. The confidentiality floor is
+    unaffected (a secret read still blocks egress, even to an approved destination).
+    Requires *all* driving args present and covered — a missing driving arg means
+    the taint check fell back to the whole blob, where no per-arg decidable cover
+    exists, so no supersession (fail-closed)."""
+    drivers = (driving_args or {}).get(tool_name)
+    if not drivers:
+        return False
+    preds = (value_policies or {}).get(tool_name) or []
+    decidable = {
+        getattr(p, "arg", None)
+        for p in preds
+        if getattr(p, "kind", None) in ("enum", "numeric_range")
+    }
+    return all(d in args and d in decidable for d in drivers)
+
+
 def taint_gate(
     tool_name: str,
     normalized: NormalizedIntent,
     driving_root: CausalRoot,
     floor_active: bool,
     egress_sinks: frozenset[str] | set[str] = frozenset(),
+    integrity_superseded: bool = False,
 ) -> GateDecision | None:
     """Per-value taint: integrity (untrusted-derived value into a high-risk
     operation) plus the confidentiality floor (egress while a secret read is
     outstanding). ``egress_sinks`` is the operator's declaration of which tools
-    exfiltrate; it complements the normalizer's destination classification."""
+    exfiltrate; it complements the normalizer's destination classification.
+
+    ``integrity_superseded`` (see :func:`integrity_superseded_by_decidable`): when
+    the sink's driving args are fully guarded by satisfied decidable predicates,
+    the integrity axis is carried by those (stronger) predicates and is skipped
+    here; the confidentiality floor still applies."""
     exfil = (
         tool_name in egress_sinks
         or normalized.destination_kind in EXFIL_DESTINATIONS
     )
-    integrity_risk = driving_root.is_tainted and (
+    integrity_risk = (not integrity_superseded) and driving_root.is_tainted and (
         normalized.writes_outside_workdir
         or normalized.executes_generated_code
         or exfil
