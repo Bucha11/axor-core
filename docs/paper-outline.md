@@ -475,13 +475,16 @@ question is then CaMeL's question, not a scoreboard: **what does the guarantee c
 benign utility?** Measured per suite on the *benign* task list:
 
 Measured on **o4-mini** (a capable CaMeL-v2 backbone), full CAMEL_MODE, ASR 0% everywhere
-(it resists on its own — the headroom-dark case the cost axis exists for):
+(it resists on its own — the headroom-dark case the cost axis exists for). The banking row is
+**one representative pass** (undefended is noisy — see caveat); slack/travel as observed:
 
 | suite (full) | benign undef → gov | cost | denials | mechanism |
 |---|---|---|---|---|
-| **banking** | 87.5% → 50.0% | **≈ −37.5pp** | 5 (`send_money`) | shared channel — payee read from an untrusted file |
+| **banking** † | 87.5% → 50.0% | **≈ −37.5pp** | 3–5/pass (this pass: 5) | shared channel — payee read from an untrusted source |
 | **slack** | 85.7% → 47.6% | **−38.1pp** | 15 (egress sinks) | shared channel — post derived from channel reads |
 | **travel** | 65.0% → 65.0% | **0pp** | **0** | egress recipient comes from the **prompt**, not a read |
+
+† *representative single pass; read the banking numbers via the caveat + paired run (§6.3).*
 
 *Caveat on the banking row:* o4-mini's **undefended** benign rate is unstable across runs
 (87.5% here, 68.8% / 62.5% / ~70% mean over the 14-pass paired run — pure sampling variance
@@ -489,18 +492,20 @@ on n=16); the **governed** rate is the stable signal (generic ~51%, σ=5.2 over 
 Read banking as "≈ −37.5pp, undefended noisy"; cite the paired run (§6.3) and per-task
 losses, not a single absolute.
 
-*Caption — what the banking cost is, and how §6.3 splits it (the bridge `5 → partition`).*
-The denial count is **not a fixed monolith** (it fluctuates 3–5 across passes — a denial
-only fires when the model actually reaches an egress sink). What is fixed is the *structure*
-of the cost: the −37.5pp generic over-block decomposes into (a) a **known-payee read-derived
-partition** — egress whose recipient is read-derived *and* an allowlisted known payee (tasks
-3, 4, 6, 15; the strict prompt∩read value-coincidence subset is 3, 4, 6) — which the §6.3
-`enum`-supersession **lifts at the gate** (+25pp deterministic upper bound), plus (b) a
-**genuine shared-channel partition** — payee present *only* in an untrusted file with no
-known-payee entry (tasks 0, 2; one-off bill/landlord), which **stays with CaMeL** (config
-cannot pre-enumerate a one-off payee). So "−37.5pp" is the **generic, pre-supersession**
-figure; §6.3 reports what the gate lift recovers (and where the *realized* benchmark utility
-lands, which is a third, model-gated number — see §6.3).
+*Caption — what the banking cost is, and how §6.3 splits it.* **Two different counts that
+must not be conflated:** (i) the **per-pass denial count fluctuates 3–5** (a denial only
+fires when the model actually reaches an egress sink, so a given pass realizes whichever
+subset it gets to — "5" above is one pass, not a structural total); (ii) the **structural
+partition is defined over all 16 tasks, independent of any pass.** Structurally the −37.5pp
+generic over-block decomposes into **two** partitions: (a) a **known-payee read-derived
+partition** — recipient read-derived *and* an allowlisted known payee — **4 tasks {3, 4, 6,
+15}** (strict prompt∩read value-coincidence subset = {3, 4, 6}), which the §6.3
+`enum`-supersession **lifts at the gate** (+25pp deterministic upper bound); plus (b) a
+**one-off shared-channel partition** — payee present *only* in an untrusted file with no
+known-payee entry — **2 tasks {0, 2}** (bill/landlord), which **stays with CaMeL** (config
+cannot pre-enumerate a one-off payee). So the 6 structural tasks (4 + 2) and the 3–5 per-pass
+denials are *different quantities*; "−37.5pp" is the **generic, pre-supersession** figure, and
+§6.3 reports what the gate lift recovers (and the third, model-gated *realized* number).
 
 **The load-bearing, honest finding: the cost is *localized to the shared-channel
 partition*, not universal.** axor pays ~−38pp where the legitimate egress argument is read
@@ -521,10 +526,12 @@ derived from an untrusted read).
   State it correctly: the *partition* is taxonomy-fixed; the *cost on it* scales with how
   many of those tasks a stronger model can actually complete.
 
-Decompose the lost banking tasks into the three mechanisms (genuine shared channel /
-value-coincidence false positive / whole-args fallback) — this is exactly where a content
-ledger is weaker than CaMeL's structural provenance (§6.3), and the gap *widens* on a
-capable model. The **confidentiality (sound floor)** axis is deliberately not a row here —
+Decompose the lost banking tasks into the **two partitions** of the caption above
+(known-payee read-derived, lifted by supersession / one-off shared-channel, stays with
+CaMeL) — this is exactly where a content ledger is weaker than CaMeL's structural provenance
+(§6.3), and the gap *widens* on a capable model. (An earlier draft split this into "three
+mechanisms" with a separate *whole-args fallback* bucket for task 15; §6.3 retired that —
+task 15 is a read-derived known-payee egress in partition (a), not a third mechanism.) The **confidentiality (sound floor)** axis is deliberately not a row here —
 it is a structural property (Appendix A-floor, §5.5), and the stock travel suite does not
 exercise it (0 floor denials in the o4-mini run; the floor never armed because benign
 travel tasks don't read-secret-then-egress and o4-mini resisted the overt injection).
