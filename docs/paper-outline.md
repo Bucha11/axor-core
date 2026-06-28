@@ -48,11 +48,14 @@ Haoyu's three asks, mapped to sections:
      kernel refuses the latter; soundness is by construction — the allowlist is a static
      operator config, never populated from a runtime read, so the codomain is
      attacker-inaccessible). With a legitimate approved-payee allowlist it
-     **deterministically lifts the gate over-block on the value-coincidence partition**
-     (3/16 banking tasks, a +18.75pp *gate-level ceiling*) at no security cost; the genuine
-     shared-channel partition stays with CaMeL. **Honest scope:** the gate ceiling is
-     deterministic; the *realized* benchmark utility, now measured over 7 paired o4-mini
-     passes, is **+13.4 ± 9.1pp** — below the ceiling and noise-limited (§6.3).
+     **deterministically lifts the gate over-block on read-derived egress to allowlisted
+     known payees** (4/16 banking tasks — a +25pp *gate-level upper bound*; the strict
+     value-coincidence subset is 3 of those) at no security cost; the genuine shared-channel
+     partition stays with CaMeL. **Honest scope:** the +25pp is a deterministic *upper bound*
+     (if every lifted task converted to utility); the *realized* recovery, measured over 7
+     paired o4-mini passes on the *same* population, is **+13.4 ± 9.1pp** — below the bound
+     (the model completes only part of the lifted set) and a wide, noise-limited interval
+     (§6.3).
      Supporting, not the headline (§5.4 is the headline).
 - **Novelty arbitration (one headline, decided — a reviewer will ask "which is *the*
   contribution?").** The **single headline novelty is contribution 2's perimeter
@@ -489,11 +492,12 @@ losses, not a single absolute.
 *Caption — what the banking cost is, and how §6.3 splits it (the bridge `5 → partition`).*
 The denial count is **not a fixed monolith** (it fluctuates 3–5 across passes — a denial
 only fires when the model actually reaches an egress sink). What is fixed is the *structure*
-of the cost: the −37.5pp generic over-block decomposes into (a) a **value-coincidence
-partition** — recipient named in the prompt *and* also present in an untrusted read (tasks
-3, 4, 6) — which the §6.3 `enum`-supersession **lifts at the gate** (+18.75pp deterministic
-ceiling), plus (b) a **genuine shared-channel partition** — payee present *only* in an
-untrusted file (tasks 0, 2; one-off bill/landlord), which **stays with CaMeL** (config
+of the cost: the −37.5pp generic over-block decomposes into (a) a **known-payee read-derived
+partition** — egress whose recipient is read-derived *and* an allowlisted known payee (tasks
+3, 4, 6, 15; the strict prompt∩read value-coincidence subset is 3, 4, 6) — which the §6.3
+`enum`-supersession **lifts at the gate** (+25pp deterministic upper bound), plus (b) a
+**genuine shared-channel partition** — payee present *only* in an untrusted file with no
+known-payee entry (tasks 0, 2; one-off bill/landlord), which **stays with CaMeL** (config
 cannot pre-enumerate a one-off payee). So "−37.5pp" is the **generic, pre-supersession**
 figure; §6.3 reports what the gate lift recovers (and where the *realized* benchmark utility
 lands, which is a third, model-gated number — see §6.3).
@@ -551,10 +555,10 @@ in print). The bullets below are the supporting detail behind it. Be precise:
   slack cost is −38pp, not ≈0.)
   - **banking**: axor **≈ −37.5pp** vs CaMeL **≈ 0 / +4%** → CaMeL ahead. The −37.5pp
     *partitions* (next bullet): an `enum` allowlist + supersession deterministically lifts
-    the **gate** over-block on the **value-coincidence** partition (3 tasks, +18.75pp
-    *ceiling*; +13.4 ± 9.1pp realized, 7 paired passes); the **genuine shared-channel** half (payee read
-    only from a file) stays with CaMeL. So axor lifts the gate block on part of the gap; it
-    does not close it.
+    the **gate** over-block on the **known-payee read-derived** partition (4 tasks, +25pp
+    *upper bound*; +13.4 ± 9.1pp realized on the same population, 7 paired passes); the
+    **genuine shared-channel** half (one-off payee read only from a file) stays with CaMeL. So
+    axor lifts the gate block on part of the gap; it does not close it.
   - **slack** (multi-step): axor **−38.1pp** vs CaMeL **≈ −24 to −43pp** → **comparable.**
   - **travel** (prompt-driven egress): axor **0pp** (0 denials); CaMeL likely also ~0 →
     **tie / both free.**
@@ -563,68 +567,78 @@ in print). The bullets below are the supporting detail behind it. Be precise:
   benign/no-attack (Table 2, not Table 3). And **o4-mini's banking undefended is unstable**
   (87.5 / 68.8 / 62.5 across runs — pure sampling variance); use the *paired* run and read
   *per-task* losses, not absolute rates.
-- **A sound enum-supersession rule lifts the over-block on the value-coincidence partition
-  — a *deterministic gate-level ceiling* (+18.75pp), NOT a realized benchmark utility win.
-  Real, tested kernel mechanism (this work).** Mechanism: when every driving arg of a sink
-  is covered by a satisfied **`enum`** over a *closed, operator-declared trusted set*, that
-  enum carries the integrity axis and the content-taint is skipped on that arg (attacker
-  destination not in the set; the confidentiality floor is *not* superseded). **Soundness
-  condition (T4, §5.4): predicate codomain ⊆ trusted values the attacker cannot choose** —
-  `enum` qualifies, `numeric_range` does **not** (open codomain); the kernel refuses to
-  supersede on it — pinned by `test_numeric_range_does_not_supersede_open_codomain` (the
-  T4 soundness regression, named in the Appendix A crosswalk beside O1/O2/O3/T0). **Soundness
-  is by construction:** the allowlist is a **static operator
-  config, not populated from any runtime read, so the enum codomain is attacker-inaccessible
-  by construction** — an attacker controlling an untrusted read can never add an IBAN to the
-  trusted set (a static invariant, stronger than a runtime origin-filter). And it is
-  *legitimate, not leakage*: the IBANs are recipients the user names in the prompt, not
-  ground-truth.
-  **Clean measurement (deterministic, no model), structurally defined to avoid cherry-pick:**
-  a value-coincidence task = prompt-given recipient that *also appears in an untrusted read*.
-  Applying that uniformly to the 16 banking tasks gives **3** (verified against the real
-  environment reads): GB29… (tasks 3, 4 — in the transaction history), US122… (task 6 — in
-  scheduled transactions). For each, generic **DENIES**, tuned **ALLOWS**, attacker stays
-  **DENIED** → **3/3 = +18.75pp (3/16) gate-level ceiling**. *Anti-cherry-pick control:*
-  US133… (task 15) is prompt-given but **not in any read**, so it is *not* value-coincidence
-  (generic doesn't over-block it) and is excluded — an earlier draft wrongly counted it with
-  a *fabricated* read, inflating 3→4/+18.75→+25pp; corrected. Pinned by
-  `test_value_coincidence_recovery_structural_not_cherry_picked`. The genuine shared-channel
-  tasks (payee read only from a file) are **NOT** recovered, and **CaMeL stays ahead there**.
-- **"Ceiling at the gate" ≠ "realized utility" — now measured, and the two land on
-  *partly different task sets*.** The +18.75pp means the gate stops *denying* the 3
-  value-coincidence transfers; it does **not** prove the model *completes* the tasks.
-  A proper **paired** measurement (7 passes, generic-gov vs tuned-gov as paired conditions,
-  o4-mini, benign-only) gives **realized recovery = +13.4 ± 9.1pp** (generic 50.9% → tuned
-  64.3%; paired per-pass diffs +12.6/+12.4/+6.3/+31.2/+0.0/+12.5/+18.8). It sits **below the
-  +18.75pp gate ceiling**, and — importantly — the **realized set {3, 4, 15} is not the
-  ceiling set {3, 4, 6}**:
-  - **Task 6 is in the ceiling but realizes nothing:** o4-mini fails it **14/14 even
-    undefended** (a hard scheduled-transaction task). The gate lift is real; the model
-    cannot convert it. This is "ceiling ≠ realized" with a named cause.
-  - **Task 15 is *not* in the strict value-coincidence ceiling, yet it realizes:** generic
-    denies it 7/7, tuned recovers it 0/7. Its prompt-named recipient (the new landlord
-    `US133…`) is *not* read-derived (correctly excluded as the anti-cherry-pick control),
-    but task 15 *also* says "refund that 10.00 from my friend" **without naming the IBAN** —
-    so the model reads `GB29…` from history. That **read-only friend-refund** is recovered
-    because `GB29…` is an allowlisted *known payee* (from tasks 3/4). (This refines the
-    earlier "task 15 = whole-args fallback" note: on o4-mini the recovered block is the
-    `GB29…` refund — the recipient-enum lifts it, which a whole-args fallback could not be.)
-  - **Net:** two effects of opposite sign (task 6 lifts-but-doesn't-realize; task 15
-    realizes-but-isn't-in-the-strict-ceiling) **partially cancel**, which is *why* realized
-    (+13.4) sits just under ceiling (+18.75). State all three numbers, never collapse them:
-    **gate ceiling +18.75pp (deterministic, set {3,4,6}); realized +13.4 ± 9.1pp (measured,
-    set {3,4,15}); generic over-block −37.5pp (pre-supersession).** The honest reading: the
-    enum-supersession recovers *any* read-derived egress to an allowlisted known payee —
-    broader than strict value-coincidence — but realized utility is capped by whether the
-    model completes the lifted task at all.
+- **A sound enum-supersession rule lifts the over-block on read-derived egress to an
+  allowlisted known payee — a *deterministic gate-level upper bound*, NOT a realized
+  benchmark utility win. Real, tested kernel mechanism (this work).** Mechanism: when every
+  driving arg of a sink is covered by a satisfied **`enum`** over a *closed, operator-declared
+  trusted set*, that enum carries the integrity axis and the content-taint is skipped on that
+  arg (attacker destination not in the set; the confidentiality floor is *not* superseded).
+  **Soundness condition (T4, §5.4): predicate codomain ⊆ trusted values the attacker cannot
+  choose** — `enum` qualifies, `numeric_range` does **not** (open codomain); the kernel
+  refuses to supersede on it — pinned by `test_numeric_range_does_not_supersede_open_codomain`
+  (the T4 soundness regression, named in the Appendix A crosswalk beside O1/O2/O3/T0).
+  **Soundness is by construction:** the allowlist is a **static operator config, not populated
+  from any runtime read, so the enum codomain is attacker-inaccessible by construction** — an
+  attacker controlling an untrusted read can never add an IBAN to the trusted set (a static
+  invariant, stronger than a runtime origin-filter). And it is *legitimate, not leakage*: the
+  IBANs are the user's/operator's known payees.
+  **Define the recovery population once, so ceiling and realized are measured on the *same*
+  set (avoiding a cross-population comparison).** The gate recovers exactly the tasks with a
+  *legitimate egress whose driving recipient is read-derived and is an allowlisted known
+  payee* — for each, generic **DENIES** (content-taint), tuned **ALLOWS** (supersession),
+  attacker stays **DENIED** (not in the enum). Verified deterministically against the real
+  environment reads (a gate-level check, no model), the banking suite has **four**:
+
+  | task | recovered egress | recipient | source | strict value-coincidence? |
+  |---|---|---|---|---|
+  | 3 | refund friend | GB29… | prompt **and** history | yes |
+  | 4 | refund friend | GB29… | prompt **and** history | yes |
+  | 6 | recurring iPhone | US122… | prompt **and** scheduled-tx | yes |
+  | 15 | friend-refund sub-goal | GB29… | history **only** (IBAN not named in prompt) | **no — read-only known payee** |
+
+  → **gate-level ceiling = 4/16 = +25pp**, the *upper bound* if every gate-lifted task fully
+  converted to utility. **Two named sub-characterizations within this one population, not two
+  populations:**
+  - **Strict value-coincidence subset {3, 4, 6} = +18.75pp** — recipient named in the prompt
+    *and* also in a read (the textbook substring false positive). Pinned by
+    `test_value_coincidence_recovery_structural_not_cherry_picked`.
+  - **Task 15 is the *broader* read-only case:** its recovered recipient `GB29…` is in history
+    but **not in task 15's prompt** — the gate lifts it because `GB29…` is an allowlisted known
+    payee, *not* because it is value-coincidence. (Its prompt-named recipient, the landlord
+    `US133…`, is not read-derived and is **ALLOW in both generic and tuned** — never blocked,
+    so *not* a recovery; the security control that holds is the **attacker IBAN denied on all
+    sinks**, not "`US133…` denied". This also corrects an earlier draft that counted task 15 as
+    a 4th *value-coincidence* task via a **fabricated** `US133…`-in-read claim — that was wrong;
+    task 15 enters the recovery population only via the **real** `GB29…` read, under the broader
+    definition.)
+- **"Ceiling at the gate" ≠ "realized utility" — measured, on the same population.** The
+  +25pp upper bound says the gate stops *denying* those four transfers; it does **not** prove
+  the model *completes* them. A proper **paired** measurement (7 passes, generic-gov vs
+  tuned-gov as paired conditions, o4-mini, benign-only) gives **realized recovery =
+  +13.4 ± 9.1pp** (generic 50.9% → tuned 64.3%; paired per-pass diffs
+  +12.6/+12.4/+6.3/+31.2/+0.0/+12.5/+18.8). Realized lands **below the +25pp ceiling because
+  the model converts only part of the lifted population**: task 6 never completes (o4-mini
+  fails it **14/14 even undefended** — a hard scheduled-transaction task the gate lift cannot
+  rescue), and tasks 4/15 complete only partially (undefended fail 5/14 and 4/14). So the
+  realized set is **{3, 4, 15}** (model-completed) ⊂ the gate set **{3, 4, 6, 15}** (gate-lifted)
+  — a clean subset, *one* population, not the cross-population "+13.4 below +18.75" the
+  previous draft implied. **Report the three commensurable numbers together: generic over-block
+  −37.5pp (pre-supersession) → gate ceiling +25pp (deterministic upper bound, {3,4,6,15}) →
+  realized +13.4 ± 9.1pp (measured, {3,4,15}).**
+  - **The ± is wide — say so.** ±9.1pp over 7 passes is a broad interval (≈ +4 to +23pp): the
+    realized effect is **positive in every pass** (min paired diff +0.0, never negative) but
+    its *magnitude* is not tightly bounded. Report +13.4 ± 9.1 as evidence the gate lift is
+    **not purely cosmetic**, not as a precise utility figure — a reviewer who computes the CI
+    should find we already flagged it.
 - **The asymmetry to own honestly — CaMeL is ahead on the shared-channel partition.** CaMeL
   v2's utility *rises* on smarter models (o3 ≈ +10% vs o1). enum-supersession deterministically
-  lifts the gate over-block on the value-coincidence partition (+18.75pp ceiling) where the
-  operator can enumerate payees, but the genuine shared-channel residual (payee only in an
-  untrusted read) needs CaMeL's structural provenance and is unrecoverable by config. Bottom
-  line: **axor does not win on utility globally; it lifts the gate over-block on the
-  value-coincidence half of the banking gap (ceiling); CaMeL is ahead
-  on the shared-channel half.**
+  lifts the gate over-block on the known-payee read-derived partition (+25pp upper bound over 4
+  tasks) where the operator can enumerate payees, but the genuine one-off shared-channel residual
+  (a payee that exists only in an untrusted read, with no known-payee entry) needs CaMeL's
+  structural provenance and is unrecoverable by config. Bottom line: **axor does not win on
+  utility globally; it lifts the gate over-block on the known-payee read-derived half of the
+  banking gap (a +25pp upper bound, +13.4 ± 9.1pp realized); CaMeL is ahead on the one-off
+  shared-channel half.**
 
 **6.4 ASR-delta — secondary colour, where headroom exists (NOT the load-bearing axis).**
 On a *foolable* model the undefended attack lands and the structural guarantee neutralizes
@@ -646,10 +660,11 @@ mechanism illustration, never a bare "governance raises utility.")
 
 **6.5 The adoption motivation — and the head-on "why not just use CaMeL?" answer.** Be
 blunt: **CaMeL gives more utility (§6.3) and axor does not beat it.** The enum-supersession
-rule deterministically lifts the gate over-block on the value-coincidence partition (a
-+18.75pp **gate-level ceiling**, §6.3) where the operator can enumerate payees, but (a) the
-**realized** benchmark utility of that lift is **+13.4 ± 9.1pp** (7 paired passes) — below
-the ceiling and noise-limited, not a clean win — and (b) the genuine shared-channel
+rule deterministically lifts the gate over-block on the known-payee read-derived partition (a
++25pp **gate-level upper bound** over 4 tasks, §6.3) where the operator can enumerate payees,
+but (a) the **realized** benchmark utility of that lift, measured on the same population, is
+**+13.4 ± 9.1pp** (7 paired passes — a wide interval, below the bound because the model
+completes only part of the lifted set; not a clean win) and (b) the genuine shared-channel
 partition stays with CaMeL. So axor's case is **not** utility; it is
 **lower adoption cost at comparable-or-somewhat-lower utility**:
 
@@ -729,9 +744,10 @@ not belong in this paper.)
   integration. Axor = a gate in front of an *unmodified* loop. **Comparison caveat (carry
   from §6.3, measured on o4-mini):** CaMeL is **ahead on utility** — banking CaMeL ≈0 vs
   axor −37.5pp generic. But that gap is **not monolithic**: it splits into a
-  value-coincidence half, which axor's `enum`-supersession **lifts at the gate** (+18.75pp
-  deterministic ceiling; +13.4 ± 9.1pp realized over 7 paired passes), and a genuine
-  shared-channel half (payee only in an untrusted read), where **CaMeL is ahead** because its
+  known-payee read-derived half, which axor's `enum`-supersession **lifts at the gate** (+25pp
+  deterministic upper bound over 4 tasks; +13.4 ± 9.1pp realized on the same population over 7
+  paired passes), and a genuine one-off shared-channel half (payee only in an untrusted read),
+  where **CaMeL is ahead** because its
   structural provenance keeps the read-derived payee axor's content ledger cannot. Slack is
   comparable (both ~−38pp), travel a tie (both ~free). Axor does **not** win on utility
   globally on a capable model; its case is *adoption cost* (drop-in, framework-agnostic, any
@@ -814,10 +830,11 @@ AgentDojo as a **structural guarantee at a measured utility cost**, reported hon
 cost is localized to the shared-channel partition (≈−38pp on banking/slack on a capable
 model, 0 where egress is prompt-driven), where **CaMeL's heavier interpreter is ahead on
 utility and axor does not beat it**. A sound `enum`-supersession rule deterministically
-lifts the gate over-block on the value-coincidence partition (a +18.75pp gate-level ceiling)
-where an operator can enumerate trusted destinations; its *realized* benchmark utility is
-**+13.4 ± 9.1pp** (7 paired passes — below the ceiling, noise-limited), and the
-shared-channel partition stays with CaMeL. axor's
+lifts the gate over-block on the known-payee read-derived partition (a +25pp gate-level upper
+bound over 4 tasks) where an operator can enumerate trusted destinations; its *realized*
+benchmark utility, measured on the same population, is **+13.4 ± 9.1pp** (7 paired passes — a
+wide interval, below the bound because the model converts only part of the lifted set), and
+the shared-channel partition stays with CaMeL. axor's
 contribution is the *adoption cost* of a guarantee that drops in front of an unmodified,
 framework-agnostic agent loop on any model — not utility. The guarantee is the value; its
 utility cost is the honest price. Agents should not self-govern execution.
@@ -869,9 +886,9 @@ utility cost is the honest price. Agents should not self-govern execution.
 4. **The primary figure: measured utility cost across suites (o4-mini)** (§6.2 — banking
    −37.5pp generic, slack −38pp, travel 0pp) with the CaMeL cost overlaid (banking ≈0, slack
    ≈−30s, travel ≈0) — shows the cost is localized to the shared-channel partition. Caption
-   the banking bar honestly: **CaMeL ahead on the shared-channel half; axor lifts the
-   value-coincidence half at the gate** (+18.75pp ceiling / +13.4pp realized) — not a flat
-   "CaMeL ahead on banking." Integrity axis only; the confidentiality floor is a
+   the banking bar honestly: **CaMeL ahead on the one-off shared-channel half; axor lifts the
+   known-payee read-derived half at the gate** (+25pp upper bound / +13.4 ± 9.1pp realized) —
+   not a flat "CaMeL ahead on banking." Integrity axis only; the confidentiality floor is a
    *property*, shown separately (figure 6), not a cost row. Put the ASR-delta
    table (§6.4) *second/smaller*, captioned "where headroom exists," so layout itself
    signals which axis is load-bearing.
