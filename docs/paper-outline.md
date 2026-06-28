@@ -488,30 +488,16 @@ slack/travel are single observed runs:
 | **travel** (single run) | 65.0% → 65.0% | **0pp** | **0** | egress recipient comes from the **prompt**, not a read |
 
 *Caveat on the banking row — carry the paired number, not the dramatic single pass.* o4-mini's
-**undefended** benign rate is unstable across runs (single passes seen at 56–87.5%, **mean
-67.9% over the 7 generic-section passes** / 69.7% over all 14 — pure sampling variance on n=16);
-the **governed** rate is the stable signal (generic 50.9%, σ=5.2). The **per-pass paired cost
-is −17.0 ± 7.2pp** (computed within-pass, same method as the +13.4pp realized recovery in §6.3).
-An earlier single pass with an unusually high 87.5% undefended gave **−37.5pp** — that is the
-**worst pass, not the headline**; we carry the paired mean (≈ −17pp) everywhere and cite the
-dramatic pass only as the upper end of the spread. (Even on the paired −17pp, CaMeL's
-**+18.8pp** o4-mini-high banking cost is ahead — moving off −37.5 does not change the
+**undefended** banking rate is noisy (single passes 56–87.5%; governed is the stable signal,
+50.9%, σ=5.2), so we carry the **per-pass paired cost −17.0 ± 7.2pp** (within-pass, n=7), not the
+−37.5pp from one high-undefended (87.5%) pass — that is the worst pass, not the headline. (Even
+at −17pp, CaMeL's +18.8pp o4-mini-high banking cost is ahead, so the choice doesn't change the
 conclusion.)
 
-*Caption — what the banking cost is, and how §6.3 splits it.* **Two different counts that
-must not be conflated:** (i) the **per-pass denial count fluctuates 3–5** (a denial only
-fires when the model actually reaches an egress sink, so a given pass realizes whichever
-subset it gets to — a per-pass count, not a structural total); (ii) the **structural
-partition is defined over all 16 tasks, independent of any pass.** Structurally the
-generic over-block (paired ≈ −17pp) decomposes into **two** partitions: (a) a **known-payee read-derived
-partition** — recipient read-derived *and* an allowlisted known payee — **4 tasks {3, 4, 6,
-15}** (strict prompt∩read value-coincidence subset = {3, 4, 6}), which the §6.3
-`enum`-supersession **lifts at the gate** (+25pp deterministic upper bound); plus (b) a
-**one-off shared-channel partition** — payee present *only* in an untrusted file with no
-known-payee entry — **2 tasks {0, 2}** (bill/landlord), which **stays with CaMeL** (config
-cannot pre-enumerate a one-off payee). So the 6 structural tasks (4 + 2) and the 3–5 per-pass
-denials are *different quantities*; the paired **≈ −17pp** is the **generic, pre-supersession** cost, and
-§6.3 reports what the gate lift recovers (and the third, model-gated *realized* number).
+The ≈ −17pp is the **generic, pre-supersession** cost (the "denials" column is a per-pass
+count, 3–5, not a structural total). §6.3 splits this cost into a recoverable known-payee
+partition and a one-off shared-channel residual, and reports what a deployment allowlist
+recovers; Appendix D has the task-level breakdown.
 
 **The load-bearing, honest finding: the cost is *localized to the shared-channel
 partition*, not universal.** axor pays a real cost where the legitimate egress argument is
@@ -519,28 +505,19 @@ read from an untrusted source (banking ≈ −17 ± 7pp paired, slack ≈ −38p
 **exactly 0 (zero denials) where the legitimate recipient is prompt-given (travel)**. Cost =
 (tasks the model can do) ∩ (egress derived from an untrusted read).
 
-**Two corrections to retire (both were weak-model artifacts — do not reuse them):**
-- *"slack = zero cost"* is **dead**. That 47.6% → 47.6% was on **Qwen**, which fails the
-  shared-channel tasks anyway, so there was nothing to block. On o4-mini, which *completes*
-  them undefended (85.7%), the gate's block costs a real −38pp. The governed floor (~47.6%)
-  is the prompt-driven partition (model-independent); the **cost grows with model
-  capability** on the shared-channel partition. Only **travel's 0 is structural** (egress
-  from the prompt) and robust across models — that is the one transparency claim that
-  survives.
-- The integrity-axis "preserved utility is a property of the taxonomy, not the model" line
-  is **wrong as stated** — the cost *does* scale with the model (Qwen ~0, o4-mini −38pp).
-  State it correctly: the *partition* is taxonomy-fixed; the *cost on it* scales with how
-  many of those tasks a stronger model can actually complete.
+**One correction to retire (a weak-model artifact — do not reuse):** *"slack = zero cost"* is
+**dead**. The 47.6% → 47.6% was on **Qwen**, which fails the shared-channel tasks anyway, so
+there was nothing to block; on o4-mini, which *completes* them undefended (85.7%), the same
+block costs a real −38pp. The correct statement: the *partition* is taxonomy-fixed, but the
+*cost on it scales with model capability* (Qwen ~0 → o4-mini −38pp on slack). Only **travel's 0
+is structural** (prompt-given egress) and robust across models.
 
-Decompose the lost banking tasks into the **two partitions** of the caption above
-(known-payee read-derived, lifted by supersession / one-off shared-channel, stays with
-CaMeL) — this is exactly where a content ledger is weaker than CaMeL's structural provenance
-(§6.3), and the gap *widens* on a capable model. (An earlier draft split this into "three
-mechanisms" with a separate *whole-args fallback* bucket for task 15; §6.3 retired that —
-task 15 is a read-derived known-payee egress in partition (a), not a third mechanism.) The **confidentiality (sound floor)** axis is deliberately not a row here —
-it is a structural property (Appendix A-floor, §5.5), and the stock travel suite does not
-exercise it (0 floor denials in the o4-mini run; the floor never armed because benign
-travel tasks don't read-secret-then-egress and o4-mini resisted the overt injection).
+The banking cost is exactly where a content ledger is weaker than CaMeL's structural
+provenance, and the gap *widens* on a capable model (§6.3 / Appendix D). The
+**confidentiality (sound floor)** axis is deliberately not a row here — it is a structural
+property (Appendix A-floor, §5.5), and the stock travel suite does not exercise it (0 floor
+denials in the o4-mini run; the floor never armed because benign travel tasks don't
+read-secret-then-egress and o4-mini resisted the overt injection).
 
 **6.3 CaMeL comparison — the *same kind* of claim, and CaMeL is ahead on utility.** axor
 and CaMeL report the **same type of result** — a *structural* guarantee plus its *measured
