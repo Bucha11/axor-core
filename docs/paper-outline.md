@@ -35,7 +35,7 @@ Haoyu's three asks, mapped to sections:
      Non-Interference theorem (K4)**, with an explicit chain from a concrete
      agentic attack → taint analysis → the non-interference guarantee — §5.
   3. **Empirical validation on AgentDojo**, framed as CaMeL frames it — a **structural
-     guarantee at a measured utility cost** (capable model, o4-mini: banking ≈−37.5pp,
+     guarantee at a measured utility cost** (capable model, o4-mini: banking ≈−17 ± 7pp paired,
      slack −38pp, travel 0pp), *not* a headroom-dependent ASR-delta that vanishes on a
      robust model. Reported honestly: the cost is localized to the shared-channel partition,
      **CaMeL is ahead on utility there, and axor does not beat it**. axor's contribution is
@@ -476,42 +476,45 @@ benign utility?** Measured per suite on the *benign* task list:
 
 Measured on **o4-mini** (a capable CaMeL-v2 backbone), full CAMEL_MODE, ASR 0% everywhere
 (it resists on its own — the headroom-dark case the cost axis exists for). The banking row is
-**one representative pass** (undefended is noisy — see caveat); slack/travel as observed:
+the **7-pass paired mean** (the stable, defensible number; undefended is noisy — see caveat);
+slack/travel are single observed runs:
 
-| suite (full) | benign undef → gov | cost | denials | mechanism |
+| suite | benign undef → gov | cost | denials | mechanism |
 |---|---|---|---|---|
-| **banking** † | 87.5% → 50.0% | **≈ −37.5pp** | 3–5/pass (this pass: 5) | shared channel — payee read from an untrusted source |
-| **slack** | 85.7% → 47.6% | **−38.1pp** | 15 (egress sinks) | shared channel — post derived from channel reads |
-| **travel** | 65.0% → 65.0% | **0pp** | **0** | egress recipient comes from the **prompt**, not a read |
+| **banking** (paired, n=7) | 67.9% → 50.9% | **≈ −17 ± 7pp** | 3–5/pass | shared channel — payee read from an untrusted source |
+| **slack** (single run) | 85.7% → 47.6% | **−38.1pp** | 15 (egress sinks) | shared channel — post derived from channel reads |
+| **travel** (single run) | 65.0% → 65.0% | **0pp** | **0** | egress recipient comes from the **prompt**, not a read |
 
-† *representative single pass; read the banking numbers via the caveat + paired run (§6.3).*
-
-*Caveat on the banking row:* o4-mini's **undefended** benign rate is unstable across runs
-(87.5% here, 68.8% / 62.5% / ~70% mean over the 14-pass paired run — pure sampling variance
-on n=16); the **governed** rate is the stable signal (generic ~51%, σ=5.2 over 7 passes).
-Read banking as "≈ −37.5pp, undefended noisy"; cite the paired run (§6.3) and per-task
-losses, not a single absolute.
+*Caveat on the banking row — carry the paired number, not the dramatic single pass.* o4-mini's
+**undefended** benign rate is unstable across runs (single passes seen at 56–87.5%, **mean
+67.9% over the 7 generic-section passes** / 69.7% over all 14 — pure sampling variance on n=16);
+the **governed** rate is the stable signal (generic 50.9%, σ=5.2). The **per-pass paired cost
+is −17.0 ± 7.2pp** (computed within-pass, same method as the +13.4pp realized recovery in §6.3).
+An earlier single pass with an unusually high 87.5% undefended gave **−37.5pp** — that is the
+**worst pass, not the headline**; we carry the paired mean (≈ −17pp) everywhere and cite the
+dramatic pass only as the upper end of the spread. (Even on the paired −17pp, CaMeL's ≈0/+4%
+banking cost is ahead — moving off −37.5 does not change the conclusion.)
 
 *Caption — what the banking cost is, and how §6.3 splits it.* **Two different counts that
 must not be conflated:** (i) the **per-pass denial count fluctuates 3–5** (a denial only
 fires when the model actually reaches an egress sink, so a given pass realizes whichever
-subset it gets to — "5" above is one pass, not a structural total); (ii) the **structural
-partition is defined over all 16 tasks, independent of any pass.** Structurally the −37.5pp
-generic over-block decomposes into **two** partitions: (a) a **known-payee read-derived
+subset it gets to — a per-pass count, not a structural total); (ii) the **structural
+partition is defined over all 16 tasks, independent of any pass.** Structurally the
+generic over-block (paired ≈ −17pp) decomposes into **two** partitions: (a) a **known-payee read-derived
 partition** — recipient read-derived *and* an allowlisted known payee — **4 tasks {3, 4, 6,
 15}** (strict prompt∩read value-coincidence subset = {3, 4, 6}), which the §6.3
 `enum`-supersession **lifts at the gate** (+25pp deterministic upper bound); plus (b) a
 **one-off shared-channel partition** — payee present *only* in an untrusted file with no
 known-payee entry — **2 tasks {0, 2}** (bill/landlord), which **stays with CaMeL** (config
 cannot pre-enumerate a one-off payee). So the 6 structural tasks (4 + 2) and the 3–5 per-pass
-denials are *different quantities*; "−37.5pp" is the **generic, pre-supersession** figure, and
+denials are *different quantities*; the paired **≈ −17pp** is the **generic, pre-supersession** cost, and
 §6.3 reports what the gate lift recovers (and the third, model-gated *realized* number).
 
 **The load-bearing, honest finding: the cost is *localized to the shared-channel
-partition*, not universal.** axor pays ~−38pp where the legitimate egress argument is read
-from an untrusted source (banking/slack) and **exactly 0 (zero denials) where the
-legitimate recipient is prompt-given (travel)**. Cost = (tasks the model can do) ∩ (egress
-derived from an untrusted read).
+partition*, not universal.** axor pays a real cost where the legitimate egress argument is
+read from an untrusted source (banking ≈ −17 ± 7pp paired, slack ≈ −38pp single-run) and
+**exactly 0 (zero denials) where the legitimate recipient is prompt-given (travel)**. Cost =
+(tasks the model can do) ∩ (egress derived from an untrusted read).
 
 **Two corrections to retire (both were weak-model artifacts — do not reuse them):**
 - *"slack = zero cost"* is **dead**. That 47.6% → 47.6% was on **Qwen**, which fails the
@@ -560,8 +563,8 @@ in print). The bullets below are the supporting detail behind it. Be precise:
   axor does not beat it anywhere. State this plainly.** (The earlier "inverted profiles,
   axor strictly cheaper on slack" was a **Qwen artifact** and is retracted — on o4-mini
   slack cost is −38pp, not ≈0.)
-  - **banking**: axor **≈ −37.5pp** vs CaMeL **≈ 0 / +4%** → CaMeL ahead. The −37.5pp
-    *partitions* (next bullet): an `enum` allowlist + supersession deterministically lifts
+  - **banking**: axor **≈ −17 ± 7pp** (paired, n=7; worst single pass −37.5) vs CaMeL
+    **≈ 0 / +4%** → CaMeL ahead. The cost *partitions* (next bullet): an `enum` allowlist + supersession deterministically lifts
     the **gate** over-block on the **known-payee read-derived** partition (4 tasks, +25pp
     *upper bound*; +13.4 ± 9.1pp realized on the same population, 7 paired passes); the
     **genuine shared-channel** half (one-off payee read only from a file) stays with CaMeL. So
@@ -630,7 +633,7 @@ in print). The bullets below are the supporting detail behind it. Be precise:
   realized set is **{3, 4, 15}** (model-completed) ⊂ the gate set **{3, 4, 6, 15}** (gate-lifted)
   — a clean subset, *one* population, not the cross-population "+13.4 below +18.75" the
   previous draft implied. **Report the three commensurable numbers together: generic over-block
-  −37.5pp (pre-supersession) → gate ceiling +25pp (deterministic upper bound, {3,4,6,15}) →
+  −17 ± 7pp (pre-supersession, paired) → gate ceiling +25pp (deterministic upper bound, {3,4,6,15}) →
   realized +13.4 ± 9.1pp (measured, {3,4,15}).**
   - **The ± is wide — say so.** ±9.1pp over 7 passes is a broad interval (≈ +4 to +23pp): the
     realized effect is **positive in every pass** (min paired diff +0.0, never negative) but
@@ -750,7 +753,7 @@ not belong in this paper.)
   interpreter between model and tools; **stronger guarantee and more utility**, heavier
   integration. Axor = a gate in front of an *unmodified* loop. **Comparison caveat (carry
   from §6.3, measured on o4-mini):** CaMeL is **ahead on utility** — banking CaMeL ≈0 vs
-  axor −37.5pp generic. But that gap is **not monolithic**: it splits into a
+  axor ≈ −17 ± 7pp generic (paired, n=7). But that gap is **not monolithic**: it splits into a
   known-payee read-derived half, which axor's `enum`-supersession **lifts at the gate** (+25pp
   deterministic upper bound over 4 tasks; +13.4 ± 9.1pp realized on the same population over 7
   paired passes), and a genuine one-off shared-channel half (payee only in an untrusted read),
@@ -834,8 +837,8 @@ Execution governance as a *framework-agnostic layer* with a *secure-by-design*
 core: framing-invariant defense from a non-interference theorem whose conditionality is
 stated, localized (the fuzzing fraction), and pinned to regressions — validated on
 AgentDojo as a **structural guarantee at a measured utility cost**, reported honestly: the
-cost is localized to the shared-channel partition (≈−38pp on banking/slack on a capable
-model, 0 where egress is prompt-driven), where **CaMeL's heavier interpreter is ahead on
+cost is localized to the shared-channel partition (banking ≈−17 ± 7pp paired, slack ≈−38pp,
+on a capable model; 0 where egress is prompt-driven), where **CaMeL's heavier interpreter is ahead on
 utility and axor does not beat it**. A sound `enum`-supersession rule deterministically
 lifts the gate over-block on the known-payee read-derived partition (a +25pp gate-level upper
 bound over 4 tasks) where an operator can enumerate trusted destinations; its *realized*
@@ -891,7 +894,7 @@ utility cost is the honest price. Agents should not self-govern execution.
 2. Trust-ring diagram + three-interface adapter seam (§4).
 3. The attack → taint → theorem chain as a single diagram (§5.2) — the conceptual core.
 4. **The primary figure: measured utility cost across suites (o4-mini)** (§6.2 — banking
-   −37.5pp generic, slack −38pp, travel 0pp) with the CaMeL cost overlaid (banking ≈0, slack
+   ≈ −17 ± 7pp paired generic, slack −38pp, travel 0pp) with the CaMeL cost overlaid (banking ≈0, slack
    ≈−30s, travel ≈0) — shows the cost is localized to the shared-channel partition. Caption
    the banking bar honestly: **CaMeL ahead on the one-off shared-channel half; axor lifts the
    known-payee read-derived half at the gate** (+25pp upper bound / +13.4 ± 9.1pp realized) —
@@ -936,7 +939,7 @@ before, not during, the draft.**
   honesty and the real answer to Haoyu's "motivation for adoption."
 - **Headline / example roles — RESOLVED:** §2 illustrative = **banking** (clean gate-walk);
   the §6 *primary* result = the cross-suite **cost-of-guarantee** table (o4-mini: banking
-  −37.5pp, slack −38pp, travel **0pp**). **travel is the transparent instance** (egress
+  ≈ −17 ± 7pp paired, slack −38pp, travel **0pp**). **travel is the transparent instance** (egress
   from the prompt), not slack — the old "slack zero-cost" was a Qwen artifact and is
   retracted (§6.2/§6.3). (Supersedes the earlier "open with banking" and "§6 headline =
   slack ASR-delta" notes.)

@@ -57,20 +57,26 @@ overclaims** that were artifacts of a weak model (Qwen).
 
 | suite | benign undef → gov | utility cost | retention | benign denials | ASR (u/g) |
 |---|---|---|---|---|---|
-| **banking** | 87.5% → 50.0% | **−37.5pp** | 57.1% | 5 (`send_money`) | 0% / 0% |
-| **slack** | 85.7% → 47.6% | **−38.1pp** | 55.6% | 15 (egress sinks) | 0% / 0% |
-| **travel** | 65.0% → 65.0% | **0pp** | 100.0% | 0 | 0% / 0% |
+| **banking** (paired, n=7) | 67.9% → 50.9% | **≈ −17 ± 7pp** | ~75% | 3–5/pass | 0% / 0% |
+| **slack** (single run) | 85.7% → 47.6% | **−38.1pp** | 55.6% | 15 (egress sinks) | 0% / 0% |
+| **travel** (single run) | 65.0% → 65.0% | **0pp** | 100.0% | 0 | 0% / 0% |
 
-(Total spend on o4-mini for the three full CAMEL_MODE runs: ~$9 via OpenRouter; ASR is 0
-everywhere because o4-mini resists the overt injections on its own — the headroom-dark
-case, which is exactly why the cost axis, not ASR-delta, is the load-bearing measurement.)
+**Banking carries the 7-pass paired mean (−17.0 ± 7.2pp), not the dramatic single pass.** An
+earlier single run was 87.5% → 50.0% = −37.5pp, but its 87.5% undefended is the high end of a
+noisy distribution (single passes 56–87.5%, paired undefended mean **67.9%** over 7 passes /
+69.7% over 14); governed is the stable signal (50.9%, σ=5.2). The per-pass paired cost is
+**−17.0 ± 7.2pp** (same within-pass method as the +13.4pp realized recovery below). We carry
+−17pp as the headline and treat −37.5pp as the **worst pass**, not the result. (Total spend on
+o4-mini: ~$9 for the three initial CAMEL_MODE runs + ~$4.31 for the 7-pass paired banking
+study; ASR is 0 everywhere because o4-mini resists the overt injections on its own — the
+headroom-dark case, which is why the cost axis, not ASR-delta, is load-bearing.)
 
 **What this shows, stated honestly:**
 
 1. **The utility cost is *localized to the shared-channel partition*, not universal.** It
-   is ~−38pp on banking and slack (the legitimate egress argument is read from an
-   untrusted source — a transaction file, a channel message) and **exactly 0 on travel
-   (0 denials), because travel's legitimate egress recipient comes from the user's
+   is real where the legitimate egress argument is read from an untrusted source — a
+   transaction file, a channel message (banking ≈ −17 ± 7pp paired, slack ≈ −38pp single-run)
+   — and **exactly 0 on travel (0 denials), because travel's legitimate egress recipient comes from the user's
    prompt, not an untrusted read.** Cost = (tasks the model can do) ∩ (egress derived
    from an untrusted read).
 
@@ -86,7 +92,7 @@ case, which is exactly why the cost axis, not ASR-delta, is the load-bearing mea
 3. **Versus CaMeL on a capable model, axor does not win on utility with a *generic*
    config — but the banking over-block is *recoverable* with a decidable deployment
    config (see "Recovering the banking cost" below).** With the generic banking taxonomy,
-   CaMeL v2 banking cost ≈ 0/+4% vs axor −37.5pp (CaMeL's structural provenance
+   CaMeL v2 banking cost ≈ 0/+4% vs axor ≈ −17 ± 7pp paired (CaMeL's structural provenance
    distinguishes a prompt-bound recipient from a quarantine-derived one; axor's
    content-derivation ledger cannot, so it over-blocks the value-coincidence cases). On
    slack both pay comparably (axor −38pp, CaMeL −24…−43pp); on travel both are ~free.
@@ -197,9 +203,11 @@ benign fails (undef out of 14, generic/tuned out of 7):
   realized effect is **positive in every pass** (min paired diff +0.0, never negative) but its
   *magnitude* is not tightly bounded. Report +13.4 ± 9.1 as evidence the gate lift is **not
   purely cosmetic**, not as a precise utility figure.
-- **Three commensurable numbers, reported together:** generic over-block **−37.5pp**
-  (pre-supersession) → gate ceiling **+25pp** (deterministic upper bound, {3,4,6,15}) →
-  realized **+13.4 ± 9.1pp** (measured, {3,4,15}). The broader lesson: enum-supersession
+- **Three commensurable numbers, reported together:** generic over-block **−17 ± 7pp**
+  (pre-supersession, paired; worst single pass −37.5) → gate ceiling **+25pp** (deterministic
+  upper bound, {3,4,6,15}) → realized **+13.4 ± 9.1pp** (measured, {3,4,15}). As a cross-check
+  these compose: undef → −17pp → generic → +13.4pp → tuned leaves a net tuned cost ≈ −4 to −7pp
+  vs undefended (paired tuned cost measured −7.2 ± 11.8pp), consistent within noise. The broader lesson: enum-supersession
   recovers *any* read-derived egress to an allowlisted known payee (broader than strict
   value-coincidence), but realized utility is capped by whether the model completes the
   lifted task at all.
