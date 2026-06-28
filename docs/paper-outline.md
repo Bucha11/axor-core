@@ -48,10 +48,11 @@ Haoyu's three asks, mapped to sections:
      kernel refuses the latter; soundness is by construction — the allowlist is a static
      operator config, never populated from a runtime read, so the codomain is
      attacker-inaccessible). With a legitimate approved-payee allowlist it
-     **deterministically lifts the gate over-block on the value-coincidence partition** (3
-     banking tasks, a +18.75pp *gate-level ceiling*) at no security cost; the genuine
+     **deterministically lifts the gate over-block on the value-coincidence partition**
+     (3/16 banking tasks, a +18.75pp *gate-level ceiling*) at no security cost; the genuine
      shared-channel partition stays with CaMeL. **Honest scope:** the gate ceiling is
-     deterministic; the *realized* benchmark utility is unconfirmed (noise-limited, §6.3).
+     deterministic; the *realized* benchmark utility, now measured over 7 paired o4-mini
+     passes, is **+13.4 ± 9.1pp** — below the ceiling and noise-limited (§6.3).
      Supporting, not the headline (§5.4 is the headline).
 - **Novelty arbitration (one headline, decided — a reviewer will ask "which is *the*
   contribution?").** The **single headline novelty is contribution 2's perimeter
@@ -480,9 +481,22 @@ Measured on **o4-mini** (a capable CaMeL-v2 backbone), full CAMEL_MODE, ASR 0% e
 | **travel** | 65.0% → 65.0% | **0pp** | **0** | egress recipient comes from the **prompt**, not a read |
 
 *Caveat on the banking row:* o4-mini's **undefended** benign rate is unstable across runs
-(87.5% here, 68.8% / 62.5% in a later paired run — pure sampling variance on n=16); the
-**governed** rate is the stable signal (~50%). Read banking as "≈ −37.5pp, undefended
-noisy"; cite the paired run (§6.3) and per-task losses, not a single absolute.
+(87.5% here, 68.8% / 62.5% / ~70% mean over the 14-pass paired run — pure sampling variance
+on n=16); the **governed** rate is the stable signal (generic ~51%, σ=5.2 over 7 passes).
+Read banking as "≈ −37.5pp, undefended noisy"; cite the paired run (§6.3) and per-task
+losses, not a single absolute.
+
+*Caption — what the banking cost is, and how §6.3 splits it (the bridge `5 → partition`).*
+The denial count is **not a fixed monolith** (it fluctuates 3–5 across passes — a denial
+only fires when the model actually reaches an egress sink). What is fixed is the *structure*
+of the cost: the −37.5pp generic over-block decomposes into (a) a **value-coincidence
+partition** — recipient named in the prompt *and* also present in an untrusted read (tasks
+3, 4, 6) — which the §6.3 `enum`-supersession **lifts at the gate** (+18.75pp deterministic
+ceiling), plus (b) a **genuine shared-channel partition** — payee present *only* in an
+untrusted file (tasks 0, 2; one-off bill/landlord), which **stays with CaMeL** (config
+cannot pre-enumerate a one-off payee). So "−37.5pp" is the **generic, pre-supersession**
+figure; §6.3 reports what the gate lift recovers (and where the *realized* benchmark utility
+lands, which is a third, model-gated number — see §6.3).
 
 **The load-bearing, honest finding: the cost is *localized to the shared-channel
 partition*, not universal.** axor pays ~−38pp where the legitimate egress argument is read
@@ -538,7 +552,7 @@ in print). The bullets below are the supporting detail behind it. Be precise:
   - **banking**: axor **≈ −37.5pp** vs CaMeL **≈ 0 / +4%** → CaMeL ahead. The −37.5pp
     *partitions* (next bullet): an `enum` allowlist + supersession deterministically lifts
     the **gate** over-block on the **value-coincidence** partition (3 tasks, +18.75pp
-    *ceiling*; realized utility unconfirmed); the **genuine shared-channel** half (payee read
+    *ceiling*; +13.4 ± 9.1pp realized, 7 paired passes); the **genuine shared-channel** half (payee read
     only from a file) stays with CaMeL. So axor lifts the gate block on part of the gap; it
     does not close it.
   - **slack** (multi-step): axor **−38.1pp** vs CaMeL **≈ −24 to −43pp** → **comparable.**
@@ -557,7 +571,9 @@ in print). The bullets below are the supporting detail behind it. Be precise:
   destination not in the set; the confidentiality floor is *not* superseded). **Soundness
   condition (T4, §5.4): predicate codomain ⊆ trusted values the attacker cannot choose** —
   `enum` qualifies, `numeric_range` does **not** (open codomain); the kernel refuses to
-  supersede on it. **Soundness is by construction:** the allowlist is a **static operator
+  supersede on it — pinned by `test_numeric_range_does_not_supersede_open_codomain` (the
+  T4 soundness regression, named in the Appendix A crosswalk beside O1/O2/O3/T0). **Soundness
+  is by construction:** the allowlist is a **static operator
   config, not populated from any runtime read, so the enum codomain is attacker-inaccessible
   by construction** — an attacker controlling an untrusted read can never add an IBAN to the
   trusted set (a static invariant, stronger than a runtime origin-filter). And it is
@@ -574,15 +590,33 @@ in print). The bullets below are the supporting detail behind it. Be precise:
   a *fabricated* read, inflating 3→4/+18.75→+25pp; corrected. Pinned by
   `test_value_coincidence_recovery_structural_not_cherry_picked`. The genuine shared-channel
   tasks (payee read only from a file) are **NOT** recovered, and **CaMeL stays ahead there**.
-- **"Ceiling at the gate" ≠ "realized utility" — and the benchmark runs did not confirm
-  realization (a methodology failure, not a null effect).** The +18.75pp means the gate stops
-  *denying* those 3 transfers; it does **not** prove the model *completes* the tasks. The
-  paired benchmark numbers were muddy (tuned-governed 43.8 / 62.5 / 62.5 vs generic ~50,
-  sometimes *below* generic) because we compared **two separate o4-mini runs** whose
-  completion variance (±~25pp on n=16) exceeds a 3-task signal; the right design evaluates
-  **one trajectory through both governors**. So state it precisely everywhere: **gate ceiling
-  clean and deterministic (+18.75pp); realized benchmark utility unconfirmed (noise-limited)**
-  — do *not* let "recovered" read as "utility returned".
+- **"Ceiling at the gate" ≠ "realized utility" — now measured, and the two land on
+  *partly different task sets*.** The +18.75pp means the gate stops *denying* the 3
+  value-coincidence transfers; it does **not** prove the model *completes* the tasks.
+  A proper **paired** measurement (7 passes, generic-gov vs tuned-gov as paired conditions,
+  o4-mini, benign-only) gives **realized recovery = +13.4 ± 9.1pp** (generic 50.9% → tuned
+  64.3%; paired per-pass diffs +12.6/+12.4/+6.3/+31.2/+0.0/+12.5/+18.8). It sits **below the
+  +18.75pp gate ceiling**, and — importantly — the **realized set {3, 4, 15} is not the
+  ceiling set {3, 4, 6}**:
+  - **Task 6 is in the ceiling but realizes nothing:** o4-mini fails it **14/14 even
+    undefended** (a hard scheduled-transaction task). The gate lift is real; the model
+    cannot convert it. This is "ceiling ≠ realized" with a named cause.
+  - **Task 15 is *not* in the strict value-coincidence ceiling, yet it realizes:** generic
+    denies it 7/7, tuned recovers it 0/7. Its prompt-named recipient (the new landlord
+    `US133…`) is *not* read-derived (correctly excluded as the anti-cherry-pick control),
+    but task 15 *also* says "refund that 10.00 from my friend" **without naming the IBAN** —
+    so the model reads `GB29…` from history. That **read-only friend-refund** is recovered
+    because `GB29…` is an allowlisted *known payee* (from tasks 3/4). (This refines the
+    earlier "task 15 = whole-args fallback" note: on o4-mini the recovered block is the
+    `GB29…` refund — the recipient-enum lifts it, which a whole-args fallback could not be.)
+  - **Net:** two effects of opposite sign (task 6 lifts-but-doesn't-realize; task 15
+    realizes-but-isn't-in-the-strict-ceiling) **partially cancel**, which is *why* realized
+    (+13.4) sits just under ceiling (+18.75). State all three numbers, never collapse them:
+    **gate ceiling +18.75pp (deterministic, set {3,4,6}); realized +13.4 ± 9.1pp (measured,
+    set {3,4,15}); generic over-block −37.5pp (pre-supersession).** The honest reading: the
+    enum-supersession recovers *any* read-derived egress to an allowlisted known payee —
+    broader than strict value-coincidence — but realized utility is capped by whether the
+    model completes the lifted task at all.
 - **The asymmetry to own honestly — CaMeL is ahead on the shared-channel partition.** CaMeL
   v2's utility *rises* on smarter models (o3 ≈ +10% vs o1). enum-supersession deterministically
   lifts the gate over-block on the value-coincidence partition (+18.75pp ceiling) where the
@@ -614,8 +648,9 @@ mechanism illustration, never a bare "governance raises utility.")
 blunt: **CaMeL gives more utility (§6.3) and axor does not beat it.** The enum-supersession
 rule deterministically lifts the gate over-block on the value-coincidence partition (a
 +18.75pp **gate-level ceiling**, §6.3) where the operator can enumerate payees, but (a) the
-**realized** benchmark utility of that lift is unconfirmed (model noise), and (b) the
-genuine shared-channel partition stays with CaMeL. So axor's case is **not** utility; it is
+**realized** benchmark utility of that lift is **+13.4 ± 9.1pp** (7 paired passes) — below
+the ceiling and noise-limited, not a clean win — and (b) the genuine shared-channel
+partition stays with CaMeL. So axor's case is **not** utility; it is
 **lower adoption cost at comparable-or-somewhat-lower utility**:
 
 - **axor is a gate in front of an *unmodified* agent loop** — you keep your existing
@@ -693,10 +728,14 @@ not belong in this paper.)
   interpreter between model and tools; **stronger guarantee and more utility**, heavier
   integration. Axor = a gate in front of an *unmodified* loop. **Comparison caveat (carry
   from §6.3, measured on o4-mini):** CaMeL is **ahead on utility** — banking CaMeL ≈0 vs
-  axor −37.5pp (structural provenance beats a content ledger on value-coincidence),
-  comparable on slack (both ~−38pp), tie on travel (both ~free). Axor does **not** win on
-  utility anywhere on a capable model; its case is *adoption cost* (drop-in, framework-
-  agnostic, any model), not utility. Axor's integrity axis is a content ledger
+  axor −37.5pp generic. But that gap is **not monolithic**: it splits into a
+  value-coincidence half, which axor's `enum`-supersession **lifts at the gate** (+18.75pp
+  deterministic ceiling; +13.4 ± 9.1pp realized over 7 paired passes), and a genuine
+  shared-channel half (payee only in an untrusted read), where **CaMeL is ahead** because its
+  structural provenance keeps the read-derived payee axor's content ledger cannot. Slack is
+  comparable (both ~−38pp), travel a tie (both ~free). Axor does **not** win on utility
+  globally on a capable model; its case is *adoption cost* (drop-in, framework-agnostic, any
+  model), not utility. Axor's integrity axis is a content ledger
   (sound-to-deny, paraphrase residual); the confidentiality floor is the sound,
   paraphrase-proof part.
 - **FIDES** — shares the explicit-flow-only scope boundary (O2); axor inherits the same
@@ -777,7 +816,8 @@ model, 0 where egress is prompt-driven), where **CaMeL's heavier interpreter is 
 utility and axor does not beat it**. A sound `enum`-supersession rule deterministically
 lifts the gate over-block on the value-coincidence partition (a +18.75pp gate-level ceiling)
 where an operator can enumerate trusted destinations; its *realized* benchmark utility is
-unconfirmed (model noise), and the shared-channel partition stays with CaMeL. axor's
+**+13.4 ± 9.1pp** (7 paired passes — below the ceiling, noise-limited), and the
+shared-channel partition stays with CaMeL. axor's
 contribution is the *adoption cost* of a guarantee that drops in front of an unmodified,
 framework-agnostic agent loop on any model — not utility. The guarantee is the value; its
 utility cost is the honest price. Agents should not self-govern execution.
@@ -788,6 +828,12 @@ utility cost is the honest price. Agents should not self-govern execution.
 
 - **A. Obligation → enforcing-test crosswalk** (kernel-theorem §5) — the credibility
   table tying every premise (O1/O2/O3/T0/T4/any-trust-model) to a named CI regression.
+  The **T4 / supersession-soundness** row is the enum-only codomain restriction: its
+  enforcing regression is `test_numeric_range_does_not_supersede_open_codomain` (kernel
+  refuses to supersede on an open codomain) paired with
+  `test_value_coincidence_recovery_structural_not_cherry_picked` (the `enum` closed-codomain
+  case lifts; attacker IBAN stays denied) and `test_confidentiality_floor_is_not_superseded`
+  (supersession is integrity-only) — all in `tests/adversarial/test_decidable_supersession.py`.
 - **A-floor. Structural demonstration of the confidentiality floor (unit-level, sits
   beside A — *not* an AgentDojo result).** This is where the sound axis is shown, framed as
   a kernel *property*, not a benchmark number (per §5.5; §6.2 explains why the stock travel
@@ -821,9 +867,11 @@ utility cost is the honest price. Agents should not self-govern execution.
 2. Trust-ring diagram + three-interface adapter seam (§4).
 3. The attack → taint → theorem chain as a single diagram (§5.2) — the conceptual core.
 4. **The primary figure: measured utility cost across suites (o4-mini)** (§6.2 — banking
-   −37.5pp, slack −38pp, travel 0pp) with the CaMeL cost overlaid (banking ≈0, slack
-   ≈−30s, travel ≈0) — shows the cost is localized to the shared-channel partition and
-   **CaMeL ahead on banking**. Integrity axis only; the confidentiality floor is a
+   −37.5pp generic, slack −38pp, travel 0pp) with the CaMeL cost overlaid (banking ≈0, slack
+   ≈−30s, travel ≈0) — shows the cost is localized to the shared-channel partition. Caption
+   the banking bar honestly: **CaMeL ahead on the shared-channel half; axor lifts the
+   value-coincidence half at the gate** (+18.75pp ceiling / +13.4pp realized) — not a flat
+   "CaMeL ahead on banking." Integrity axis only; the confidentiality floor is a
    *property*, shown separately (figure 6), not a cost row. Put the ASR-delta
    table (§6.4) *second/smaller*, captioned "where headroom exists," so layout itself
    signals which axis is load-bearing.
