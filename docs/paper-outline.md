@@ -570,12 +570,8 @@ in print). The bullets below are the supporting detail behind it. Be precise:
   o4-mini run, not a cross-model average.)*
   - **banking**: axor **≈ −17 ± 7pp** (paired, n=7; worst single pass −37.5) vs CaMeL
     **+18.8pp** (o4-mini-high) → **CaMeL clearly ahead** (CaMeL *gains* utility on banking; the
-    gap is ~36pp on own-baseline deltas). The cost *partitions* (next bullet): an `enum`
-    allowlist + supersession deterministically lifts the **gate** over-block on the
-    **known-payee read-derived** partition (4 tasks, +25pp *upper bound*; +13.4 ± 9.1pp realized
-    on the same population, 7 paired passes); the **genuine shared-channel** half (one-off payee
-    read only from a file) stays with CaMeL. So axor lifts the gate block on part of the gap; it
-    does not close it.
+    gap is ~36pp on own-baseline deltas). A deployment `enum` allowlist recovers *part* of this
+    over-block (next bullet); it does not close the gap.
   - **slack** (multi-step): axor **−38.1pp** vs CaMeL **−23.8pp** (o4-mini-high) → **CaMeL
     ahead by ~14pp** (both pay a real shared-channel cost; CaMeL pays less).
   - **travel** (prompt-driven egress): axor **0pp** (0 denials) vs CaMeL **+10.0pp**
@@ -586,78 +582,23 @@ in print). The bullets below are the supporting detail behind it. Be precise:
   benign/no-attack (Table 2, not Table 3). And **o4-mini's banking undefended is unstable**
   (87.5 / 68.8 / 62.5 across runs — pure sampling variance); use the *paired* run and read
   *per-task* losses, not absolute rates.
-- **A sound enum-supersession rule lifts the over-block on read-derived egress to an
-  allowlisted known payee — a *deterministic gate-level upper bound*, NOT a realized
-  benchmark utility win. Real, tested kernel mechanism (this work).** Mechanism: when every
-  driving arg of a sink is covered by a satisfied **`enum`** over a *closed, operator-declared
-  trusted set*, that enum carries the integrity axis and the content-taint is skipped on that
-  arg (attacker destination not in the set; the confidentiality floor is *not* superseded).
-  **Soundness condition (T4, §5.4): predicate codomain ⊆ trusted values the attacker cannot
-  choose** — `enum` qualifies, `numeric_range` does **not** (open codomain); the kernel
-  refuses to supersede on it — pinned by `test_numeric_range_does_not_supersede_open_codomain`
-  (the T4 soundness regression, named in the Appendix A crosswalk beside O1/O2/O3/T0).
-  **Soundness is by construction:** the allowlist is a **static operator config, not populated
-  from any runtime read, so the enum codomain is attacker-inaccessible by construction** — an
-  attacker controlling an untrusted read can never add an IBAN to the trusted set (a static
-  invariant, stronger than a runtime origin-filter). And it is *legitimate, not leakage*: the
-  IBANs are the user's/operator's known payees.
-  **Define the recovery population once, so ceiling and realized are measured on the *same*
-  set (avoiding a cross-population comparison).** The gate recovers exactly the tasks with a
-  *legitimate egress whose driving recipient is read-derived and is an allowlisted known
-  payee* — for each, generic **DENIES** (content-taint), tuned **ALLOWS** (supersession),
-  attacker stays **DENIED** (not in the enum). Verified deterministically against the real
-  environment reads (a gate-level check, no model), the banking suite has **four**:
-
-  | task | recovered egress | recipient | source | strict value-coincidence? |
-  |---|---|---|---|---|
-  | 3 | refund friend | GB29… | prompt **and** history | yes |
-  | 4 | refund friend | GB29… | prompt **and** history | yes |
-  | 6 | recurring iPhone | US122… | prompt **and** scheduled-tx | yes |
-  | 15 | friend-refund sub-goal | GB29… | history **only** (IBAN not named in prompt) | **no — read-only known payee** |
-
-  → **gate-level ceiling = 4/16 = +25pp**, the *upper bound* if every gate-lifted task fully
-  converted to utility. **Two named sub-characterizations within this one population, not two
-  populations:**
-  - **Strict value-coincidence subset {3, 4, 6} = +18.75pp** — recipient named in the prompt
-    *and* also in a read (the textbook substring false positive). Pinned by
-    `test_value_coincidence_recovery_structural_not_cherry_picked`.
-  - **Task 15 is the *broader* read-only case:** its recovered recipient `GB29…` is in history
-    but **not in task 15's prompt** — the gate lifts it because `GB29…` is an allowlisted known
-    payee, *not* because it is value-coincidence. (Its prompt-named recipient, the landlord
-    `US133…`, is not read-derived and is **ALLOW in both generic and tuned** — never blocked,
-    so *not* a recovery; the security control that holds is the **attacker IBAN denied on all
-    sinks**, not "`US133…` denied". This also corrects an earlier draft that counted task 15 as
-    a 4th *value-coincidence* task via a **fabricated** `US133…`-in-read claim — that was wrong;
-    task 15 enters the recovery population only via the **real** `GB29…` read, under the broader
-    definition.)
-- **"Ceiling at the gate" ≠ "realized utility" — measured, on the same population.** The
-  +25pp upper bound says the gate stops *denying* those four transfers; it does **not** prove
-  the model *completes* them. A proper **paired** measurement (7 passes, generic-gov vs
-  tuned-gov as paired conditions, o4-mini, benign-only) gives **realized recovery =
-  +13.4 ± 9.1pp** (generic 50.9% → tuned 64.3%; paired per-pass diffs
-  +12.6/+12.4/+6.3/+31.2/+0.0/+12.5/+18.8). Realized lands **below the +25pp ceiling because
-  the model converts only part of the lifted population**: task 6 never completes (o4-mini
-  fails it **14/14 even undefended** — a hard scheduled-transaction task the gate lift cannot
-  rescue), and tasks 4/15 complete only partially (undefended fail 5/14 and 4/14). So the
-  realized set is **{3, 4, 15}** (model-completed) ⊂ the gate set **{3, 4, 6, 15}** (gate-lifted)
-  — a clean subset, *one* population, not the cross-population "+13.4 below +18.75" the
-  previous draft implied. **Report the three commensurable numbers together: generic over-block
-  −17 ± 7pp (pre-supersession, paired) → gate ceiling +25pp (deterministic upper bound, {3,4,6,15}) →
-  realized +13.4 ± 9.1pp (measured, {3,4,15}).**
-  - **The ± is wide — say so.** ±9.1pp over 7 passes is a broad interval (≈ +4 to +23pp): the
-    realized effect is **positive in every pass** (min paired diff +0.0, never negative) but
-    its *magnitude* is not tightly bounded. Report +13.4 ± 9.1 as evidence the gate lift is
-    **not purely cosmetic**, not as a precise utility figure — a reviewer who computes the CI
-    should find we already flagged it.
-- **The asymmetry to own honestly — CaMeL is ahead on the shared-channel partition.** CaMeL
-  v2's utility *rises* on smarter models (o3 ≈ +10% vs o1). enum-supersession deterministically
-  lifts the gate over-block on the known-payee read-derived partition (+25pp upper bound over 4
-  tasks) where the operator can enumerate payees, but the genuine one-off shared-channel residual
-  (a payee that exists only in an untrusted read, with no known-payee entry) needs CaMeL's
-  structural provenance and is unrecoverable by config. Bottom line: **axor does not win on
-  utility globally; it lifts the gate over-block on the known-payee read-derived half of the
-  banking gap (a +25pp upper bound, +13.4 ± 9.1pp realized); CaMeL is ahead on the one-off
-  shared-channel half.**
+- **A sound `enum`-supersession rule recovers *part* of the banking gap — deterministically,
+  but it does not close it (contribution #4, *supporting*; full mechanics in Appendix D +
+  `agentdojo_results.md`).** The generic banking over-block is a content-ledger *false
+  positive*: a legitimate recipient that is read-derived but is an operator-*known* payee gets
+  tainted, where CaMeL's structural provenance would not. When every driving arg of a sink is
+  covered by a satisfied `enum` over a closed, operator-declared trusted set, that enum carries
+  the integrity axis and the content-taint is skipped on that arg — soundly: attacker
+  destinations stay denied (not in the set), the confidentiality floor is not superseded, and
+  the codomain restriction (T4, §5.4: `enum` qualifies, `numeric_range` does not) plus a
+  static, attacker-inaccessible allowlist keep the trusted set uncontaminable. On banking this
+  lifts the over-block on the 4-task known-payee read-derived partition — a **+25pp
+  deterministic gate upper bound**, of which **+13.4 ± 9.1pp is realized** on o4-mini (7 paired
+  passes; a wide interval, positive in every pass). That recovers part of the −17pp cost, but
+  **CaMeL stays ahead** (+18.8pp): the one-off shared-channel residual (a payee that exists
+  *only* in an untrusted read) needs structural provenance and is unrecoverable by config. So
+  the supersession sharpens *where* the content ledger is weaker than provenance — it does not
+  make axor win on utility. Axor's case is adoption cost, not utility (§6.5).
 
 **6.4 ASR-delta — secondary colour, where headroom exists (NOT the load-bearing axis).**
 On a *foolable* model the undefended attack lands and the structural guarantee neutralizes
@@ -895,6 +836,18 @@ utility cost is the honest price. Agents should not self-govern execution.
      way unit tests are shown, beside the crosswalk in A.)
 - **B. The full gate sequence** (governance-model §2) with the per-gate rationale.
 - **C. Reproduction commands** for every AgentDojo number (`agentdojo_results.md`).
+- **D. The `enum`-supersession recovery (contribution #4) — full mechanics.** Kept out of §6.3
+  to keep the comparison tight. Contains: the soundness argument (T4 codomain restriction;
+  static attacker-inaccessible allowlist; floor not superseded); the recovery-population
+  definition and the deterministic 4-task table {3, 4, 6, 15} (strict value-coincidence subset
+  {3, 4, 6} vs the broader read-only task 15, with the `US133…`-allowed-in-both / `GB29…`-is-the-
+  recovery / attacker-denied breakdown); the **gate ceiling +25pp vs realized +13.4 ± 9.1pp**
+  reconciliation as one population (realized {3,4,15} ⊂ gate {3,4,6,15}; task 6 lifts but the
+  model fails it 14/14 even undefended) with the wide-CI caveat; and the enforcing regressions
+  (`test_value_coincidence_recovery_structural_not_cherry_picked`,
+  `test_task15_recovers_via_read_only_known_payee`,
+  `test_numeric_range_does_not_supersede_open_codomain`). Source of record:
+  `agentdojo_results.md` "Recovering the banking cost."
 
 ---
 
