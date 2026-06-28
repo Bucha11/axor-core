@@ -455,16 +455,18 @@ susceptible-model supplement, **claude-haiku-4-5** robust contrast
 > - **Pin one CaMeL version and cite its numbers consistently** (see Questions). Default:
 >   treat our GPT-4o result as *axor's own measurement* and CaMeL as a *version-pinned,
 >   reported reference point*, never a re-run head-to-head.
-> - **The actual v2 per-suite cost (Table 2, Difference, no-attack) — use these, the
->   earlier "−27 to −30pp" was a phantom and is wrong in the worse direction.** On
->   **banking** CaMeL's cost is **≈ 0 or positive**: Claude 4 Sonnet +0.0%, Claude 4
->   Sonnet\* +6.2%, o3-high +18.8%, o4-mini-high +18.8%, Gemini 2.5 Pro −6.2%, Gemini 2.5
->   Flash −12.5% (mean ≈ **+4%**, 3/6 positive). On **slack** CaMeL's cost is **large and
->   negative**: roughly **−24 to −43pp** (Claude 4 −33.3, Gemini Pro −42.9,
->   o3/o4-mini/Claude 4\* −23.8, Gemini Flash −28.6). Do **not** write "Difference rows are
->   negative" (false on banking) and do **not** cite Table 8's **58.33%** as utility — it
->   is a *policy-trigger rate* ("rates ... when not under attack"), not utility; dropping
->   it. Read deltas from the cited version's Table 2, not the screenshot.
+> - **MODEL-MATCH the comparison: we measure only o4-mini, so cite CaMeL's *o4-mini-high*
+>   row, NOT a cross-model average.** From v2 **Table 2 (Difference, no-attack)**, the
+>   **o4 Mini High** row is: **banking +18.8 ± 1.8, slack −23.8 ± 7.6, travel +10.0 ± 1.9,
+>   workspace −7.5 ± 2.9** (overall −3.1 ± 0.4). These are the only CaMeL numbers we carry in
+>   the comparison. (The earlier "≈0/+4% banking / −24..−43 slack" was a **cross-model mean**
+>   — wrong axis: averaging CaMeL over 6 backbones while we average axor over o4-mini passes
+>   is apples-to-oranges. The per-model spread is context only — banking Difference ranges
+>   +0.0 (Claude 4) … +18.8 (o3/o4-mini) … −12.5 (Gemini Flash); slack −23.8 … −42.9 — but the
+>   number that goes in the comparison is the o4-mini-high cell.) Do **not** cite Table 5's
+>   defenses-utility row (a *different, weaker model*: CaMeL banking 75.0 / travel 25.0) as
+>   o4-mini — it is not. And do **not** cite the old "−27 to −30pp" (phantom) or Table 8's
+>   58.33% (a policy-trigger rate, not utility). Read the o4-mini-high cells of Table 2.
 
 **6.2 The guarantee and its measured cost — the PRIMARY result (lead §6 with this).**
 State the guarantee first, in §5's vocabulary: axor's gate denies by *projection*, so on
@@ -492,8 +494,9 @@ the **governed** rate is the stable signal (generic 50.9%, σ=5.2). The **per-pa
 is −17.0 ± 7.2pp** (computed within-pass, same method as the +13.4pp realized recovery in §6.3).
 An earlier single pass with an unusually high 87.5% undefended gave **−37.5pp** — that is the
 **worst pass, not the headline**; we carry the paired mean (≈ −17pp) everywhere and cite the
-dramatic pass only as the upper end of the spread. (Even on the paired −17pp, CaMeL's ≈0/+4%
-banking cost is ahead — moving off −37.5 does not change the conclusion.)
+dramatic pass only as the upper end of the spread. (Even on the paired −17pp, CaMeL's
+**+18.8pp** o4-mini-high banking cost is ahead — moving off −37.5 does not change the
+conclusion.)
 
 *Caption — what the banking cost is, and how §6.3 splits it.* **Two different counts that
 must not be conflated:** (i) the **per-pass denial count fluctuates 3–5** (a denial only
@@ -563,15 +566,21 @@ in print). The bullets below are the supporting detail behind it. Be precise:
   axor does not beat it anywhere. State this plainly.** (The earlier "inverted profiles,
   axor strictly cheaper on slack" was a **Qwen artifact** and is retracted — on o4-mini
   slack cost is −38pp, not ≈0.)
+  *(All CaMeL numbers below are the **o4-mini-high** row of v2 Table 2 — model-matched to our
+  o4-mini run, not a cross-model average.)*
   - **banking**: axor **≈ −17 ± 7pp** (paired, n=7; worst single pass −37.5) vs CaMeL
-    **≈ 0 / +4%** → CaMeL ahead. The cost *partitions* (next bullet): an `enum` allowlist + supersession deterministically lifts
-    the **gate** over-block on the **known-payee read-derived** partition (4 tasks, +25pp
-    *upper bound*; +13.4 ± 9.1pp realized on the same population, 7 paired passes); the
-    **genuine shared-channel** half (one-off payee read only from a file) stays with CaMeL. So
-    axor lifts the gate block on part of the gap; it does not close it.
-  - **slack** (multi-step): axor **−38.1pp** vs CaMeL **≈ −24 to −43pp** → **comparable.**
-  - **travel** (prompt-driven egress): axor **0pp** (0 denials); CaMeL likely also ~0 →
-    **tie / both free.**
+    **+18.8pp** (o4-mini-high) → **CaMeL clearly ahead** (CaMeL *gains* utility on banking; the
+    gap is ~36pp on own-baseline deltas). The cost *partitions* (next bullet): an `enum`
+    allowlist + supersession deterministically lifts the **gate** over-block on the
+    **known-payee read-derived** partition (4 tasks, +25pp *upper bound*; +13.4 ± 9.1pp realized
+    on the same population, 7 paired passes); the **genuine shared-channel** half (one-off payee
+    read only from a file) stays with CaMeL. So axor lifts the gate block on part of the gap; it
+    does not close it.
+  - **slack** (multi-step): axor **−38.1pp** vs CaMeL **−23.8pp** (o4-mini-high) → **CaMeL
+    ahead by ~14pp** (both pay a real shared-channel cost; CaMeL pays less).
+  - **travel** (prompt-driven egress): axor **0pp** (0 denials) vs CaMeL **+10.0pp**
+    (o4-mini-high) → **neither defense loses utility** on travel (axor costs nothing, CaMeL
+    *gains* +10pp).
   **Hard caveat — compare deltas vs each system's own baseline, never absolutes** (axor
   slack-undefended 85.7 ≠ CaMeL native-slack 95.2); verify every CaMeL delta is
   benign/no-attack (Table 2, not Table 3). And **o4-mini's banking undefended is unstable**
@@ -752,15 +761,16 @@ not belong in this paper.)
 - **CaMeL (Debenedetti et al., arXiv:2503.18813)** — security by construction via an
   interpreter between model and tools; **stronger guarantee and more utility**, heavier
   integration. Axor = a gate in front of an *unmodified* loop. **Comparison caveat (carry
-  from §6.3, measured on o4-mini):** CaMeL is **ahead on utility** — banking CaMeL ≈0 vs
-  axor ≈ −17 ± 7pp generic (paired, n=7). But that gap is **not monolithic**: it splits into a
-  known-payee read-derived half, which axor's `enum`-supersession **lifts at the gate** (+25pp
-  deterministic upper bound over 4 tasks; +13.4 ± 9.1pp realized on the same population over 7
-  paired passes), and a genuine one-off shared-channel half (payee only in an untrusted read),
-  where **CaMeL is ahead** because its
-  structural provenance keeps the read-derived payee axor's content ledger cannot. Slack is
-  comparable (both ~−38pp), travel a tie (both ~free). Axor does **not** win on utility
-  globally on a capable model; its case is *adoption cost* (drop-in, framework-agnostic, any
+  from §6.3, model-matched on o4-mini-high, v2 Table 2):** CaMeL is **ahead on utility** —
+  banking CaMeL **+18.8pp** vs axor ≈ −17 ± 7pp generic (paired, n=7). But that gap is **not
+  monolithic**: it splits into a known-payee read-derived half, which axor's `enum`-supersession
+  **lifts at the gate** (+25pp deterministic upper bound over 4 tasks; +13.4 ± 9.1pp realized on
+  the same population over 7 paired passes), and a genuine one-off shared-channel half (payee
+  only in an untrusted read), where **CaMeL is ahead** because its structural provenance keeps
+  the read-derived payee axor's content ledger cannot. Slack: axor **−38.1pp** vs CaMeL
+  **−23.8pp** (CaMeL ahead ~14pp). Travel: axor **0pp** vs CaMeL **+10.0pp** (neither loses).
+  Axor does **not** win on utility globally on a capable model; its case is *adoption cost*
+  (drop-in, framework-agnostic, any
   model), not utility. Axor's integrity axis is a content ledger
   (sound-to-deny, paraphrase residual); the confidentiality floor is the sound,
   paraphrase-proof part.
@@ -894,8 +904,9 @@ utility cost is the honest price. Agents should not self-govern execution.
 2. Trust-ring diagram + three-interface adapter seam (§4).
 3. The attack → taint → theorem chain as a single diagram (§5.2) — the conceptual core.
 4. **The primary figure: measured utility cost across suites (o4-mini)** (§6.2 — banking
-   ≈ −17 ± 7pp paired generic, slack −38pp, travel 0pp) with the CaMeL cost overlaid (banking ≈0, slack
-   ≈−30s, travel ≈0) — shows the cost is localized to the shared-channel partition. Caption
+   ≈ −17 ± 7pp paired generic, slack −38.1pp, travel 0pp) with the CaMeL **o4-mini-high** cost
+   overlaid (v2 Table 2: banking +18.8, slack −23.8, travel +10.0) — shows axor's cost is
+   localized to the shared-channel partition and CaMeL is ahead on every suite. Caption
    the banking bar honestly: **CaMeL ahead on the one-off shared-channel half; axor lifts the
    known-payee read-derived half at the gate** (+25pp upper bound / +13.4 ± 9.1pp realized) —
    not a flat "CaMeL ahead on banking." Integrity axis only; the confidentiality floor is a

@@ -91,14 +91,16 @@ headroom-dark case, which is why the cost axis, not ASR-delta, is load-bearing.)
 
 3. **Versus CaMeL on a capable model, axor does not win on utility with a *generic*
    config — but the banking over-block is *recoverable* with a decidable deployment
-   config (see "Recovering the banking cost" below).** With the generic banking taxonomy,
-   CaMeL v2 banking cost ≈ 0/+4% vs axor ≈ −17 ± 7pp paired (CaMeL's structural provenance
-   distinguishes a prompt-bound recipient from a quarantine-derived one; axor's
-   content-derivation ledger cannot, so it over-blocks the value-coincidence cases). On
-   slack both pay comparably (axor −38pp, CaMeL −24…−43pp); on travel both are ~free.
-   Honest framing with the generic config: **complementary cost profiles, CaMeL ahead on
-   banking**. But the banking gap is **not fundamental** — an approved-payee allowlist
-   (which a real bank has) plus the decidable-supersession rule recovers it to ~0 cost.
+   config (see "Recovering the banking cost" below).** Model-matched on **o4-mini-high**
+   (CaMeL v2 Table 2, Difference/no-attack — NOT a cross-model average): CaMeL banking
+   **+18.8pp** vs axor ≈ −17 ± 7pp paired (CaMeL's structural provenance distinguishes a
+   prompt-bound recipient from a quarantine-derived one; axor's content-derivation ledger
+   cannot, so it over-blocks the value-coincidence cases). On slack CaMeL pays less (axor
+   −38.1pp, CaMeL **−23.8pp**); on travel neither loses (axor 0pp, CaMeL **+10.0pp**).
+   Honest framing with the generic config: **CaMeL is ahead on every suite**. But the banking
+   gap is **not fundamental** — an approved-payee allowlist (which a real bank has) plus the
+   decidable-supersession rule recovers part of it (a +25pp gate upper bound, +13.4 ± 9.1pp
+   realized).
 
 4. **The confidentiality floor did not fire in the travel benchmark (0 denials).** The
    benign travel tasks do not read the secret (`get_user_information`) and then egress, and
