@@ -419,10 +419,12 @@ appendix — it is the paper's credibility anchor.
 > make it look *better* (CaMeL v2's utility *rose* on smarter models, e.g. o3 ≈ +10% vs
 > o1, at the same structural guarantee). What goes dark is only the ASR-delta frame.
 
-> **Canon lock (do this before writing a single number).** The authoritative figures
-> are `examples/agentdojo/agentdojo_results.md`: banking GPT-4o **60.4% → 0.0% ASR at
-> 62.5% benign utility retained**. An earlier note circulated 54%/56% — that is a stale
-> run; purge it. Every number in §6 and §2/§1 must trace to this file.
+> **Canon lock (do this before writing a single number).** The authoritative figures are
+> `examples/agentdojo/agentdojo_results.md`. **Cost axis (primary, o4-mini):** banking
+> generic **−17 ± 7pp** paired (worst single pass −37.5), slack **−38.1pp**, travel **0pp**;
+> supersession recovery **+13.4 ± 9.1pp** on banking. **ASR illustration (GPT-4o, §2/§6.4
+> only, not the cost axis):** banking **60.4% → 0.0% ASR**. An earlier note circulated 54%/56%
+> utility — stale, purge it. Every number in §6 and §2/§1 must trace to this file.
 
 > **What "baseline" means — DECISION TAKEN (option b), per the §6.3 methods statement.**
 > Our tables compare **undefended vs governed**; that is each defense's *own-baseline*
@@ -434,11 +436,15 @@ appendix — it is the paper's credibility anchor.
 > rival-defense re-run; if he was, that is weeks of interpreter work and a separate
 > decision. Until he says otherwise, the §6.3 statement stands.
 
-**6.1 Setup.** AgentDojo suites (banking, slack, workspace, travel), attack =
+**6.1 Setup.** AgentDojo suites (banking, slack, travel; workspace not run for axor), attack =
 `important_instructions` (the strongest stock injection); defense = `GovernedToolsExecutor`
 wrapping every tool call in a `ToolCallGovernor` configured by the suite's YAML taxonomy
-— *the same config a real deployment loads.* Models: **GPT-4o** primary, **Qwen-2.5-72b**
-susceptible-model supplement, **claude-haiku-4-5** robust contrast
+— *the same config a real deployment loads.* **Primary model: o4-mini** — a CaMeL-v2 backbone,
+chosen precisely so the cost comparison is **model-matched** (§6.3); the banking cost is the
+7-pass paired study. Supporting roles, each for a specific purpose, not the cost axis:
+**GPT-4o** for the illustrative self-injection example (§2, 60.4% undefended ASR) and the
+ASR-delta colour (§6.4) — CaMeL v2 has no GPT-4o counterpart, so it is axor-only; **Qwen-2.5-72b**
+susceptible-model supplement; **claude-haiku-4-5** robust-model contrast
 (`examples/agentdojo/agentdojo_results.md`).
 
 > **CaMeL-model finding — RESOLVED from the v2 PDF tables (do not write "the model
@@ -450,11 +456,14 @@ susceptible-model supplement, **claude-haiku-4-5** robust contrast
 > "only in v1"). The headline differs by version (≈67% v1 vs **≈77%** in v2's abstract,
 > *77 vs 84 undefended*; the "/75" figure is unconfirmed — drop it unless you can point to
 > a specific table cell). So:
-> - There is **no shared defended model** between our GPT-4o run and CaMeL v2. The phrase
->   "the model CaMeL measured" is only defensible against v1, and then with v1's numbers.
-> - **Pin one CaMeL version and cite its numbers consistently** (see Questions). Default:
->   treat our GPT-4o result as *axor's own measurement* and CaMeL as a *version-pinned,
->   reported reference point*, never a re-run head-to-head.
+> - **o4-mini-high IS a shared model** between our run and CaMeL v2 — that is *why* we made
+>   o4-mini the primary cost model, so the §6.3 comparison is model-matched (banking/slack/travel
+>   read off the same backbone's row). (This supersedes the earlier "no shared defended model"
+>   note, which was true only when we ran GPT-4o alone — GPT-4o has no CaMeL v2 counterpart and
+>   is now axor-only, used for the §2/§6.4 ASR illustration, never compared to CaMeL.)
+> - **Pin one CaMeL version (v2) and cite it consistently** (see Questions). CaMeL is a
+>   *version-pinned, reported reference point* (its v2 Table 2 cells), **not re-run** on our
+>   harness — own-baseline cost profiles, never a re-run head-to-head (§6.3 methods statement).
 > - **MODEL-MATCH the comparison: we measure only o4-mini, so cite CaMeL's *o4-mini-high*
 >   row, NOT a cross-model average.** From v2 **Table 2 (Difference, no-attack)**, the
 >   **o4 Mini High** row is: **banking +18.8 ± 1.8, slack −23.8 ± 7.6, travel +10.0 ± 1.9,
