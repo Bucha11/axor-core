@@ -379,12 +379,17 @@ level). They are not demonstrated the same way *on purpose* — and stating that
 stronger than pretending both live on the same benchmark table.
 
 **5.6 "Any trust model."** The kernel/trust-model factorization is enforced at the
-import level, and a substitution test re-proves non-interference + complete mediation
-under a *second* trust model with a different tainting rule
-(`tests/contracts/test_value_provenance.py`). Honest status: *demonstrated on two
-instances, not mechanized over all conforming backends* (O2 is the inductive content —
-a Coq/Lean target). Put the obligation→test crosswalk table (kernel-theorem §5) in an
-appendix — it is the paper's credibility anchor.
+import level: enforcement depends on the **`ValueProvenance`** contract
+(`axor_core/contracts/provenance.py`), not on a concrete engine, and a substitution test
+re-proves non-interference + complete mediation under a *second* trust model with a different
+tainting rule (`tests/contracts/test_value_provenance.py`). The contract's own admissible
+backends are "a content-derivation taint tracker, **a data-flow interpreter**, or a
+label-propagating tracker" — i.e. **a CaMeL-style structural-provenance backend is a conforming
+trust model** (the gate runs unchanged on top; see §6.5, where this becomes the
+"axor *hosts* provenance, not competes with it" argument). Honest status: *demonstrated on two
+instances, not mechanized over all conforming backends, and the CaMeL backend is proposed, not
+implemented* (O2 is the inductive content — a Coq/Lean target). Put the obligation→test
+crosswalk table (kernel-theorem §5) in an appendix — it is the paper's credibility anchor.
 
 ---
 
@@ -625,16 +630,36 @@ partition stays with CaMeL. So axor's case is **not** utility; it is
 - **axor is framework-agnostic** (the §4 seam); CaMeL's interpreter approach is a heavier,
   more invasive integration.
 
-So the honest pitch: *if you can adopt CaMeL (rewrite your agent, accept the interpreter)
-and want maximum utility-at-security, use CaMeL — axor does not beat it there. axor is for
-the common case where you have an existing agent you will not rewrite, across arbitrary
-frameworks, and want a structural, framing-invariant guarantee as a thin governance layer
-— at a measured utility cost on the shared-channel partition (§6.2).* **Do not claim
-parity; claim a different point on the cost/assurance/integration frontier.** (This is the
-open question for Haoyu, §1 Q-venue: is "secure-by-design governance layer, framework-
-agnostic, drop-in, honest utility cost" enough — knowing CaMeL wins on utility? If the bar
-is "best utility-at-security on AgentDojo," CaMeL already cleared it and axor should not
-contest that ground.)
+**The strongest answer to "why not just CaMeL?" is not "instead" — it is "on top of."** axor's
+enforcement is defined against a *swappable* per-value trust-model contract,
+**`ValueProvenance`** (`axor_core/contracts/provenance.py`), whose own docstring admits "a
+content-derivation taint tracker, **a data-flow interpreter**, or a label-propagating tracker"
+as conforming backends, and whose substitutability is a *tested invariant* (§5.6,
+`tests/contracts/test_value_provenance.py` re-proves non-interference + complete mediation
+under a second trust model). **A CaMeL-style structural provenance is exactly that "data-flow
+interpreter" backend:** implement `derive_value` from CaMeL's capability/provenance graph in
+place of the content-derivation ledger, and axor's gate sequence + complete mediation + the K4
+guarantee run **unchanged on top** — now closing the very one-off shared-channel residual (§6.3)
+the content ledger cannot, because the backend *knows* the read-derived payee is prompt-bound.
+That reframes CaMeL from a rival into a **pluggable provenance backend under axor's
+framework-agnostic gate**: you would get CaMeL's shared-channel coverage *and* axor's drop-in,
+any-framework, any-model gate with its structural guarantee — the gate generalizes the
+provenance line, it does not compete with it. **Honest scope (do not overclaim):** the contract
+admits such a backend and a *custom* trust model passes it in tests, but **we have not wired
+real CaMeL provenance in** — this is a *proposed integration / future direction* (§8), not a
+measured result.
+
+So the honest pitch: *if you can adopt CaMeL (rewrite your agent, accept the interpreter) and
+want maximum utility-at-security today, use CaMeL — axor does not beat it on raw utility. But
+axor is not the either/or rival it first looks like: it is the **framework-agnostic gate** for
+the common case where you will not rewrite your agent, and — by the `ValueProvenance` seam — a
+**host** that could run CaMeL-style provenance underneath. So the frontier is not "axor vs
+CaMeL on utility" but a different axis: drop-in, any-framework, any-model structural guarantee
+at a measured cost (§6.2), with a path to fold provenance in rather than choosing between them.*
+**Do not claim parity on utility; claim a different — and composable — point on the
+cost/assurance/integration frontier.** (Open question for Haoyu, §1 Q-venue: is that framing —
+including the provenance-backend path — enough for the venue, knowing CaMeL wins on raw
+AgentDojo utility today?)
 
 The motivation, restated on the right axis: **the value is the guarantee + low adoption
 cost; the metric for the guarantee is its utility cost** (§6.2), not a scoreboard that
@@ -697,10 +722,12 @@ not belong in this paper.)
   the read-derived payee axor's content ledger cannot. Slack: axor **−38.1pp** vs CaMeL
   **−23.8pp** (CaMeL ahead ~14pp). Travel: axor **0pp** vs CaMeL **+10.0pp** (neither loses).
   Axor does **not** win on utility globally on a capable model; its case is *adoption cost*
-  (drop-in, framework-agnostic, any
-  model), not utility. Axor's integrity axis is a content ledger
-  (sound-to-deny, paraphrase residual); the confidentiality floor is the sound,
-  paraphrase-proof part.
+  (drop-in, framework-agnostic, any model), not utility. Axor's integrity axis is a content
+  ledger (sound-to-deny, paraphrase residual); the confidentiality floor is the sound,
+  paraphrase-proof part. **Crucially, CaMeL is not only a rival: its structural provenance is a
+  conforming `ValueProvenance` backend (§5.6) under axor's gate** — the two compose (axor hosts
+  provenance, closing the shared-channel residual while keeping the framework-agnostic gate and
+  K4 guarantee), a *proposed* integration, not implemented (§6.5/§8).
 - **FIDES** — shares the explicit-flow-only scope boundary (O2); axor inherits the same
   honest limitation on implicit flows.
 - **Firewalls (LLM input-firewall)** — the public **T0 counterexample**: a model-produced
@@ -757,14 +784,23 @@ Pull together, as first-class content (the kernel-theorem already states these a
   **stock AgentDojo travel slice does not isolate the floor** (ASR ≈0/noisy; the live benign
   denial was integrity), so there is no benchmark floor-cost and we report none.
 
-**Future direction (one paragraph).** The integrity paraphrase residual and the fuzzing
-fraction of the perimeter (§5.4) are where a *probabilistic* predicate would help most.
-Probabilistic verification (arXiv:2606.20510, §7) shows how to admit such a predicate
-soundly — with a bounded violation probability rather than a structural guarantee. The
-clean way to fold it into axor *without* weakening K4 is to keep it **off the trusted
-path**: carry the bound on the observe-only detection→degradation surface or the advisory
-adjudicator (both tighten-only), so a fuzzy classifier can ratchet restrictions under a
-sound bound while the deterministic gates remain the only thing that can allow.
+**Future direction (one paragraph).** Two concrete extensions, both off-the-shelf given the
+existing seams. **(1) A structural-provenance trust-model backend.** The strongest residual in
+§6 is the one-off shared-channel partition (a legitimate payee that exists only in an untrusted
+read) where axor's content-derivation ledger over-blocks and CaMeL's structural provenance does
+not. Because enforcement runs against the swappable `ValueProvenance` contract (§5.6), a
+CaMeL-style data-flow/provenance backend can implement `derive_value` and slot in **under** the
+unchanged gate — closing that residual while keeping the framework-agnostic gate and the K4
+guarantee. This is the highest-value next step (it directly turns §6.3's deficit into a
+compose), and it is *unimplemented* — the contract admits it and a custom trust model passes the
+substitution test, but the CaMeL backend is not built. **(2) A sound probabilistic predicate off
+the trusted path.** The integrity paraphrase residual and the fuzzing fraction (§5.4) are where a
+*probabilistic* predicate would help; probabilistic verification (arXiv:2606.20510, §7) admits
+one soundly — a bounded violation probability rather than a structural guarantee. Fold it in
+*without* weakening K4 by keeping it **off the trusted path**: carry the bound on the observe-only
+detection→degradation surface or the advisory adjudicator (both tighten-only), so a fuzzy
+classifier can ratchet restrictions under a sound bound while the deterministic gates remain the
+only thing that can allow.
 
 ---
 
