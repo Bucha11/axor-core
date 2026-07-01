@@ -68,7 +68,11 @@ _CONFIG_DIR = os.path.join(os.path.dirname(__file__), "config")
 
 
 def make_governor() -> ToolCallGovernor:
-    cfg = GovernanceConfig.from_yaml(os.path.join(_CONFIG_DIR, f"{SUITE}.yaml"))
+    # AXOR_BENCH_CONFIG overrides the config file (default: <suite>.yaml) so a run
+    # can swap in a tuned deployment taxonomy (e.g. an approved-payee allowlist)
+    # while the suite name still selects the AgentDojo tasks.
+    cfg_name = os.environ.get("AXOR_BENCH_CONFIG", f"{SUITE}.yaml")
+    cfg = GovernanceConfig.from_yaml(os.path.join(_CONFIG_DIR, cfg_name))
     return ToolCallGovernor(**cfg.as_governor_kwargs())
 
 
@@ -130,9 +134,13 @@ if os.environ.get("AXOR_BENCH_INJECTIONS"):
 
 
 def _make_llm():
+    # Reasoning models (o3/o4-mini) spend completion budget on hidden reasoning
+    # tokens before any tool call, so 1024 can truncate them; AXOR_BENCH_MAXTOK
+    # lets a run raise the ceiling without touching the default.
+    max_tokens = int(os.environ.get("AXOR_BENCH_MAXTOK", "1024"))
     if BACKEND == "openrouter":
-        return OpenRouterLLM(model=MODEL)
-    return RawAnthropicLLM(model=MODEL)
+        return OpenRouterLLM(model=MODEL, max_tokens=max_tokens)
+    return RawAnthropicLLM(model=MODEL, max_tokens=max_tokens)
 
 
 # A model-id token AgentDojo's MODEL_NAMES recognises, so important_instructions
@@ -227,14 +235,22 @@ def main_camel() -> int:
     print(f"attack axis: {len(USER_TASKS)} user x {len(INJECTION_TASKS)} injection "
           f"= {len(USER_TASKS) * len(INJECTION_TASKS)} pairs per condition\n")
 
+    # AXOR_BENCH_BENIGN_ONLY=1 skips the (expensive) attack axis — useful for
+    # averaging the benign utility-cost over many passes cheaply (ASR is already
+    # established at 0 on a robust model).
+    benign_only = os.environ.get("AXOR_BENCH_BENIGN_ONLY") == "1"
     print("BENIGN / UNDEFENDED ...")
     ub_util, _ = run_benign(False, suite)
     print("\nBENIGN / GOVERNED ...")
     gb_util, gb_exec = run_benign(True, suite)
-    print("\nATTACK / UNDEFENDED ...")
-    ua_util, ua_asr, _ = run_condition(False, suite, ATTACK)
-    print("\nATTACK / GOVERNED ...")
-    ga_util, ga_asr, ga_exec = run_condition(True, suite, ATTACK)
+    if benign_only:
+        ua_util = ua_asr = ga_util = ga_asr = []  # _pct([]) -> nan, formats cleanly
+        ga_exec = gb_exec
+    else:
+        print("\nATTACK / UNDEFENDED ...")
+        ua_util, ua_asr, _ = run_condition(False, suite, ATTACK)
+        print("\nATTACK / GOVERNED ...")
+        ga_util, ga_asr, ga_exec = run_condition(True, suite, ATTACK)
 
     retention = 100.0 * _pct(gb_util) / _pct(ub_util) if _pct(ub_util) else float("nan")
     print("\n" + "=" * 72)

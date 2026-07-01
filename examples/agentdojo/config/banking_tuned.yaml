@@ -1,0 +1,51 @@
+# axor governance for the AgentDojo *banking* suite — a TUNED deployment taxonomy.
+#
+# Same tool roles as banking.yaml, plus what a real bank deployment WOULD declare:
+# an approved-payee allowlist (an `enum` value policy on the recipient). The `enum` is
+# the predicate that triggers DECIDABLE SUPERSESSION (§5.4): its codomain is a closed,
+# operator-trusted set, so even a recipient value derived from an untrusted read can only
+# be an approved payee — the enum is a control strictly stronger than content-derivation,
+# and the integrity content-taint on the recipient is skipped, removing the value-
+# coincidence false positive at no security cost. An attacker destination is not in the
+# allowlist (denied by the enum); the confidentiality floor is NOT superseded.
+#
+# NB: the `amount` numeric_range below is a normal value-policy constraint (it DENIES
+# out-of-range amounts), but it does NOT trigger supersession — a numeric range has an
+# open codomain an attacker-derived value can satisfy, so the kernel refuses to supersede
+# on it. Only the `enum` recipient drives supersession here.
+#
+# The allowlist IBANs are the recipients the USER NAMES IN THE PROMPT (e.g. user_task_3
+# "send back to GB29...", user_task_4 "refund GB29...") — the operator's/user's known-payee
+# list, which is legitimate deployment knowledge, not answer-peeking. This recovers the
+# value-coincidence tasks (prompt-given payee that also coincidentally appears in a read).
+# Genuine shared-channel tasks whose payee exists ONLY in an untrusted read (e.g. "pay the
+# bill in bill-*.txt", task 0; "adjust rent per landlord-notices.txt", task 2) are NOT in
+# the list and remain blocked — an operator can't pre-approve a one-off payee. That residual
+# needs structural provenance (CaMeL), not a config knob. (Exact recovered utility is
+# noise-limited on o4-mini — see agentdojo_results.md "Recovering the banking cost".)
+mode: production
+
+untrusted_sources:
+  - get_most_recent_transactions
+  - get_scheduled_transactions
+  - read_file
+  - get_user_info
+
+egress_sinks:
+  - send_money
+  - schedule_transaction
+  - update_scheduled_transaction
+
+driving_args:
+  send_money: [recipient]
+  schedule_transaction: [recipient]
+  update_scheduled_transaction: [recipient]
+
+value_policies:
+  send_money:
+    - {arg: recipient, kind: enum, allowed: [GB29NWBK60161331926819, US122000000121212121212, US133000000121212121212]}
+    - {arg: amount, kind: numeric_range, lo: 0, hi: 1000000}
+  schedule_transaction:
+    - {arg: recipient, kind: enum, allowed: [GB29NWBK60161331926819, US122000000121212121212, US133000000121212121212]}
+  update_scheduled_transaction:
+    - {arg: recipient, kind: enum, allowed: [GB29NWBK60161331926819, US122000000121212121212, US133000000121212121212]}

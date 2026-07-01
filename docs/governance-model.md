@@ -72,9 +72,28 @@ In order. Any denial is final.
 8. **Per-value taint** — the driving argument's own provenance is consulted:
    - *integrity*: an untrusted-derived value flowing into a high-risk operation
      (write outside the workspace, execute generated code, egress to an external
-     destination) is refused;
+     destination) is refused — **unless the integrity axis is superseded** (below);
    - *confidentiality*: egress is refused while the **confidentiality floor** is up
-     (see §5).
+     (see §5). The floor is **never** superseded.
+
+   **Decidable supersession of the integrity axis (enum only).** When *every* driving
+   arg of a sink is guarded by a *satisfied* `enum` value policy over a **closed,
+   operator-declared trusted set**, the integrity content-taint check on those args is
+   skipped. The soundness condition is precise: supersession is sound **iff the
+   predicate's codomain is a subset of operator-trusted values the attacker cannot
+   choose.** A finite `enum` allowlist meets this — even a value *derived from an
+   untrusted read* can only ever be one of the approved members, so the egress goes to
+   a trusted destination regardless of provenance; the content-taint check there only
+   adds the value-coincidence false positive (a prompt-given value that also appears in
+   an untrusted read). A `numeric_range` does **not** meet it — its codomain is an open
+   interval an attacker-derived value can land in — so the kernel **refuses to supersede
+   on it** (the range still *denies* out-of-range values; it just does not exempt the
+   arg from taint), exactly as it refuses to make an instruction-complete sink positional.
+   This supersedes the **integrity** axis only; the confidentiality floor still applies (a
+   secret read blocks egress even to an approved destination). It is **fail-closed**:
+   supersession requires every driving arg present *and* enum-covered — a missing driving
+   arg falls back to the whole blob, where no per-arg cover exists, so the content-taint
+   stands.
 9. **Adjudicator** (optional) — an advisory second opinion (see §6), consulted only
    on the would-approve path, so it can only *add* a deny.
 10. **Execute**, then register the output's provenance for later calls. A value
@@ -277,6 +296,14 @@ Strict refuses to construct a session whose egress sink relies on the leaky gate
 alone — the misconfiguration fails closed at construction, not at run time. In
 Library/Production the allowlist stays optional (the content-derivation gate still
 applies); Strict makes the sound control mandatory where it matters most.
+
+The allowlist is also what makes the **decidable supersession** (§2, step 8) fire:
+when a sink's driving args are fully covered by `enum`/`numeric_range` predicates,
+those carry the integrity axis and the leaky content-taint is skipped on them. So a
+destination allowlist is *both directions* — it tightens security (denies a
+paraphrased/encoded attacker destination the content gate might miss) **and**
+recovers utility (admits a legitimate destination the content gate would
+over-block as value-coincidence), at no cost to the confidentiality floor.
 
 Strict closes the symmetric source-side gap too: **every registered tool must
 carry an explicit data-flow role.** Outside Strict, a tool that is neither declared
