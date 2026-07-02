@@ -327,9 +327,17 @@ contract + an import-scan test) and **T4** (effective codomain = nominal). T4 sp
 
 - **Decidable by construction** for finite **enums** and **bounded-numeric** ranges
   consumed as case-split / numerically — two equal projections cannot be split into
-  distinct effects. Discharged by a decision procedure
-  (`axor_core/kernel/decidability.py`); a config that mis-guards a fuzz field with a
-  decidable predicate is **rejected** (`registration.py`).
+  distinct effects. Discharged by a decision procedure (`axor_core/kernel/decidability.py`:
+  `verify_enum` / `verify_bounded_numeric`). The registration guard
+  (`axor_core/kernel/registration.py::validate_value_policies`) enforces the corollary:
+  the only value predicates are `enum` / `numeric_range`, **both decidable by construction**,
+  and a predicate whose *declared projection* is not decidable is **rejected** — today that is
+  an unknown/unregistered predicate kind failing closed (the fuzz-projection reject branch is
+  present but latent: no fuzz predicate exists to hit it). Note the check keys on the
+  *predicate's* declared projection, **not** on the sink field's runtime codomain — so "you
+  cannot guard a fuzz field with a decidable predicate" holds because a fuzz *predicate* cannot
+  be **expressed**, not because a mis-typed field is detected. Pinned by
+  `tests/adversarial/test_projection_validators.py`.
 - **Fuzzing only** for **path / string-subfield / carrier-over-free-text** — the
   consumer is a rich-syntax interpreter, T4 is undecidable in general, so it stays a
   fuzzing obligation. The weird-machine class is **localized** here — and indeed both

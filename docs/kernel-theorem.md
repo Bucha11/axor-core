@@ -187,9 +187,15 @@ is case-split / numeric (not re-parsing).
 This is decidable **only because the consumption mode is a registered property of a
 finite, surveyable sink (K2)** — otherwise it would be whole-program analysis (Rice),
 undecidable. So: *T4 is a theorem for enum/bounded-numeric, conditional on K2.*
-`axor_core/kernel/registration.py` makes this load-bearing — it **rejects** a
-configuration that tries to guard a fuzz-required field with a decidable predicate
-(the silent misconfiguration that would give false assurance).
+`axor_core/kernel/registration.py` (`validate_value_policies`) makes this load-bearing — it
+**rejects** any value predicate whose *declared projection* is not decidable. The check keys on
+the predicate's projection (from `_PREDICATE_PROJECTION`), **not** on the sink field's runtime
+codomain: today the only predicates are `enum` / `numeric_range` (both decidable by
+construction), so the reachable rejection is an **unknown/unregistered predicate kind failing
+closed** (the fuzz-projection reject branch is present but latent — no fuzz predicate exists to
+hit it). The corollary "you cannot guard a fuzz-required field with a decidable predicate" thus
+holds because a fuzz *predicate* cannot be **expressed**, not because a mis-typed field is
+detected — the silent misconfiguration is structurally prevented rather than caught.
 
 **Fuzzing only — undecidable in general.** For **path** (a filesystem resolver),
 **string subfields** (a shell / SQL / URL / template interpreter), and **carrier over
@@ -217,7 +223,7 @@ fails if the premise is violated. Test paths are relative to the repo root.
 | **O2** scope boundary | implicit/control-flow leaks are *out of scope* — claimed, not silently missed | `tests/adversarial/test_implicit_flow_gap.py` (sound behaviour asserted `xfail(strict=True)`: the suite trips the moment a sound backend closes the gap) |
 | **O3** complete mediation | no effect bypasses `allow`; unknown sink fails closed; ceilings cannot be widened | `axor_core/capability/locked.py` (`GovernanceBypassError`); `tests/invariants/test_security_invariants.py` inv15 (denied tool never reaches executor); `tests/adversarial/test_unknown_sink_posture.py`; `tests/adversarial/test_critical_bypasses.py`; `tests/adversarial/test_e2e_gate.py` (lethal-trifecta egress denied) |
 | **T0** non-interpreting producer | no model / network / subprocess produces a trusted-path projection | `.importlinter` `t0-producers-non-interpreting` contract (run by `lint-imports`); `tests/invariants/test_t0_producers_non_interpreting.py` (import scan + determinism); `tests/invariants/test_pure_allow.py` (`test_no_probabilistic_component_in_the_loop`) |
-| **T4 decidable** enum/numeric | faithfulness by construction; config that mis-guards a fuzz field is rejected | `axor_core/kernel/decidability.py` (`verify_enum`, `verify_bounded_numeric`); `axor_core/kernel/registration.py` (`validate_value_policies`); `tests/kernel/test_decidability.py` |
+| **T4 decidable** enum/numeric | faithfulness by construction; a predicate with a non-decidable declared projection is rejected (unknown kind fails closed — a fuzz predicate cannot be expressed) | `axor_core/kernel/decidability.py` (`verify_enum`, `verify_bounded_numeric`); `axor_core/kernel/registration.py` (`validate_value_policies`); `tests/kernel/test_decidability.py`, `tests/adversarial/test_projection_validators.py` |
 | **T4 fuzzing** path/carrier/string | effective codomain stays in-bounds under fuzzing | `tests/kernel/test_decidability.py` (`test_path_normalizer_fuzz_floor_no_escape`, floor = 8); `tests/adversarial/test_property_fuzz.py` (allowlist never false-accepts; carrier never admits a dangerous bare string) |
 | **"Any trust model"** | the decision factors through the trust model's projection — swap the model, K4 still holds | `tests/contracts/test_value_provenance.py` (`test_noninterference_through_alt_trust_model`, `test_complete_mediation_through_alt_trust_model`): a second trust model with a *different* tainting rule re-proves non-interference + mediation; interface is `axor_core/contracts/provenance.py` |
 | **Non-interference caveats** | adjudicator memoization is "T1 modulo cache state"; detection stays out of `allow` | `axor_core/kernel/adjudicator.py`; `tests/adversarial/test_detection_degradation.py`; [governance-model §8](governance-model.md) |
