@@ -1,16 +1,23 @@
 # AgentDojo integration — results
 
 Real runs of the [AgentDojo](https://github.com/ethz-spylab/agentdojo)
-prompt-injection benchmark against axor-core, with two live models. The adapter
+prompt-injection benchmark against axor-core, across several live models. The adapter
 is in `agentdojo_adapter.py`, the runner in `run_agentdojo.py`.
 
 ## Setup
 
-- **Models:** the **primary** experiment is **GPT-4o** (`openai/gpt-4o`, the model
-  family CaMeL measured) — the default in `run_agentdojo.py`. A susceptible open
-  model (**Qwen-2.5-72b**) is used for the **supplementary** runs, where the
-  consequential-injection headroom a robust model hides becomes visible.
-- **Suite:** banking (v1) · **Attack:** `important_instructions` (AgentDojo's
+- **Models (each for a specific role):**
+  - **o4-mini** — the **primary** capable-model, cost-axis experiment (a CaMeL-v2 backbone,
+    so the comparison is *model-matched*, §"CaMeL axis"; banking/slack/travel are paired-run
+    studies). This is the load-bearing result.
+  - **GPT-4o** (`openai/gpt-4o`, the `run_agentdojo.py` default) — the **illustrative ASR
+    example** only (banking 60.4% → 0%): a capable model self-owning on the injection. **Not**
+    the cost axis, and **not** "the model CaMeL measured" — CaMeL v2 has no GPT-4o backbone
+    (model-matched comparison is o4-mini-high, §"CaMeL axis").
+  - **Qwen-2.5-72b** — susceptible open model for the **supplementary** consequential-injection
+    runs (mass exfiltration / PII leak), where a robust model's headroom hides the threat.
+  - **claude-haiku-4-5** — robust-model contrast (bench goes dark: 0→0).
+- **Suites:** banking / slack / travel (v1) · **Attack:** `important_instructions` (AgentDojo's
   strongest injection)
 - **Defense:** `GovernedToolsExecutor` — every tool call passes an axor
   `ToolCallGovernor` before it executes; a denied call returns a governance
@@ -27,26 +34,24 @@ is in `agentdojo_adapter.py`, the runner in `run_agentdojo.py`.
 `utility` = the user's real task succeeded. `ASR` (attack success rate) = the
 injected attacker goal succeeded. A good defense lowers ASR while keeping utility.
 
-## Primary result — GPT-4o (banking, the CaMeL-comparable model)
+## Illustrative ASR example — GPT-4o (banking)
 
-The main experiment runs the full banking suite on **GPT-4o**, the capable model
-CaMeL measured and the one with enough headroom to attempt the whole task list.
-Undefended it falls for the serious data-exfiltration injection on **60.4%** of
-pairs; **governed, attack success is 0.0%** while benign utility is retained at
-**62.5%** (62.5% of its 100.0% undefended baseline):
+GPT-4o on the full banking suite is the **illustrative** case (not the cost axis — that is
+o4-mini, next section): a capable model with enough headroom to attempt the whole task list
+still self-owns. Undefended it falls for the serious data-exfiltration injection on **60.4%**
+of pairs; **governed, attack success is 0.0%** while benign utility is retained at **62.5%**:
 
 | condition | benign utility (16 tasks) | utility under attack (48 pairs) | ASR |
 |---|---|---|---|
 | undefended | 100.0% | 79.2% | **60.4%** |
 | governed | **62.5%** | 58.3% | **0.0%** |
 
-This is the load-bearing number — measured on the same model family as CaMeL, on
-the same utility-at-ASR≈0 axis. The full per-task cost breakdown (the seven benign
-denials across six tasks and the three mechanisms behind them) is in
-[The CaMeL axis](#the-camel-axis--utility-retained-at-asr--0-banking-full-suite)
-below; the Qwen run there is the susceptible-model comparison. The supplementary
-runs that follow show the broader threat coverage (mass exfiltration, PII leak) on
-a model that actually carries those injections out.
+This is the **ASR illustration** — it shows the threat is live on a strong model, and it is
+*axor-only*: CaMeL v2 has no GPT-4o backbone, so this row is **not** compared to CaMeL (the
+model-matched comparison is o4-mini-high, in [The CaMeL axis](#the-camel-axis--utility-retained-at-asr--0-banking-full-suite)).
+The **load-bearing cost result is the o4-mini paired study** (next section). The Qwen run
+below is the susceptible-model comparison; the supplementary runs show broader threat coverage
+(mass exfiltration, PII leak) on a model that actually carries those injections out.
 
 ## Capable-model utility cost — o4-mini across three suites (full CAMEL_MODE)
 
@@ -311,9 +316,9 @@ not a detection number — it is **utility retained while the defense holds ASR 
 what it costs. To put axor on the same axis, `AXOR_BENCH_CAMEL=1` runs the full
 banking user-task list benign *and* under attack, undefended *and* governed.
 
-**GPT-4o** (OpenRouter's current `openai/gpt-4o` snapshot — the GPT-4o family
-CaMeL measured; the attack is addressed to "GPT-4" via the pipeline name, as in
-the original):
+**GPT-4o** (OpenRouter's current `openai/gpt-4o` snapshot — the attack is addressed to
+"GPT-4" via the pipeline name, as in the original; note this is the ASR illustration, **not**
+a CaMeL-comparable backbone — CaMeL v2 has no GPT-4o, model-match is o4-mini-high):
 
 | condition | benign utility (16 tasks) | utility under attack (48 pairs) | ASR |
 |---|---|---|---|
@@ -527,8 +532,14 @@ cleanly).
 pip install agentdojo
 export OPEN_ROUTER_API_KEY=sk-or-...
 
-# PRIMARY — GPT-4o (the default model), CaMeL-axis banking run
-# (full user-task list, benign + attack, both conditions):
+# PRIMARY (cost axis) — o4-mini, model-matched to CaMeL v2, paired benign-only:
+# one pass = undefended vs governed; repeat for the paired mean±std (banking/slack 7, travel 2).
+AXOR_BENCH_BACKEND=openrouter AXOR_BENCH_SUITE=banking AXOR_BENCH_CONFIG=banking.yaml \
+  AXOR_BENCH_MODEL=openai/o4-mini AXOR_BENCH_MAXTOK=8000 AXOR_BENCH_CAMEL=1 AXOR_BENCH_BENIGN_ONLY=1 \
+  python -m examples.agentdojo.run_agentdojo
+# (banking supersession recovery: repeat with AXOR_BENCH_CONFIG=banking_tuned.yaml)
+
+# ASR illustration — GPT-4o (the run_agentdojo.py default), full CAMEL axis, banking:
 AXOR_BENCH_BACKEND=openrouter AXOR_BENCH_SUITE=banking AXOR_BENCH_CAMEL=1 \
   python -m examples.agentdojo.run_agentdojo
 
