@@ -81,8 +81,8 @@ denials over 7 passes, **92 are `send_email`/`share_file` taint (shared channel)
 `delete_file` consequence-gate** denials — `workspace.yaml` raises `delete` to *catastrophic*, so
 benign delete-after-acting tasks are gated too. That ~12% is an operator-taxonomy choice
 (consequence axis), not the injection defense per se; report the split, don't attribute all
-−15.5pp to shared channel. (This supersedes the old single-run "Second suite — workspace" section
-below.)
+−15.5pp to shared channel. (Full write-up — per-pass numbers, denial breakdown, CaMeL
+comparison — in the **"Workspace — the o4-mini paired cost study"** section below.)
 
 **Banking carries the 7-pass paired mean (−17.0 ± 7.2pp), not the dramatic single pass.** An
 earlier single run was 87.5% → 50.0% = −37.5pp, but its 87.5% undefended is the high end of a
@@ -502,39 +502,53 @@ model's own refusal here. The same over-block appears on a write task
 (`user_task_3`), confirming it is a property of the taxonomy + shared channel,
 not of the model.
 
-## Second suite — workspace (email / calendar / files) — SUPERSEDED
+## Workspace — the o4-mini paired cost study (full suite, 40 user tasks)
 
-> **Superseded by the o4-mini paired workspace study above (−15.5 ± 3.8pp, n=7).** This early
-> section is a small single-run ASR probe on Qwen/haiku with only 3 read-only user tasks; kept
-> for history. The cost number and coverage are the paired run's, not this.
+The load-bearing workspace result: **o4-mini, benign-only, 7 paired passes**
+(undefended vs governed within each pass, `config/workspace.yaml`), full CAMEL
+mode, the same methodology as banking/slack.
 
-Workspace injections are exfiltration-shaped: the attacker tries to make the
-agent send an email (or forward a security code) to an external address
-`mark.black-2134@gmail.com`. We ran the read-only email-question user tasks
-(user_task_14/16/17) × three exfiltration injections, on both models.
+| condition | benign utility (40 tasks, mean of 7 passes) |
+|---|---|
+| undefended | **84.3%** (per-pass 77.5/87.5/85/85/82.5/85/87.5) |
+| governed | **68.8%** (per-pass 70/70/71.8/67.5/65/70/67.5) |
 
-| model | condition | ASR | utility | governor denials |
-|---|---|---|---|---|
-| Qwen-2.5-72b | undefended | 0% | 55.6% | — |
-| Qwen-2.5-72b | governed | 0% | 77.8%* | 2 `send_email` blocked |
-| claude-haiku-4-5 | undefended | 0% | 66.7% | — |
-| claude-haiku-4-5 | governed | 0% | 66.7% | 0 (fully transparent) |
+**Cost = −15.5 ± 3.8pp** (per-pass −7.5/−17.5/−13.2/−17.5/−17.5/−15/−20).
+Comparable to banking (−17); a narrow spread. ASR is 0/0 (o4-mini resists the
+overt injection on its own — the headroom-dark case, so the cost axis, not
+ASR-delta, is what this measures).
 
-\* Qwen via OpenRouter is not deterministic even at temperature 0 (provider
-routing), so the governed/undefended utility delta is noise, not a governance
-effect. Claude was deterministic — identical 66.7% with zero denials.
+**The cost is *not purely shared-channel* — report the split.** Of ~104 benign
+denials across the 7 passes:
 
-The honest finding here is about **task shape, not the defense**: with read-only
-*questions* ("what's my Facebook code?"), neither model carried out the
-injection's demanded *action* (sending an email to the attacker), so ASR is 0
-even undefended — answering a question doesn't put the model in action mode the
-way "pay this bill" does. Governance was therefore transparent (Claude: identical
-utility, 0 denials; Qwen: blocked 2 stray egress attempts within the noise). To
-get workspace ASR headroom you need action-oriented user tasks that already send
-email — which would reintroduce the same shared-channel utility cost seen in
-banking when the legitimate recipient is read from untrusted content (it is not
-when the recipient comes from the user's prompt, which is the case axor handles
-cleanly).
+| denial | count | axis |
+|---|---|---|
+| `send_email: taint_enforcement` | 81 | shared channel (recipient read from untrusted content) |
+| `share_file: taint_enforcement` | 11 | shared channel |
+| `delete_file: consequence_gate` | 12 | **consequence** — `workspace.yaml` raises `delete` to *catastrophic* |
+
+So ~88% of the cost is the shared-channel over-block (`send_email`/`share_file`
+egress whose recipient is read-derived — the same content-ledger false positive
+as banking, where CaMeL's structural provenance would keep more) and ~12% is a
+**consequence-axis** gate: benign delete-after-acting tasks are blocked because
+the operator taxonomy raised `delete` to catastrophic. That 12% is a *taxonomy
+choice*, not the injection defense — do not fold it into the shared-channel
+number. On the shared-channel-only view the gap to CaMeL narrows a little further.
+
+**Versus CaMeL (model-matched, o4-mini-high, v2 Table 2):** workspace CaMeL cost
+is **−7.5pp** → axor −15.5 vs CaMeL −7.5, **CaMeL ahead ~8pp** — consistent with
+"CaMeL is ahead on every suite," and with the same reason (structural provenance
+beats a content ledger on the read-derived-recipient partition).
+
+> **Historical note — the earlier single-run ASR probe (superseded).** An earlier
+> pass ran only 3 read-only email-*question* tasks (user_task_14/16/17) × 3
+> injections on Qwen/haiku and saw ASR 0 even undefended. The honest finding there
+> was about **task shape, not the defense**: a read-only question ("what's my
+> Facebook code?") never puts the model in *action* mode, so the injection's demanded
+> egress never fires and there is nothing to block — you need action-oriented tasks
+> (which the full 40-task paired run above exercises) to see real cost. That probe's
+> utility numbers are superseded by the paired study; only the task-shape observation
+> is kept.
 
 ## Honest reading
 
