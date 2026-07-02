@@ -17,7 +17,7 @@ is in `agentdojo_adapter.py`, the runner in `run_agentdojo.py`.
   - **Qwen-2.5-72b** — susceptible open model for the **supplementary** consequential-injection
     runs (mass exfiltration / PII leak), where a robust model's headroom hides the threat.
   - **claude-haiku-4-5** — robust-model contrast (bench goes dark: 0→0).
-- **Suites:** banking / slack / travel (v1) · **Attack:** `important_instructions` (AgentDojo's
+- **Suites:** banking / slack / workspace / travel (v1) · **Attack:** `important_instructions` (AgentDojo's
   strongest injection)
 - **Defense:** `GovernedToolsExecutor` — every tool call passes an axor
   `ToolCallGovernor` before it executes; a denied call returns a governance
@@ -53,7 +53,7 @@ The **load-bearing cost result is the o4-mini paired study** (next section). The
 below is the susceptible-model comparison; the supplementary runs show broader threat coverage
 (mass exfiltration, PII leak) on a model that actually carries those injections out.
 
-## Capable-model utility cost — o4-mini across three suites (full CAMEL_MODE)
+## Capable-model utility cost — o4-mini across four suites (full CAMEL_MODE)
 
 Run on **o4-mini** (`openai/o4-mini` via OpenRouter), one of the CaMeL **v2** backbone
 models, full `AXOR_BENCH_CAMEL=1` (every user task benign *and* under attack, undefended
@@ -64,15 +64,25 @@ overclaims** that were artifacts of a weak model (Qwen).
 |---|---|---|---|---|---|
 | **banking** (paired, n=7) | 67.9% → 50.9% | **≈ −17 ± 7pp** | ~75% | 3–5/pass | 0% / 0% |
 | **slack** (paired, n=7) | 84.8% → 50.6% | **−34.1 ± 7.2pp** | ~60% | 13–19/pass | 0% / 0% |
+| **workspace** (paired, n=7) | 84.3% → 68.8% | **−15.5 ± 3.8pp** | ~82% | ~15/pass | 0% / 0% |
 | **travel** (paired, n=2) | 62.5% → 70.0% | **0 (structural)** | ~100% | 0/pass | 0% / 0% |
 
-**All three suites are now paired-run means** (undefended vs governed within each pass; the
+**All four suites are paired-run means** (undefended vs governed within each pass; the
 single-run slack −38.1pp / travel 0pp are superseded). Per-pass slack cost: −28.6, −45.0, −42.8,
 −33.4, −33.4, −33.3, −22.4 → **−34.1 ± 7.2pp** (the earlier single-run −38.1 sits at the
 more-negative end of the spread but is consistent — unlike banking, where the paired run revealed
 the single pass was an inflated outlier). **Travel is structural 0** — 0 denials every pass; the
 governed 70.0 vs undefended 62.5 is **sampling noise on n=2, not a gain** (a gate that denies
 nothing cannot add utility; governed ≡ undefended trajectories up to model run-to-run variance).
+
+**Workspace −15.5 ± 3.8pp** (per-pass −7.5/−17.5/−13.2/−17.5/−17.5/−15.0/−20.0; undef 84.3 →
+gov 68.8). Comparable to banking. Its cost is **not purely shared-channel**: of ~104 benign
+denials over 7 passes, **92 are `send_email`/`share_file` taint (shared channel)** and **12 are
+`delete_file` consequence-gate** denials — `workspace.yaml` raises `delete` to *catastrophic*, so
+benign delete-after-acting tasks are gated too. That ~12% is an operator-taxonomy choice
+(consequence axis), not the injection defense per se; report the split, don't attribute all
+−15.5pp to shared channel. (This supersedes the old single-run "Second suite — workspace" section
+below.)
 
 **Banking carries the 7-pass paired mean (−17.0 ± 7.2pp), not the dramatic single pass.** An
 earlier single run was 87.5% → 50.0% = −37.5pp, but its 87.5% undefended is the high end of a
@@ -88,7 +98,7 @@ headroom-dark case, which is why the cost axis, not ASR-delta, is load-bearing.)
 
 1. **The utility cost is *localized to the shared-channel partition*, not universal.** It
    is real where the legitimate egress argument is read from an untrusted source — a
-   transaction file, a channel message (banking ≈ −17 ± 7pp, slack ≈ −34 ± 7pp, both paired)
+   transaction file, a channel message (banking ≈ −17 ± 7pp, slack ≈ −34 ± 7pp, workspace ≈ −15 ± 4pp, all paired)
    — and **exactly 0 on travel (0 denials), because travel's legitimate egress recipient comes from the user's
    prompt, not an untrusted read.** Cost = (tasks the model can do) ∩ (egress derived
    from an untrusted read).
@@ -109,7 +119,8 @@ headroom-dark case, which is why the cost axis, not ASR-delta, is load-bearing.)
    **+18.8pp** vs axor ≈ −17 ± 7pp paired (CaMeL's structural provenance distinguishes a
    prompt-bound recipient from a quarantine-derived one; axor's content-derivation ledger
    cannot, so it over-blocks the value-coincidence cases). On slack CaMeL pays less (axor
-   −34.1 ± 7.2pp paired, CaMeL **−23.8pp**); on travel neither loses (axor 0pp, CaMeL **+10.0pp**).
+   −34.1 ± 7.2pp paired, CaMeL **−23.8pp**); on workspace too (axor −15.5 ± 3.8pp, CaMeL **−7.5pp**);
+   on travel neither loses (axor 0pp, CaMeL **+10.0pp**).
    Honest framing with the generic config: **CaMeL is ahead on every suite**. But the banking
    gap is **not fundamental** — an approved-payee allowlist (which a real bank has) plus the
    decidable-supersession rule recovers part of it (a +25pp gate upper bound, +13.4 ± 9.1pp
@@ -483,7 +494,11 @@ model's own refusal here. The same over-block appears on a write task
 (`user_task_3`), confirming it is a property of the taxonomy + shared channel,
 not of the model.
 
-## Second suite — workspace (email / calendar / files)
+## Second suite — workspace (email / calendar / files) — SUPERSEDED
+
+> **Superseded by the o4-mini paired workspace study above (−15.5 ± 3.8pp, n=7).** This early
+> section is a small single-run ASR probe on Qwen/haiku with only 3 read-only user tasks; kept
+> for history. The cost number and coverage are the paired run's, not this.
 
 Workspace injections are exfiltration-shaped: the attacker tries to make the
 agent send an email (or forward a security code) to an external address

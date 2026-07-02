@@ -36,7 +36,7 @@ Haoyu's three asks, mapped to sections:
      agentic attack → taint analysis → the non-interference guarantee — §5.
   3. **Empirical validation on AgentDojo**, framed as CaMeL frames it — a **structural
      guarantee at a measured utility cost** (capable model, o4-mini: banking ≈−17 ± 7pp paired,
-     slack −34 ± 7pp, travel 0pp), *not* a headroom-dependent ASR-delta that vanishes on a
+     slack −34 ± 7pp, workspace −15 ± 4pp, travel 0pp — all paired), *not* a headroom-dependent ASR-delta that vanishes on a
      robust model. Reported honestly: the cost is localized to the shared-channel partition,
      **CaMeL is ahead on utility there, and axor does not beat it**. axor's contribution is
      the adoption cost of a drop-in, framework-agnostic governance layer (§6.5), not raw
@@ -426,7 +426,7 @@ crosswalk table (kernel-theorem §5) in an appendix — it is the paper's credib
 
 > **Canon lock (do this before writing a single number).** The authoritative figures are
 > `examples/agentdojo/agentdojo_results.md`. **Cost axis (primary, o4-mini):** banking
-> generic **−17 ± 7pp** paired (worst single pass −37.5), slack **−34.1 ± 7.2pp** paired (n=7), travel **0pp** (0 denials);
+> generic **−17 ± 7pp** paired (worst single pass −37.5), slack **−34.1 ± 7.2pp**, workspace **−15.5 ± 3.8pp** (both paired, n=7), travel **0pp** (0 denials);
 > supersession recovery **+13.4 ± 9.1pp** on banking. **ASR illustration (GPT-4o, §2/§6.4
 > only, not the cost axis):** banking **60.4% → 0.0% ASR**. An earlier note circulated 54%/56%
 > utility — stale, purge it. Every number in §6 and §2/§1 must trace to this file.
@@ -499,7 +499,14 @@ mean is the defensible number — see caveat):
 |---|---|---|---|---|
 | **banking** (paired, n=7) | 67.9% → 50.9% | **≈ −17 ± 7pp** | 3–5/pass | shared channel — payee read from an untrusted source |
 | **slack** (paired, n=7) | 84.8% → 50.6% | **−34.1 ± 7.2pp** | 13–19/pass | shared channel — post derived from channel reads |
+| **workspace** (paired, n=7) | 84.3% → 68.8% | **−15.5 ± 3.8pp** | ~15/pass | shared channel (`send_email`/`share_file` taint) **+** a `delete`=catastrophic consequence gate |
 | **travel** (paired, n=2) | 62.5% → 70.0% | **0 (structural)** | **0/pass** | egress recipient comes from the **prompt**, not a read |
+
+*Workspace's cost is **not purely shared-channel**: of ~104 benign denials over 7 passes, **92 are
+`send_email`/`share_file` taint (shared channel)** and **12 are `delete_file` consequence-gate**
+denials — the taxonomy raised `delete` to *catastrophic*, so benign delete-after-acting tasks are
+gated too. That ~12% is an operator-taxonomy choice (consequence axis), not the injection defense
+per se; state the split rather than attributing all −15.5pp to shared channel.*
 
 *Travel's cost is 0 by construction — **0 denials every pass** (the gate never fires, because the
 legitimate egress recipient is prompt-given). The governed rate reads 70.0 vs undefended 62.5,
@@ -571,6 +578,10 @@ in print). The bullets below are the supporting detail behind it. Be precise:
     over-block (next bullet); it does not close the gap.
   - **slack** (multi-step): axor **−34.1 ± 7.2pp** (paired, n=7) vs CaMeL **−23.8pp** (o4-mini-high) → **CaMeL
     ahead by ~10pp** (both pay a real shared-channel cost; CaMeL pays less).
+  - **workspace** (email/calendar/files): axor **−15.5 ± 3.8pp** (paired, n=7) vs CaMeL **−7.5pp**
+    (o4-mini-high) → **CaMeL ahead by ~8pp**. Note axor's cost here is ~88% shared-channel
+    (`send_email`/`share_file` taint) + ~12% a `delete`=catastrophic consequence gate (a taxonomy
+    choice, §6.2), so the shared-channel-only gap to CaMeL is a little narrower still.
   - **travel** (prompt-driven egress): axor **0pp** (0 denials) vs CaMeL **+10.0pp**
     (o4-mini-high) → **neither defense loses utility** on travel (axor costs nothing, CaMeL
     *gains* +10pp).
@@ -726,7 +737,8 @@ not belong in this paper.)
   the same population over 7 paired passes), and a genuine one-off shared-channel half (payee
   only in an untrusted read), where **CaMeL is ahead** because its structural provenance keeps
   the read-derived payee axor's content ledger cannot. Slack: axor **−34.1 ± 7.2pp** vs CaMeL
-  **−23.8pp** (CaMeL ahead ~10pp). Travel: axor **0pp** vs CaMeL **+10.0pp** (neither loses).
+  **−23.8pp** (CaMeL ahead ~10pp). Workspace: axor **−15.5 ± 3.8pp** vs CaMeL **−7.5pp** (CaMeL
+  ahead ~8pp). Travel: axor **0pp** vs CaMeL **+10.0pp** (neither loses).
   Axor does **not** win on utility globally on a capable model; its case is *adoption cost*
   (drop-in, framework-agnostic, any model), not utility. Axor's integrity axis is a content
   ledger (sound-to-deny, paraphrase residual); the confidentiality floor is the sound,
@@ -816,7 +828,7 @@ Execution governance as a *framework-agnostic layer* with a *secure-by-design*
 core: framing-invariant defense from a non-interference theorem whose conditionality is
 stated, localized (the fuzzing fraction), and pinned to regressions — validated on
 AgentDojo as a **structural guarantee at a measured utility cost**, reported honestly: the
-cost is localized to the shared-channel partition (banking ≈−17 ± 7pp, slack ≈−34 ± 7pp, both paired,
+cost is localized to the shared-channel partition (banking ≈−17 ± 7pp, slack ≈−34 ± 7pp, workspace ≈−15 ± 4pp, all paired,
 on a capable model; 0 where egress is prompt-driven), where **CaMeL's heavier interpreter is ahead on
 utility and axor does not beat it**. A sound `enum`-supersession rule deterministically
 lifts the gate over-block on the known-payee read-derived partition (a +25pp gate-level upper
@@ -885,8 +897,8 @@ utility cost is the honest price. Agents should not self-govern execution.
 2. Trust-ring diagram + three-interface adapter seam (§4).
 3. The attack → taint → theorem chain as a single diagram (§5.2) — the conceptual core.
 4. **The primary figure: measured utility cost across suites (o4-mini)** (§6.2 — banking
-   ≈ −17 ± 7pp paired generic, slack −34.1 ± 7.2pp paired, travel 0pp) with the CaMeL **o4-mini-high** cost
-   overlaid (v2 Table 2: banking +18.8, slack −23.8, travel +10.0) — shows axor's cost is
+   ≈ −17 ± 7pp paired generic, slack −34.1 ± 7.2pp, workspace −15.5 ± 3.8pp, travel 0pp, all paired) with the CaMeL **o4-mini-high** cost
+   overlaid (v2 Table 2: banking +18.8, slack −23.8, workspace −7.5, travel +10.0) — shows axor's cost is
    localized to the shared-channel partition and CaMeL is ahead on every suite. Caption
    the banking bar honestly: **CaMeL ahead on the one-off shared-channel half; axor lifts the
    known-payee read-derived half at the gate** (+25pp upper bound / +13.4 ± 9.1pp realized) —
