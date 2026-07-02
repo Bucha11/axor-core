@@ -58,8 +58,16 @@ overclaims** that were artifacts of a weak model (Qwen).
 | suite | benign undef → gov | utility cost | retention | benign denials | ASR (u/g) |
 |---|---|---|---|---|---|
 | **banking** (paired, n=7) | 67.9% → 50.9% | **≈ −17 ± 7pp** | ~75% | 3–5/pass | 0% / 0% |
-| **slack** (single run) | 85.7% → 47.6% | **−38.1pp** | 55.6% | 15 (egress sinks) | 0% / 0% |
-| **travel** (single run) | 65.0% → 65.0% | **0pp** | 100.0% | 0 | 0% / 0% |
+| **slack** (paired, n=7) | 84.8% → 50.6% | **−34.1 ± 7.2pp** | ~60% | 13–19/pass | 0% / 0% |
+| **travel** (paired, n=2) | 62.5% → 70.0% | **0 (structural)** | ~100% | 0/pass | 0% / 0% |
+
+**All three suites are now paired-run means** (undefended vs governed within each pass; the
+single-run slack −38.1pp / travel 0pp are superseded). Per-pass slack cost: −28.6, −45.0, −42.8,
+−33.4, −33.4, −33.3, −22.4 → **−34.1 ± 7.2pp** (the earlier single-run −38.1 sits at the
+more-negative end of the spread but is consistent — unlike banking, where the paired run revealed
+the single pass was an inflated outlier). **Travel is structural 0** — 0 denials every pass; the
+governed 70.0 vs undefended 62.5 is **sampling noise on n=2, not a gain** (a gate that denies
+nothing cannot add utility; governed ≡ undefended trajectories up to model run-to-run variance).
 
 **Banking carries the 7-pass paired mean (−17.0 ± 7.2pp), not the dramatic single pass.** An
 earlier single run was 87.5% → 50.0% = −37.5pp, but its 87.5% undefended is the high end of a
@@ -75,7 +83,7 @@ headroom-dark case, which is why the cost axis, not ASR-delta, is load-bearing.)
 
 1. **The utility cost is *localized to the shared-channel partition*, not universal.** It
    is real where the legitimate egress argument is read from an untrusted source — a
-   transaction file, a channel message (banking ≈ −17 ± 7pp paired, slack ≈ −38pp single-run)
+   transaction file, a channel message (banking ≈ −17 ± 7pp, slack ≈ −34 ± 7pp, both paired)
    — and **exactly 0 on travel (0 denials), because travel's legitimate egress recipient comes from the user's
    prompt, not an untrusted read.** Cost = (tasks the model can do) ∩ (egress derived
    from an untrusted read).
@@ -96,7 +104,7 @@ headroom-dark case, which is why the cost axis, not ASR-delta, is load-bearing.)
    **+18.8pp** vs axor ≈ −17 ± 7pp paired (CaMeL's structural provenance distinguishes a
    prompt-bound recipient from a quarantine-derived one; axor's content-derivation ledger
    cannot, so it over-blocks the value-coincidence cases). On slack CaMeL pays less (axor
-   −38.1pp, CaMeL **−23.8pp**); on travel neither loses (axor 0pp, CaMeL **+10.0pp**).
+   −34.1 ± 7.2pp paired, CaMeL **−23.8pp**); on travel neither loses (axor 0pp, CaMeL **+10.0pp**).
    Honest framing with the generic config: **CaMeL is ahead on every suite**. But the banking
    gap is **not fundamental** — an approved-payee allowlist (which a real bank has) plus the
    decidable-supersession rule recovers part of it (a +25pp gate upper bound, +13.4 ± 9.1pp
