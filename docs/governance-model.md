@@ -89,6 +89,10 @@ In order. Any denial is final.
    interval an attacker-derived value can land in — so the kernel **refuses to supersede
    on it** (the range still *denies* out-of-range values; it just does not exempt the
    arg from taint), exactly as it refuses to make an instruction-complete sink positional.
+   (This is the *supersession codomain-closedness* condition, **distinct from T4
+   decidability**: a `numeric_range` is fully decidable — a number consumed numerically
+   cannot become an out-of-set effect — it simply is not a *closed* set, so it qualifies
+   for the T4 split but not for supersession. Two different properties.)
    This supersedes the **integrity** axis only; the confidentiality floor still applies (a
    secret read blocks egress even to an approved destination). It is **fail-closed**:
    supersession requires every driving arg present *and* enum-covered — a missing driving

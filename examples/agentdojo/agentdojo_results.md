@@ -152,6 +152,14 @@ open interval an attacker-derived value can land in — so the kernel **refuses 
 on it** (it still *denies* out-of-range values, it just does not exempt the arg from
 taint). Pinned by `test_numeric_range_does_not_supersede_open_codomain`.
 
+**Do not conflate this with decidability (two different properties of `numeric_range`).**
+A `numeric_range` is *fully decidable* in the T4 / faithfulness sense (a number consumed
+numerically cannot become an out-of-set effect — `predicate_is_decidable(numeric_range)` is
+`True`). It just does **not** *qualify for supersession*, because supersession needs a **closed**
+codomain (membership ⇒ trust) and a range is **open**. So `numeric_range` is decidable **and**
+non-supersession-qualifying at the same time — the refusal here is about codomain-closedness,
+**not** about decidability.
+
 **The allowlist is legitimate deployment knowledge, not leakage — and sound by
 construction.** Its IBANs are the recipients the **user explicitly names in the task
 prompts** (e.g. user_task_3 "send back to GB29…", user_task_4 "refund GB29…") — i.e. the
