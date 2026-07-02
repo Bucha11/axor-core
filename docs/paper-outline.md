@@ -45,7 +45,9 @@ Haoyu's three asks, mapped to sections:
      driving args are covered by a satisfied `enum` over a *closed trusted set* need not be
      gated by the leaky content-taint on top (the enum is the stronger, content-blind
      control); soundness condition is codomain ⊆ trusted (enum yes, numeric_range no — the
-     kernel refuses the latter; soundness is by construction — the allowlist is a static
+     kernel refuses the latter *because its range is an open codomain, not because it is
+     undecidable: `numeric_range` is fully decidable per §5.4, these are two different
+     properties*); soundness is by construction — the allowlist is a static
      operator config, never populated from a runtime read, so the codomain is
      attacker-inaccessible). With a legitimate approved-payee allowlist it
      **deterministically lifts the gate over-block on read-derived egress to allowlisted
@@ -606,8 +608,11 @@ in print). The bullets below are the supporting detail behind it. Be precise:
   covered by a satisfied `enum` over a closed, operator-declared trusted set, that enum carries
   the integrity axis and the content-taint is skipped on that arg — soundly: attacker
   destinations stay denied (not in the set), the confidentiality floor is not superseded, and
-  the codomain restriction (T4, §5.4: `enum` qualifies, `numeric_range` does not) plus a
-  static, attacker-inaccessible allowlist keep the trusted set uncontaminable. On banking this
+  the **supersession codomain requirement** (a *closed* trusted set the attacker cannot pick
+  from) is met by `enum` but **not** by `numeric_range` (an open range an attacker-derived
+  value can satisfy) — note this is a *different* property from T4 decidability: `numeric_range`
+  is fully **decidable** (§5.4), it just does not *qualify for supersession* because its codomain
+  is open. A static, attacker-inaccessible allowlist keeps the trusted set uncontaminable. On banking this
   lifts the over-block on the 4-task known-payee read-derived partition — a **+25pp
   deterministic gate upper bound**, of which **+13.4 ± 9.1pp is realized** on o4-mini (7 paired
   passes; a wide interval, positive in every pass). That recovers part of the −17pp cost, but
@@ -853,13 +858,23 @@ utility cost is the honest price. Agents should not self-govern execution.
 ## Appendices
 
 - **A. Obligation → enforcing-test crosswalk** (kernel-theorem §5) — the credibility
-  table tying every premise (O1/O2/O3/T0/T4/any-trust-model) to a named CI regression.
-  The **T4 / supersession-soundness** row is the enum-only codomain restriction: its
-  enforcing regression is `test_numeric_range_does_not_supersede_open_codomain` (kernel
-  refuses to supersede on an open codomain) paired with
-  `test_value_coincidence_recovery_structural_not_cherry_picked` (the `enum` closed-codomain
-  case lifts; attacker IBAN stays denied) and `test_confidentiality_floor_is_not_superseded`
-  (supersession is integrity-only) — all in `tests/adversarial/test_decidable_supersession.py`.
+  table tying every premise (O1/O2/O3/T0/T4/any-trust-model) to a named CI regression. **Two
+  *distinct* rows that must not be merged** (they are different properties of the same predicate
+  kinds):
+  - **T4 (faithfulness decidability).** enum *and* `numeric_range` are **both decidable by
+    construction** (a case-split / a number-consumed-numerically cannot manufacture an
+    out-of-set effect). Enforced by `kernel/decidability.py` + the registration guard rejecting
+    any non-decidable *declared projection*. Tests: `tests/kernel/test_decidability.py`,
+    `tests/adversarial/test_projection_validators.py`.
+  - **Supersession-soundness (contribution #4, a *separate* codomain-closedness property).**
+    Skipping the integrity content-taint on an arg is sound only when the predicate's codomain
+    is a **closed** trusted set the attacker cannot pick from: `enum` qualifies, `numeric_range`
+    does **not** — *not because it is undecidable* (it is decidable) but because its range is an
+    **open** codomain an attacker-derived value can satisfy. Tests:
+    `test_numeric_range_does_not_supersede_open_codomain` (kernel refuses to supersede on an open
+    codomain), `test_value_coincidence_recovery_structural_not_cherry_picked` (the `enum` closed
+    case lifts; attacker IBAN stays denied), `test_confidentiality_floor_is_not_superseded`
+    (integrity-only) — all in `tests/adversarial/test_decidable_supersession.py`.
 - **A-floor. Structural demonstration of the confidentiality floor (unit-level, sits
   beside A — *not* an AgentDojo result).** This is where the sound axis is shown, framed as
   a kernel *property*, not a benchmark number (per §5.5; §6.2 explains why the stock travel
