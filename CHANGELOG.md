@@ -7,13 +7,22 @@ The kernel/platform split and one-implementation gate engine.
 ### Added
 
 - **`contracts/observation.py` — the Core → Probe observation seam.**
-  `SessionContextView` (structural post-turn context snapshot, incl.
-  `taint_canaries` drawn from `ContextFragment.taint_mark`) and the `ContextTap`
-  protocol axor-probe's `CoreContextTap` matches structurally (P-34).
-  `GovernedSession` accepts `context_taps=[...]` and pushes a view after each
-  `run()` turn — observe-only, tap failures are logged and never disturb the
-  governance path. Supporting read-only telemetry: `ContextManager.turn` /
-  `observable_fragments()` and `TaintEngine.external_read_count()`.
+  `SessionContextView` (structural context snapshot, incl. `taint_canaries`
+  drawn from `ContextFragment.taint_mark`) and the `ContextTap` protocol
+  axor-probe's `CoreContextTap` matches structurally (P-34). `GovernedSession`
+  accepts `context_taps=[...]`; `GovernedNode` fires
+  `node/context_observation.emit_context_view` on every context build (the
+  governance hot path), so a tap sees exactly the context the agent runs
+  against. Observe-only: a pure `ContextView → SessionContextView` mapper
+  derives all fields from the built view, and tap failures are logged per tap,
+  never raised.
+- **`context/excision.py` — authority-gated context repair.** `apply_excision`
+  applies an axor-probe `RepairProposal` (fragment ids cross as plain strings —
+  no import edge): an `automated_policy` authority may remove only the clean
+  pure-tainted `auto_excise` set; the `escalate` set (collateral/diffuse)
+  requires `human_operator`/`trusted_boundary` and is otherwise deferred —
+  recorded, not removed. Completes the context-healing loop: probe
+  `repair.localize` → `RepairProposal` → core `apply_excision`.
 - **Trust rings, machine-enforced.** Subsystems grouped into Ring 0 (kernel — the
   TCB), Ring 1 (runtime), Ring 2 (platform). An `import-linter` `kernel-purity`
   contract (`.importlinter`, run in CI) forbids the kernel from importing the

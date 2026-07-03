@@ -8,8 +8,9 @@ from typing import Protocol, runtime_checkable
 class SessionContextView:
     """
     Read-only structural snapshot of a session's context, pushed to ContextTap
-    observers on each governance-path context event (one per GovernedSession.run
-    turn).
+    observers on each governance-path context event — GovernedNode fires
+    ``node/context_observation.emit_context_view`` on every context build (the
+    hot path), so a tap sees the context the agent actually runs against.
 
     This is an observation contract, not an enforcement input: taps receive the
     view after the turn's governance decisions are already made, and nothing a
@@ -18,10 +19,13 @@ class SessionContextView:
     are breaking changes for them.
 
     context_window is provider-shaped message dicts ({"role": ..., "content":
-    ...}) derived from the session's shaped ContextFragments — never raw
-    executor history. taint_canaries are the distinct ContextFragment.taint_mark
-    tokens live in the context; a probe can check whether the agent leaks one
-    into its output (the clean shadow never holds them).
+    ...}) derived from the built ContextView's visible fragments — never raw
+    executor history — so a consumer can replay exactly what the agent saw.
+    taint_canaries are the distinct ContextFragment.taint_mark tokens live in
+    the context; a probe checks whether the agent leaks one into its output
+    (the clean shadow never holds them), and a repair pass (axor-probe
+    ``repair.localize`` → core ``context/excision.apply_excision``) uses them
+    to identify the fragments to excise.
     """
     session_id: str
     agent_id: str
