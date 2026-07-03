@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 import time
@@ -15,6 +16,7 @@ from axor_core.contracts.session import SessionAuditRecord, ToolInvocationRecord
 from axor_core.contracts.context import RawExecutionState, LineageSummary
 from axor_core.contracts.extension import ExtensionLoader
 from axor_core.contracts.drift import BehavioralDriftObserver
+from axor_core.contracts.observation import ContextTap, SessionContextView
 from axor_core.contracts.invokable import Invokable
 from axor_core.contracts.mode import ExecutionMode
 from axor_core.contracts.policy import ExecutionPolicy, SignalClassifier
@@ -118,6 +120,7 @@ class GovernedSession:
         adjudicator=None,
         federation_gateway=None,
         session_sink: "SessionSink | None" = None,
+        context_taps: "list[ContextTap] | None" = None,
     ) -> None:
         # Wall-clock the session was constructed — handed to sentinel in the
         # closed-session record (slow-and-low staging compares session start times).
@@ -127,6 +130,9 @@ class GovernedSession:
         self._session_sink = session_sink
         self._tool_invocations: "list[ToolInvocationRecord]" = []
         self._record_emitted = False   # guard: aclose is idempotent, emit once
+        # Core → Probe observation seam: taps receive a SessionContextView after
+        # each run() turn. Observe-only — tap failures are logged, never raised.
+        self._context_taps: list[ContextTap] = list(context_taps or [])
 
         # Profile = a named bundle of existing knobs (no new mechanism); it
         # pre-fills mode / isolation / escalation / consequence-ceiling / watcher.
@@ -530,7 +536,72 @@ class GovernedSession:
             except Exception:
                 pass
 
+        # Core → Probe observation seam: push the post-turn context view to any
+        # attached ContextTaps. Observe-only, after all governance decisions.
+        await self._notify_context_taps()
+
         return result
+
+    # Fragment kind → provider message role for the observation seam. Kinds not
+    # listed (fact / memory / parent_export) read as user-supplied context.
+    _FRAGMENT_ROLES = {"skill": "system", "assistant_prose": "assistant",
+                       "tool_result": "tool"}
+
+    def _build_context_view(self) -> SessionContextView:
+        """Structural snapshot of the current session context for ContextTaps.
+
+        Built from shaped ContextFragments (never raw executor history) and the
+        taint engine's observe-only shadow counters.
+        """
+        fragments = self._context_manager.observable_fragments()
+        window = tuple(
+            {"role": self._FRAGMENT_ROLES.get(f.kind, "user"), "content": f.content}
+            for f in fragments
+        )
+        canaries = tuple(dict.fromkeys(
+            f.taint_mark for f in fragments if f.taint_mark
+        ))
+        personality = (
+            self._agent_def.personality
+            if self._agent_def is not None and self._agent_def.personality else ""
+        )
+        any_tainted, _ = self._taint_engine.session_shadow()
+        return SessionContextView(
+            session_id=self._session_id,
+            agent_id=self._agent_def.name if self._agent_def is not None else "",
+            timestamp=time.time(),
+            turn_index=self._context_manager.turn,
+            token_count=sum(f.token_estimate for f in fragments),
+            context_window=window,
+            system_prompt_hash=(
+                hashlib.sha256(personality.encode()).hexdigest() if personality else ""
+            ),
+            taint_active=bool(any_tainted),
+            external_read_count=self._taint_engine.external_read_count(),
+            taint_canaries=canaries,
+        )
+
+    async def _notify_context_taps(self) -> None:
+        """Push the current context view to attached taps. Must not raise — a
+        failing observer never disturbs the governance path."""
+        if not self._context_taps:
+            return
+        try:
+            view = self._build_context_view()
+        except Exception:
+            _log.warning(
+                "session: failed to build SessionContextView session=%s",
+                self._session_id, exc_info=True,
+            )
+            return
+        for tap in self._context_taps:
+            try:
+                await tap.on_context_event(view)
+            except Exception:
+                _log.warning(
+                    "session: context tap %r failed session=%s",
+                    type(tap).__name__, self._session_id, exc_info=True,
+                )
 
     async def notify_behavioral_drift(self, agent_id: str, action: str) -> None:
         """

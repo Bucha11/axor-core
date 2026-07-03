@@ -57,6 +57,19 @@ class ContextManager:
         self._pinned_fragments: list[ContextFragment] = []  # never compressed/evicted
         self._recent_outputs: list[str] = []
 
+    @property
+    def turn(self) -> int:
+        """Current turn index (increments on each build())."""
+        return self._turn
+
+    def observable_fragments(self) -> tuple[ContextFragment, ...]:
+        """Read-only snapshot of the pinned + accumulated fragments.
+
+        For observation seams (SessionContextView) — frozen dataclasses in a
+        fresh tuple, so a consumer cannot mutate manager state through it.
+        """
+        return tuple(self._pinned_fragments) + tuple(self._all_fragments)
+
     def pin_fragment(self, fragment: ContextFragment) -> None:
         """
         Add a pinned fragment that survives all compression and selection.
