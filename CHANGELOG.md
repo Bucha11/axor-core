@@ -6,6 +6,14 @@ The kernel/platform split and one-implementation gate engine.
 
 ### Added
 
+- **`contracts/observation.py` — the Core → Probe observation seam.**
+  `SessionContextView` (structural post-turn context snapshot, incl.
+  `taint_canaries` drawn from `ContextFragment.taint_mark`) and the `ContextTap`
+  protocol axor-probe's `CoreContextTap` matches structurally (P-34).
+  `GovernedSession` accepts `context_taps=[...]` and pushes a view after each
+  `run()` turn — observe-only, tap failures are logged and never disturb the
+  governance path. Supporting read-only telemetry: `ContextManager.turn` /
+  `observable_fragments()` and `TaintEngine.external_read_count()`.
 - **Trust rings, machine-enforced.** Subsystems grouped into Ring 0 (kernel — the
   TCB), Ring 1 (runtime), Ring 2 (platform). An `import-linter` `kernel-purity`
   contract (`.importlinter`, run in CI) forbids the kernel from importing the

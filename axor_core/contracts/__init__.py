@@ -100,6 +100,10 @@ from axor_core.contracts.session import (
     ToolInvocationRecord,
     SessionSink,
 )
+from axor_core.contracts.observation import (
+    SessionContextView,
+    ContextTap,
+)
 
 __all__ = [
     # anomaly
@@ -141,4 +145,6 @@ __all__ = [
     "Embedder", "TelemetrySink",
     # session audit (Core → Sentinel seam)
     "SessionAuditRecord", "ToolInvocationRecord", "SessionSink",
+    # context observation (Core → Probe seam)
+    "SessionContextView", "ContextTap",
 ]
