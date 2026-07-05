@@ -136,6 +136,7 @@ class IntentLoop:
         reputation_enricher: "ReputationEnricher | None" = None,
         max_intents_per_session: int | None = None,
         max_total_spawns: int | None = None,
+        budget_cap_calls: int | None = None,
         value_policies: "dict | None" = None,
         consequence_overrides: "dict | None" = None,
         positional_sinks: "frozenset[str] | set[str] | None" = None,
@@ -175,6 +176,14 @@ class IntentLoop:
         # DoS guards — opt-in (None = unlimited). GovernedSession sets prod defaults.
         self._max_intents_per_session = max_intents_per_session
         self._max_total_spawns = max_total_spawns
+        # Budget: an operator-declared ceiling on APPROVED tool calls per run
+        # (spec §15). Enforced HERE at the loop boundary — the same cap the replay
+        # kernel checks (axor_core.kernel.replay.evaluate_call, category="budget"),
+        # so a run and its counterfactual agree on when the budget is exhausted.
+        # Exhaustion is a typed denial (recorded like any gate denial and fed to
+        # degradation), never a silent overrun. None = unlimited.
+        self._budget_cap_calls = budget_cap_calls
+        self._budget_spent_calls = 0
         self._value_policies = value_policies or {}
         # Registration validator: reject value policies that try to discharge a
         # field requiring rich-syntax (fuzz) checking with a simple decidable
@@ -519,6 +528,31 @@ class IntentLoop:
                 result=denial_resp.to_tool_result(),
             )
 
+        # Budget cap (spec §15) — enforced at the loop boundary, in replay-parity
+        # order (capability passed above; budget before the consequence/value/taint
+        # cascade). The N+1th APPROVED call is denied: spent counts only calls that
+        # cleared every gate (incremented at the execute site below), so a
+        # gate-denied call burns no budget, exactly as the replay kernel folds it.
+        # A budget denial is a typed fact (recorded + fed to degradation), so a run
+        # that hits its ceiling stops loudly — it never silently overruns.
+        if (
+            self._budget_cap_calls is not None
+            and self._budget_spent_calls >= self._budget_cap_calls
+        ):
+            reason = (
+                f"budget: call cap {self._budget_cap_calls} exhausted "
+                f"({self._budget_spent_calls} spent)"
+            )
+            self._record_denial(intent, reason, envelope)
+            denial_resp = _make_denial_response(reason, "budget")
+            self._record_degradation_signal(intent, denial_resp)
+            return ResolvedIntent(
+                intent=intent,
+                approved=False,
+                reason=reason,
+                result=denial_resp.to_tool_result(),
+            )
+
         # Normalize early: the consequence gate needs the operation enum to
         # escalate a generic sink whose command is power-state-changing (e.g.
         # `bash shutdown`). Pure structural transform; reputation enrichment stays
@@ -768,6 +802,12 @@ class IntentLoop:
         # by any gate above returned earlier and burned nothing.
         if pending_consumption is not None:
             pending_consumption.commit()
+
+        # Consume one unit of budget for this approved call, mirroring the replay
+        # kernel (which counts every non-DENY TOOL_CALL). Counted here — after all
+        # gates pass, before execute — so an execution error still counts (it was
+        # not a gate denial), keeping runtime and counterfactual budgets identical.
+        self._budget_spent_calls += 1
 
         # approved or transformed — emit the appropriate trace event
         is_transform = decision.kind == PolicyDecisionKind.TRANSFORM

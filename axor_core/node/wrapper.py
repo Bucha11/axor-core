@@ -111,6 +111,7 @@ class GovernedNode:
         degradation_engine: "DegradationEngine | None" = None,
         max_intents_per_session: int | None = 1000,
         max_total_spawns: int | None = 200,
+        budget_cap_calls: int | None = None,
         consequence_overrides: "dict | None" = None,
         value_policies: "dict | None" = None,
         positional_sinks: "frozenset[str] | set[str] | None" = None,
@@ -145,6 +146,7 @@ class GovernedNode:
         self._degradation_engine = degradation_engine
         self._max_intents_per_session = max_intents_per_session
         self._max_total_spawns = max_total_spawns
+        self._budget_cap_calls = budget_cap_calls
         self._consequence_overrides = consequence_overrides or {}
         self._positional_sinks = frozenset(positional_sinks or ())
         self._egress_sinks = frozenset(egress_sinks or ())
@@ -330,6 +332,7 @@ class GovernedNode:
             degradation_engine=self._degradation_engine,
             max_intents_per_session=self._max_intents_per_session,
             max_total_spawns=self._max_total_spawns,
+            budget_cap_calls=self._budget_cap_calls,
             consequence_overrides=self._consequence_overrides,
             value_policies=self._value_policies,
             positional_sinks=self._positional_sinks,
@@ -530,6 +533,7 @@ class GovernedNode:
             degradation_engine=self._degradation_engine,
             max_intents_per_session=self._max_intents_per_session,
             max_total_spawns=self._max_total_spawns,
+            budget_cap_calls=self._budget_cap_calls,
             taint_engine=child_taint,
             consequence_overrides=self._consequence_overrides,
             value_policies=self._value_policies,
