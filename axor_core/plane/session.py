@@ -74,6 +74,7 @@ class PlaneSession:
     budget_cap_calls: int | None = None
     _pending_injection: Injection | None = None
     _pending_excision: Excision | None = None
+    _pending_replan: dict | None = None
     consumed_ids: set[str] = field(default_factory=set)
     outbox: list[dict] = field(default_factory=list)
 
@@ -132,6 +133,17 @@ class PlaneSession:
                 return effect
             self.budget_cap_calls = requested
 
+        if state.get("replan"):
+            # Replan is a one-shot operator directive (not a lattice field): "drop
+            # the current plan and reconsider" surfaced to the runtime at the next
+            # intent boundary. Idempotent by id like injection/excision, so a
+            # replayed snapshot after reconnect does not re-fire it.
+            rp = state["replan"]
+            self._pending_replan = {
+                "id": str(rp.get("id", "")) if isinstance(rp, dict) else "",
+                "reason": str(rp.get("reason", "")) if isinstance(rp, dict) else "",
+                "operator": str(rp.get("operator", "")) if isinstance(rp, dict) else "",
+            }
         if state.get("pending_injection"):
             inj = state["pending_injection"]
             self._pending_injection = Injection(
@@ -225,6 +237,28 @@ class PlaneSession:
             },
         })
         return exc
+
+    def take_pending_replan(self) -> dict | None:
+        """One-shot replan directive for the runtime to consume at the intent
+        boundary (at most once by id). A stopped node absorbs it. Returns the
+        directive ({id, reason, operator}) or None."""
+        rp = self._pending_replan
+        if rp is None:
+            return None
+        self._pending_replan = None
+        rid = rp.get("id", "")
+        if rid and rid in self.consumed_ids:
+            return None
+        if self.stopped:
+            self.outbox.append({
+                "kind": "replan_refused",
+                "payload": {"id": rid, "reason": "stopped"},
+            })
+            return None
+        if rid:
+            self.consumed_ids.add(rid)
+        self.outbox.append({"kind": "replan_applied", "payload": {"id": rid}})
+        return rp
 
     # ── upstream ──────────────────────────────────────────────────────────────
 

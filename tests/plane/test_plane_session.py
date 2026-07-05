@@ -132,6 +132,24 @@ def test_excision_provenance_guard_refuses_whole_heal() -> None:
     assert emitted["payload"]["refs"] == ["v1", "v2"]
 
 
+def test_replan_is_one_shot_and_absorbed_when_stopped() -> None:
+    s = PlaneSession(node_id="n0")
+    s.apply_snapshot(1, {"replan": {"id": "rp1", "reason": "goal changed",
+                                    "operator": "op"}})
+    taken = s.take_pending_replan()
+    assert taken is not None and taken["reason"] == "goal changed"
+    assert any(o["kind"] == "replan_applied" for o in s.outbox)
+    # replayed snapshot after reconnect: same id is a no-op
+    s.apply_snapshot(2, {"replan": {"id": "rp1", "reason": "goal changed"}})
+    assert s.take_pending_replan() is None
+
+    stopped = PlaneSession(node_id="n1")
+    stopped.apply_snapshot(1, {"replan": {"id": "rp2", "reason": "x"}})
+    stopped.apply_snapshot(2, {"stopped": True})
+    assert stopped.take_pending_replan() is None
+    assert any(o["kind"] == "replan_refused" for o in stopped.outbox)
+
+
 def test_heartbeat_carries_applied_version_and_consumed_ids() -> None:
     s = PlaneSession(node_id="n0", test_bench=True)
     s.apply_snapshot(4, {"pending_injection": {"id": "i1", "text": "x",
