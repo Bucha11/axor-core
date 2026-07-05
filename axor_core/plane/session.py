@@ -19,9 +19,9 @@ to flush (telemetry direction owns durability, protocol section 5).
 """
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass, field
 
+from axor_core.kernel.jcs import canonicalize
 from axor_core.kernel.state import Excision, Injection, excision_refused_refs
 
 
@@ -34,10 +34,10 @@ class AppliedEffect:
 
 
 def _canonical(value: dict) -> bytes:
-    """The JCS (RFC 8785) subset used for signed payloads: float-free JSON."""
-    return json.dumps(
-        value, sort_keys=True, separators=(",", ":"), ensure_ascii=False
-    ).encode("utf-8")
+    """RFC 8785 canonical bytes for a signed payload — the one implementation
+    the backend also uses (axor_core.kernel.jcs), so both sides agree byte for
+    byte and floats are rejected consistently."""
+    return canonicalize(value)
 
 
 def _verify_ed25519(pubkey_hex: str, message: bytes, sig_hex: str) -> bool:
@@ -169,6 +169,15 @@ class PlaneSession:
             return None
         self._pending_injection = None
         if inj.injection_id in self.consumed_ids:
+            return None
+        if self.stopped:
+            # A stopped node absorbs later effects (the lattice, spec 8) — an
+            # injection is one of them. Refuse it rather than mutating a context
+            # the node will never act on again.
+            self.outbox.append({
+                "kind": "injection_refused",
+                "payload": {"id": inj.injection_id, "reason": "stopped"},
+            })
             return None
         if not self.test_bench:
             self.outbox.append({

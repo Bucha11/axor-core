@@ -15,6 +15,7 @@ Everything here is stdlib-only and free of I/O; the purity is pinned by
 """
 from axor_core.kernel.degradation import compute_level, covered_fact_ids
 from axor_core.kernel.errors import InvariantViolation, KernelError, SchemaVersionError
+from axor_core.kernel.jcs import CanonicalizationError, canonicalize
 from axor_core.kernel.events import (
     SCHEMA_VERSION,
     Event,
@@ -73,4 +74,6 @@ __all__ = [
     "KernelError",
     "SchemaVersionError",
     "InvariantViolation",
+    "canonicalize",
+    "CanonicalizationError",
 ]

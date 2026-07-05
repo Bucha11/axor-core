@@ -104,6 +104,17 @@ def test_injection_at_most_once_and_test_bench_gated() -> None:
                if o["kind"] == "injection_consumed") == 1
 
 
+def test_injection_refused_when_stopped() -> None:
+    inj = {"id": "inj_9", "text": "x", "reason": "r", "operator": "op", "sig": "s"}
+    s = PlaneSession(node_id="n0", test_bench=True)
+    s.apply_snapshot(1, {"pending_injection": inj})
+    s.apply_snapshot(2, {"stopped": True})  # stop AFTER the injection is pending
+    assert s.take_pending_injection() is None  # absorbed by the stopped lattice
+    refusal = next(o for o in s.outbox if o["kind"] == "injection_refused")
+    assert refusal["payload"]["reason"] == "stopped"
+    assert "inj_9" not in s.consumed_ids  # refused, not consumed
+
+
 def test_excision_provenance_guard_refuses_whole_heal() -> None:
     exc = {"id": "exc_1", "target_refs": ["v1", "v2"], "reason": "drift",
            "operator": "op", "sig": "s"}
