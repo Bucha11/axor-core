@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any, AsyncIterator, Awaitable, Callable
 
 from axor_core.capability.executor import CapabilityExecutor
 from axor_core.contracts.anomaly import NormalizedIntent
+from axor_core.contracts.cancel import CancelReason
 from axor_core.contracts.envelope import ExecutionEnvelope
 from axor_core.contracts.intent import Intent, IntentKind, ResolvedIntent
 from axor_core.contracts.canonical import ConsequenceClass
@@ -63,6 +64,7 @@ from axor_core.federation.gateway import FederationError
 from axor_core.taint.causal_root import CausalRoot
 
 if TYPE_CHECKING:
+    from axor_core.contracts.admission import AdmissionController
     from axor_core.contracts.reputation import ReputationEnricher
     from axor_core.degradation.engine import DegradationEngine
     from axor_core.contracts.provenance import ValueProvenance
@@ -149,6 +151,7 @@ class IntentLoop:
         require_tool_roles: bool = False,
         trajectory_observers: "list | None" = None,
         invocation_recorder: "Callable[[str, dict, bool], None] | None" = None,
+        admission: "AdmissionController | None" = None,
     ) -> None:
         self._executor = capability_executor
         self._trace_events = trace_events
@@ -229,6 +232,11 @@ class IntentLoop:
         # executed) for the session's closed-session record. Observe-only; never
         # gates execution. Default None → zero overhead when sentinel is not attached.
         self._invocation_recorder = invocation_recorder
+        # Optional control-plane admission (advisory overlay, spec 12.0). None =
+        # no plane attached → governance never waits on the network. Polled at
+        # the intent boundary only, so pause/stop take effect between intents,
+        # never mid-effect.
+        self._admission = admission
         # STRICT obligation: every egress sink must carry an enum allowlist (the
         # sound, paraphrase-proof destination control). Fail closed at construction.
         if require_egress_allowlist:
@@ -280,6 +288,20 @@ class IntentLoop:
         async for event in stream:
             # cooperative cancellation — check before every event
             if envelope.cancel_token.is_cancelled():
+                self._record_cancellation(envelope)
+                return
+
+            # Control-plane admission (advisory overlay). Holds while paused,
+            # returns False on stop; a disconnected/absent plane always admits.
+            # The plane cannot widen — it can only stop or hold — so this is
+            # never part of the allow decision.
+            if self._admission is not None and not await self._admission.await_admission(
+                envelope.node_id
+            ):
+                if not envelope.cancel_token.is_cancelled():
+                    envelope.cancel_token.cancel(
+                        CancelReason.USER_ABORT, "stopped via control plane"
+                    )
                 self._record_cancellation(envelope)
                 return
 

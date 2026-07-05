@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import dataclasses
 import logging
-from typing import Callable
+from typing import TYPE_CHECKING, Callable
+
+if TYPE_CHECKING:
+    from axor_core.contracts.admission import AdmissionController
 
 from axor_core import trace as trace_mod
 from axor_core.budget.policy_engine import BudgetPolicyEngine, OptimizationAction
@@ -123,8 +126,10 @@ class GovernedNode:
         invocation_recorder: "Callable[[str, dict, bool], None] | None" = None,
         adjudicator=None,
         federation_gateway=None,
+        admission: "AdmissionController | None" = None,
     ) -> None:
         self._executor = executor
+        self._admission = admission
         self._child_executor = child_executor  # None → reuse parent executor
         self._cap_executor = capability_executor
         self._analyzer = analyzer
@@ -340,6 +345,7 @@ class GovernedNode:
             invocation_recorder=self._invocation_recorder,
             adjudicator=self._adjudicator,
             federation_gateway=self._federation_gateway,
+            admission=self._admission,
         )
 
         raw_output, raw_payload, budget_export_mode = await self._collect_stream(
@@ -540,6 +546,7 @@ class GovernedNode:
             invocation_recorder=self._invocation_recorder,
             adjudicator=self._adjudicator,
             federation_gateway=self._federation_gateway,
+            admission=self._admission,  # stop cascades down the subtree (spec 12.2)
         )
 
         child_cancel = envelope.cancel_token.child_token()

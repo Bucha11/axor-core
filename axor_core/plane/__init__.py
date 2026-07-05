@@ -8,6 +8,14 @@ injection/excision with the provenance guard). :class:`PlaneClient` is the
 thin I/O wrapper (SSE out-dial + telemetry POST) behind the optional ``plane``
 extra — axor-core keeps zero required dependencies.
 """
+from axor_core.plane.admission import PlaneAdmission
+from axor_core.plane.bridge import trace_event_to_kernel, trace_to_kernel
 from axor_core.plane.session import AppliedEffect, PlaneSession
 
-__all__ = ["AppliedEffect", "PlaneSession"]
+__all__ = [
+    "AppliedEffect",
+    "PlaneSession",
+    "PlaneAdmission",
+    "trace_event_to_kernel",
+    "trace_to_kernel",
+]

@@ -119,6 +119,7 @@ class GovernedSession:
         detection_floor: float | None = None,
         adjudicator=None,
         federation_gateway=None,
+        admission=None,
         session_sink: "SessionSink | None" = None,
         context_taps: "list[ContextTap] | None" = None,
     ) -> None:
@@ -151,6 +152,7 @@ class GovernedSession:
         self._detection_floor = detection_floor  # opt-in; None = detection observe-only
         self._adjudicator = adjudicator          # opt-in advisory layer; None = off
         self._federation_gateway = federation_gateway  # opt-in A2A trust; None = off
+        self._admission = admission  # opt-in control-plane admission; None = no plane
         _overlay_ceiling = None
         _overlay_escalation = None
         if profile is not None:
@@ -801,6 +803,7 @@ class GovernedSession:
             value_policies=self._value_policies,
             adjudicator=self._adjudicator,
             federation_gateway=self._federation_gateway,
+            admission=self._admission,
         )
 
     async def _handle_command(self, raw: str) -> ExecutionResult:
