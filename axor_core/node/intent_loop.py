@@ -137,6 +137,9 @@ class IntentLoop:
         max_intents_per_session: int | None = None,
         max_total_spawns: int | None = None,
         budget_cap_calls: int | None = None,
+        budget_cap_cost: float | None = None,
+        tool_weights: "dict[str, float] | None" = None,
+        default_tool_weight: float = 1.0,
         value_policies: "dict | None" = None,
         consequence_overrides: "dict | None" = None,
         positional_sinks: "frozenset[str] | set[str] | None" = None,
@@ -184,6 +187,14 @@ class IntentLoop:
         # degradation), never a silent overrun. None = unlimited.
         self._budget_cap_calls = budget_cap_calls
         self._budget_spent_calls = 0
+        # Cost budget (spec §15): a cap on the summed per-tool weights of approved
+        # calls, the operator-declared deterministic cost model. Same parity as the
+        # call cap — the replay kernel (KernelConfig.budget_cap_cost / weight_of)
+        # applies the identical would-exceed predicate and weight table.
+        self._budget_cap_cost = budget_cap_cost
+        self._tool_weights = dict(tool_weights or {})
+        self._default_tool_weight = default_tool_weight
+        self._budget_spent_cost = 0.0
         self._value_policies = value_policies or {}
         # Registration validator: reject value policies that try to discharge a
         # field requiring rich-syntax (fuzz) checking with a simple decidable
@@ -535,21 +546,33 @@ class IntentLoop:
         # gate-denied call burns no budget, exactly as the replay kernel folds it.
         # A budget denial is a typed fact (recorded + fed to degradation), so a run
         # that hits its ceiling stops loudly — it never silently overruns.
+        budget_reason: str | None = None
         if (
             self._budget_cap_calls is not None
             and self._budget_spent_calls >= self._budget_cap_calls
         ):
-            reason = (
+            budget_reason = (
                 f"budget: call cap {self._budget_cap_calls} exhausted "
                 f"({self._budget_spent_calls} spent)"
             )
-            self._record_denial(intent, reason, envelope)
-            denial_resp = _make_denial_response(reason, "budget")
+        elif (
+            self._budget_cap_cost is not None
+            and self._budget_spent_cost + self._tool_weight(tool_name)
+            > self._budget_cap_cost
+        ):
+            budget_reason = (
+                f"budget: cost cap {self._budget_cap_cost} exhausted "
+                f"({self._budget_spent_cost} spent, "
+                f"+{self._tool_weight(tool_name)} for '{tool_name}')"
+            )
+        if budget_reason is not None:
+            self._record_denial(intent, budget_reason, envelope)
+            denial_resp = _make_denial_response(budget_reason, "budget")
             self._record_degradation_signal(intent, denial_resp)
             return ResolvedIntent(
                 intent=intent,
                 approved=False,
-                reason=reason,
+                reason=budget_reason,
                 result=denial_resp.to_tool_result(),
             )
 
@@ -808,6 +831,7 @@ class IntentLoop:
         # gates pass, before execute — so an execution error still counts (it was
         # not a gate denial), keeping runtime and counterfactual budgets identical.
         self._budget_spent_calls += 1
+        self._budget_spent_cost += self._tool_weight(tool_name)
 
         # approved or transformed — emit the appropriate trace event
         is_transform = decision.kind == PolicyDecisionKind.TRANSFORM
@@ -903,6 +927,11 @@ class IntentLoop:
                 reason=reason,
                 result=_denial_result(tool_name, reason),
             )
+
+    def _tool_weight(self, tool_name: str) -> float:
+        """Operator-declared cost weight of one call to `tool_name` (spec §15).
+        Mirrors KernelConfig.weight_of so runtime and replay cost agree."""
+        return float(self._tool_weights.get(tool_name, self._default_tool_weight))
 
     def _evaluate_tool_intent(
         self,

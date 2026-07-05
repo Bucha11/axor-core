@@ -165,6 +165,25 @@ def test_budget_cap_counterfactual() -> None:
     assert last.deny is not None and last.deny.category == "budget"
 
 
+def test_budget_cost_cap_with_per_tool_weights() -> None:
+    """Cost budget (spec §15): per-tool weights sum toward a cost cap, and a call
+    that would exceed it is denied. web_search weighs 5, cap is 6 → the first
+    approved call (email_read, weight 1 → cost 1) passes, but web_search (1+5=6,
+    not > 6) still fits, so push the cap to 5: email_read fits (cost 1), then
+    web_search would make 6 > 5 → denied on cost."""
+    cfg = KernelConfig(
+        allowed_tools=_CONFIG.allowed_tools,
+        egress_sinks=frozenset({"slack_post"}),
+        budget_cap_cost=5.0,
+        tool_weights={"web_search": 5.0},
+    )
+    result = replay(_demo_trace(), cfg)
+    web = next(s for s in result.steps if s.event.payload.get("tool") == "web_search")
+    assert web.reevaluated_verdict is Verdict.DENY
+    assert web.deny is not None and web.deny.category == "budget"
+    assert "cost cap" in web.deny.reason
+
+
 def test_facts_drive_level_recompute_in_fold() -> None:
     trace = [
         _ev(0, EventKind.FACT, fact_id="f1", fact_type="denial", severity=2),

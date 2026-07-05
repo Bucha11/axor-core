@@ -94,8 +94,18 @@ class KernelConfig:
     consequence_overrides: dict = field(default_factory=dict)
     max_unattended_consequence: ConsequenceClass = ConsequenceClass.CONSEQUENTIAL
     budget_cap_calls: int | None = None
+    # Cost budget (spec §15): a cap on the summed per-tool weights of approved
+    # calls. tool_weights is the operator-declared weight table; a tool absent
+    # from it costs default_tool_weight. Deterministic → replay-compatible.
+    budget_cap_cost: float | None = None
+    tool_weights: dict = field(default_factory=dict)  # tool -> float
+    default_tool_weight: float = 1.0
     # Counterfactual: these value refs arrive tainted at registration.
     synthetic_taint_refs: frozenset[str] = frozenset()
+
+    def weight_of(self, tool: str) -> float:
+        """The operator-declared cost weight of one call to `tool`."""
+        return float(self.tool_weights.get(tool, self.default_tool_weight))
 
 
 @dataclass(frozen=True)
@@ -203,6 +213,18 @@ def evaluate_call(
             ),
             category="budget",
         )
+    if (
+        config.budget_cap_cost is not None
+        and state.budget_spent_cost + config.weight_of(tool) > config.budget_cap_cost
+    ):
+        return GateDecision(
+            reason=(
+                f"budget: cost cap {config.budget_cap_cost} exhausted "
+                f"({state.budget_spent_cost} spent, "
+                f"+{config.weight_of(tool)} for '{tool}')"
+            ),
+            category="budget",
+        )
     deny = consequence_gate(
         tool,
         normalized.operation,
@@ -290,6 +312,10 @@ def replay(
 
         if event.kind is EventKind.TOOL_CALL and effective is not Verdict.DENY:
             state.budget_spent_calls += 1
+            if config is not None:
+                state.budget_spent_cost += config.weight_of(
+                    str(event.payload.get("tool", ""))
+                )
         elif event.kind is EventKind.TOOL_RESULT:
             ref = event.payload.get("value_ref") or event.causal_root
             if ref:

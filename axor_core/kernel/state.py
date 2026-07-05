@@ -97,6 +97,10 @@ class GovernanceState:
     excised_refs: set[str] = field(default_factory=set)
     floor_active: bool = False
     budget_spent_calls: int = 0
+    # Cost is the sum of per-tool weights of approved calls (spec §15). Kept
+    # alongside the call count so a budget can cap either dimension — an
+    # operator-declared, deterministic cost model that replays identically.
+    budget_spent_cost: float = 0.0
     facts: dict[str, Fact] = field(default_factory=dict)
     consumed_injection_ids: set[str] = field(default_factory=set)
 
@@ -107,6 +111,7 @@ class GovernanceState:
             excised_refs=set(self.excised_refs),
             floor_active=self.floor_active,
             budget_spent_calls=self.budget_spent_calls,
+            budget_spent_cost=self.budget_spent_cost,
             facts=dict(self.facts),
             consumed_injection_ids=set(self.consumed_injection_ids),
         )

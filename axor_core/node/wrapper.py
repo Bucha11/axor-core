@@ -112,6 +112,9 @@ class GovernedNode:
         max_intents_per_session: int | None = 1000,
         max_total_spawns: int | None = 200,
         budget_cap_calls: int | None = None,
+        budget_cap_cost: float | None = None,
+        tool_weights: "dict[str, float] | None" = None,
+        default_tool_weight: float = 1.0,
         consequence_overrides: "dict | None" = None,
         value_policies: "dict | None" = None,
         positional_sinks: "frozenset[str] | set[str] | None" = None,
@@ -147,6 +150,9 @@ class GovernedNode:
         self._max_intents_per_session = max_intents_per_session
         self._max_total_spawns = max_total_spawns
         self._budget_cap_calls = budget_cap_calls
+        self._budget_cap_cost = budget_cap_cost
+        self._tool_weights = dict(tool_weights or {})
+        self._default_tool_weight = default_tool_weight
         self._consequence_overrides = consequence_overrides or {}
         self._positional_sinks = frozenset(positional_sinks or ())
         self._egress_sinks = frozenset(egress_sinks or ())
@@ -333,6 +339,9 @@ class GovernedNode:
             max_intents_per_session=self._max_intents_per_session,
             max_total_spawns=self._max_total_spawns,
             budget_cap_calls=self._budget_cap_calls,
+            budget_cap_cost=self._budget_cap_cost,
+            tool_weights=self._tool_weights,
+            default_tool_weight=self._default_tool_weight,
             consequence_overrides=self._consequence_overrides,
             value_policies=self._value_policies,
             positional_sinks=self._positional_sinks,
@@ -534,6 +543,9 @@ class GovernedNode:
             max_intents_per_session=self._max_intents_per_session,
             max_total_spawns=self._max_total_spawns,
             budget_cap_calls=self._budget_cap_calls,
+            budget_cap_cost=self._budget_cap_cost,
+            tool_weights=self._tool_weights,
+            default_tool_weight=self._default_tool_weight,
             taint_engine=child_taint,
             consequence_overrides=self._consequence_overrides,
             value_policies=self._value_policies,

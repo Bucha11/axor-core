@@ -90,6 +90,17 @@ async def test_budget_cap_denies_the_n_plus_first_call() -> None:
 
 
 @pytest.mark.asyncio
+async def test_cost_cap_with_per_tool_weights() -> None:
+    """Cost budget (spec §15): a call that would push summed per-tool weights over
+    the cap is denied. read costs 3, cap is 5 → first read (0→3) passes, second
+    (3→6 > 5) is denied on the cost dimension."""
+    loop = IntentLoop(capability_executor=_executor(), trace_events=[],
+                      budget_cap_cost=5.0, tool_weights={"read": 3.0})
+    results = await _drive(loop, _envelope(), 3)
+    assert [r["approved"] for r in results] == [True, False, False]
+
+
+@pytest.mark.asyncio
 async def test_no_cap_means_unlimited() -> None:
     loop = IntentLoop(capability_executor=_executor(), trace_events=[],
                       budget_cap_calls=None)
