@@ -349,6 +349,18 @@ What benchmarks do **not** prove: full prompt injection prevention, covert chann
 | [`axor-memory-sqlite`](https://github.com/Bucha11/axor-memory-sqlite) | Cross-session memory (SQLite) |
 | [`axor-telemetry`](https://github.com/Bucha11/axor-telemetry) | Privacy-preserving governance feedback |
 | [`axor-benchmarks`](https://github.com/Bucha11/axor-benchmarks) | Governance proof layer |
+| [`axor-control-plane`](https://github.com/Bucha11/axor-control-plane) | Runtime governance & evaluation **platform** built on this kernel |
+
+### Control plane
+
+[**axor-control-plane**](https://github.com/Bucha11/axor-control-plane) is the platform that operates `axor-core`-governed agents at runtime. The kernel enforces; the control plane observes, replays, and operates a fleet:
+
+- **Eval** — run a fault scenario; a caught discrepancy (observed reality vs. the agent's claim) becomes a shareable, exportable **EvidenceCase**.
+- **Replay** — scrub any run and fork counterfactuals ("no exec capability", "this value arrives tainted", "budget cap = N") that re-gate the recorded trace deterministically, with a value-provenance / taint graph.
+- **Control** — live topology of governed nodes: pause / stop / replan / inject / attest / budget-cap, and cascade-stop over a subtree.
+- **Regression** — pin runs into a corpus and replay it under a candidate policy: two-sided, deterministic CI.
+
+Replay reuses the *same* pure kernel (`axor_core.kernel`) that enforcement does, so what you review is what actually ran.
 
 ---
 
