@@ -4,7 +4,7 @@
 [![Security](https://github.com/Bucha11/axor-core/actions/workflows/security.yml/badge.svg?branch=main)](https://github.com/Bucha11/axor-core/actions/workflows/security.yml)
 [![PyPI](https://img.shields.io/pypi/v/axor-core?cacheSeconds=300)](https://pypi.org/project/axor-core/)
 [![Python](https://img.shields.io/pypi/pyversions/axor-core?cacheSeconds=300)](https://pypi.org/project/axor-core/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
 **Execution governance kernel for AI agents.**
 
@@ -408,7 +408,7 @@ When submitting a security fix: include a test that reproduces the bypass before
 
 ## License
 
-MIT
+Apache-2.0 — see [LICENSE](LICENSE).
 
 ---
 
