@@ -192,14 +192,24 @@ mock-OpenRouter normalizers produce **identical `NormalizedIntent`** for the sam
 semantic intent (README "Provider Independence"; `tests/normalizers/`). Swap the
 executor, policy semantics are byte-identical.
 
-**4.4 Two callers, one decision core (the anti-drift design choice).** The six
-structural gates live once as pure functions in `policy/gates.py`. Two callers:
+**4.4 Two callers, one decision core (the anti-drift design choice).** The full
+per-call sequence has nine gates (Appendix B / governance-model §2). **Six of them —
+the content/provenance decision predicates** (consequence, value-policy, SSRF,
+positional, carrier, per-value taint + floor) — **live once as pure stateless
+functions in `policy/gates.py`**; this shared subset is the "decision core." The
+remaining three are deliberately not in it: **capability** and **degradation** read
+orchestration/session state that exists only when axor drives the loop (the
+`ToolCallGovernor` docstring explicitly ships without capability/lease/degradation —
+a host framework owns its own tool surface), and the **adjudicator** is optional,
+advisory, deny-only (off the trusted path, T0). State this 6 + 2 + 1 split in the
+paper — otherwise "six" vs Appendix B's nine reads as an inconsistency. Two callers:
 the streaming `IntentLoop` (for frameworks where axor drives the loop) and the
 synchronous `ToolCallGovernor` (for a framework that owns its own agent loop — the
 AgentDojo and LangChain path). *Rationale:* the decision logic exists exactly once
 and **cannot drift** between integration styles — pinned by tests
-(`docs/governance-model.md §11`). This directly answers "how do you integrate >1
-framework without forking the policy?"
+(`docs/governance-model.md §11`); the anti-drift claim is scoped to the shared six
+(the caller-state gates *differ by design* between callers). This directly answers
+"how do you integrate >1 framework without forking the policy?"
 
 **4.5 Two supporting facts (condensed — 4.2 and 4.4 are the load-bearing parts; full
 detail → Appendix).** Keep these to a paragraph each so they don't dilute the seam:

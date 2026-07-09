@@ -181,6 +181,14 @@ pass" framing.
 - **Compare own-baseline deltas, never absolute utilities across harnesses** (84.8 ≠
   95.2); verify every CaMeL delta is benign/no-attack (Table 2, not Table 3).
 - **§6.3 methods statement is paper-ready — use verbatim** (it lives in the outline).
+- **"Six structural gates" is the shared pure subset, never the full sequence.** The
+  full per-call sequence is nine gates (governance-model §2 / Appendix B): the six
+  shared predicates in `policy/gates.py` (consequence, value-policy, SSRF, positional,
+  carrier, taint+floor) + two caller-owned state gates (capability, degradation —
+  present in `IntentLoop`, deliberately absent from `ToolCallGovernor`) + the optional
+  advisory adjudicator. Always present it as 6 + 2 + 1, and scope the anti-drift claim
+  to the shared six — the caller-state gates differ between callers *by design*, and a
+  reviewer who tests the governor will otherwise call "cannot drift" false.
 
 ## 6. Haoyu context (process)
 
