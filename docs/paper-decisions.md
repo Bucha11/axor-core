@@ -26,7 +26,25 @@ questions for Haoyu. Nothing here goes into the paper verbatim except where mark
    (Sabelfeld & Myers JSAC 2003; Zdancewic & Myers robust declassification; DLM).
 4. **Build the Appendix E integration-cost table** (per framework: normalizer LOC,
    agent-loop changes = 0, policy changes = 0) — it turns §6.5's adoption claim from
-   assertion into data.
+   assertion into data. **Measured LOC (verified 2026-07-09 via tokenize-based count;
+   the draft's ~120/~150/~180 were guesses — purge them):**
+
+   | integration | file | raw lines | code lines* |
+   |---|---|---|---|
+   | Claude normalizer | `tests/normalizers/mock_claude_normalizer.py` | 213 | 181 |
+   | LangChain normalizer | `tests/normalizers/mock_langchain.py` | 138 | 113 |
+   | OpenAI normalizer | `tests/normalizers/mock_openai_normalizer.py` | 64 | 55 |
+   | OpenRouter normalizer | `tests/normalizers/mock_openrouter_normalizer.py` | 71 | 61 |
+   | AgentDojo executor shim | `GovernedToolsExecutor`, `examples/agentdojo/agentdojo_adapter.py:293` | 62 | 56 |
+
+   \* code lines = excluding blanks, comments, and docstrings (Python `tokenize`);
+   state the counting method in the table caption. Note honestly that the
+   per-provider normalizers live in `tests/normalizers/` as the provider-independence
+   test shells (§4.3) — the shipped default is `axor_core/policy/normalizer.py`; the
+   AgentDojo shim + suite YAML is the one *end-to-end production-shaped* integration
+   (it produced all §6 numbers). Rest of the file around the shim
+   (`agentdojo_adapter.py` lines 49–292) is LLM-client plumbing for the harness, not
+   axor integration — do not count it.
 
 ---
 
