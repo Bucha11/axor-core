@@ -181,6 +181,17 @@ pass" framing.
 - **Compare own-baseline deltas, never absolute utilities across harnesses** (84.8 ≠
   95.2); verify every CaMeL delta is benign/no-attack (Table 2, not Table 3).
 - **§6.3 methods statement is paper-ready — use verbatim** (it lives in the outline).
+- **The §6 evaluation ran the synchronous-governor path only — verified in code, not
+  from memory.** `examples/agentdojo/run_agentdojo.py:70` builds a `ToolCallGovernor`
+  directly; `GovernedToolsExecutor` calls it per tool call. So the benchmark exercised
+  the six shared predicates + supersession, and did NOT exercise capability,
+  degradation, leases, or the adjudicator (`axor_core/governor.py` docstring: "It
+  deliberately does not cover capability/lease/degradation"). Canon was ambiguous on
+  this (governance-model §2 listed the sequence without a caller split) — fixed: §2
+  now has a "Which steps run where" paragraph (6 shared / 2 caller-owned / 1
+  advisory). §6.1 and §8 of the outline state the consequence honestly: ASR=0 does not
+  depend on the absent gates (deny-only); the measured utility cost is strictly a
+  lower bound for a streaming deployment (expected delta ≈ 0 on this benchmark).
 - **"Six structural gates" is the shared pure subset, never the full sequence.** The
   full per-call sequence is nine gates (governance-model §2 / Appendix B): the six
   shared predicates in `policy/gates.py` (consequence, value-policy, SSRF, positional,

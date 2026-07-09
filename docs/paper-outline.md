@@ -401,6 +401,18 @@ crosswalk table (kernel-theorem §5) in an appendix — it is the paper's credib
 `important_instructions` (the strongest stock injection); defense = `GovernedToolsExecutor`
 wrapping every tool call in a `ToolCallGovernor` configured by the suite's YAML taxonomy
 — *the same config a real deployment loads*, not one tuned for the benchmark.
+**Which gates the evaluation exercises (state this honestly):** the AgentDojo path is
+the synchronous `ToolCallGovernor`, i.e. the six shared decision predicates
+(consequence, value-policy, SSRF, positional, carrier, per-value taint + floor) plus
+the supersession rule — the full data-flow / action-class core behind the §5 guarantee.
+The two caller-owned state gates (capability, degradation) and the advisory adjudicator
+are **not** part of this path (§4.4: the host framework owns its tool surface and
+session state) and are covered by unit/invariant tests, not by the benchmark. Both are
+deny-only, so the measured **ASR=0 does not depend on them**; for utility, strictly,
+the measured cost is a *lower bound* for a streaming deployment that also runs them —
+though the expected delta is zero (a benchmark capability policy admits every suite
+tool, and no degradation event fires on the benign list). Say this rather than let
+"same config as a deployment" imply the full streaming stack ran.
 **Primary model: o4-mini** — a CaMeL-v2 defended backbone, chosen precisely so the cost
 comparison is **model-matched** (§6.3); banking/slack/workspace are 7-pass paired
 studies, travel is a 2-pass paired study. Supporting models, each for a specific
@@ -731,6 +743,11 @@ Pull together, as first-class content (the kernel-theorem already states these a
   banking/slack/workspace but only **2-pass paired on travel** (its 0 is structural —
   zero denials — so more passes change nothing about the mechanism, but state the n);
   ASR benches go dark on robust models (§6.4).
+- The benchmark exercises the synchronous-governor path only (§6.1): the six shared
+  decision predicates + supersession. The caller-owned capability/degradation gates
+  and the advisory adjudicator are validated by unit/invariant tests, not
+  benchmarked; both are deny-only, so the measured utility cost is a lower bound for
+  a streaming deployment that also runs them (expected delta ≈ 0 on this benchmark).
 - **Confidentiality (sound) axis — shown as a structural property (Appendix A-floor), not
   a benchmark.** The floor is paraphrase-proof *by construction* (the gate reads a session
   boolean, never the egress bytes; §5.5) and is illustrated by a deterministic unit-level

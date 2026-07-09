@@ -100,6 +100,16 @@ In order. Any denial is final.
    produced by an external/web/secret read is recorded with the right labels so a
    later sink carrying it is gated.
 
+**Which steps run where.** Steps 2–3 and 5–8 — consequence, value policies, SSRF,
+positional admission, carrier, and per-value taint with the floor — are the six
+shared pure predicates in `policy/gates.py`, run identically by both enforcement
+paths (the streaming `IntentLoop` and the synchronous `ToolCallGovernor`). Steps 1
+(capability) and 4 (degradation) are orchestration/session-state gates owned by the
+caller: the streaming path runs them; the synchronous governor deliberately does not
+(the host framework owns its tool surface and session state — see the
+`axor_core/governor.py` module docstring). Step 9 (adjudicator) is optional and
+advisory on either path. The §11 "cannot drift" guarantee is about the shared six.
+
 A separate, opt-in step (federation) decides the provenance of values that arrive
 from *other agents* — see §8.
 
