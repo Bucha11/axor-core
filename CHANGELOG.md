@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+(nothing yet)
+
+## 0.9.1 — 2026-07-10
+
 The kernel/platform split and one-implementation gate engine.
 
 ### Added
