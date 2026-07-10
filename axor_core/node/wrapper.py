@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import dataclasses
 import logging
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, Callable
 
 if TYPE_CHECKING:
@@ -131,7 +132,14 @@ class GovernedNode:
         adjudicator=None,
         federation_gateway=None,
         admission: "AdmissionController | None" = None,
+        context_taps: "Sequence | None" = None,
+        agent_id: str = "",
     ) -> None:
+        # Optional live-context taps (hot path) so an external monitor
+        # (axor-probe) can build drift snapshots. None/empty → the node-level
+        # emit is a no-op, zero overhead. agent_id rides into the emitted view.
+        self._context_taps = context_taps
+        self._agent_id = agent_id
         self._executor = executor
         self._admission = admission
         self._child_executor = child_executor  # None → reuse parent executor
@@ -240,6 +248,17 @@ class GovernedNode:
             )
         else:
             context = self._stub_context_view(raw_state, policy, lineage)
+
+        # Fire the live-context observation seam (hot path, fail-safe, no-op when
+        # no tap is attached). External monitors (axor-probe) build drift
+        # snapshots from this; core never imports them. Imported locally, matching
+        # this module's existing lazy-import style.
+        from axor_core.node.context_observation import emit_context_view
+
+        await emit_context_view(
+            self._context_taps, context,
+            session_id=raw_state.session_id, agent_id=self._agent_id,
+        )
 
         # ── 4. Envelope ────────────────────────────────────────────────────────
         extension_tools = (

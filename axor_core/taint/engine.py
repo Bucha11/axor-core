@@ -73,10 +73,6 @@ class TaintEngine:
         # against per-value tracking honestly.
         self._session_any_tainted = False
         self._session_any_sensitive = False
-        # Count of externally-sourced (tainted-root) value registrations this
-        # session. Observe-only telemetry, same spirit as the shadow flags —
-        # read by the SessionContextView observation seam, never by `allow`.
-        self._external_registrations = 0
         # Confidentiality floor (sound). An IDENTITY-BOUND registry of outstanding
         # sensitive reads: fingerprint(secret) -> count of un-released reads of THAT
         # exact secret. While non-empty the session is egress-restricted — soundly,
@@ -102,7 +98,6 @@ class TaintEngine:
         self._ledger.register(content, root)
         if root.is_tainted:
             self._session_any_tainted = True
-            self._external_registrations += 1
         if root.sensitive:
             self._session_any_sensitive = True
             # Arm the floor on the READ fact, keyed by the secret's fingerprint —
@@ -126,14 +121,6 @@ class TaintEngine:
         governance-released). An ENFORCEMENT input — unlike session_shadow. Once the
         outstanding map saturates it stays True (sticky) until governance clears."""
         return self._floor_saturated or bool(self._outstanding)
-
-    def external_read_count(self) -> int:
-        """Number of externally-sourced values registered this session.
-
-        Observe-only, like session_shadow — feeds the SessionContextView
-        observation seam, never an enforcement decision.
-        """
-        return self._external_registrations
 
     def session_shadow(self) -> tuple[bool, bool]:
         """(any_tainted, any_sensitive) for the session-wide shadow model.
