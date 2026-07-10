@@ -7,13 +7,13 @@ name = "axor-core"
 version = "0.8.0"
 description = "Provider-agnostic governance kernel for agent systems"
 readme = "README.md"
-license = { text = "MIT" }
+license = { text = "Apache-2.0" }
 requires-python = ">=3.11"
 keywords = ["agents", "governance", "llm", "ai"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
+    "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Topic :: Software Development :: Libraries",
@@ -33,6 +33,13 @@ federation = [
 # Core stays dependency-free; from_dict works without this.
 config = [
     "PyYAML>=6.0",
+]
+# Control-plane client (SSE out-dial + telemetry). Core stays dependency-free;
+# PlaneSession semantics work without these — only PlaneClient I/O and command
+# signature verification need them.
+plane = [
+    "httpx>=0.27",
+    "cryptography>=42.0",
 ]
 dev = [
     "pytest>=8.0",

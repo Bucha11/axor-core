@@ -4,7 +4,7 @@
 [![Security](https://github.com/Bucha11/axor-core/actions/workflows/security.yml/badge.svg?branch=main)](https://github.com/Bucha11/axor-core/actions/workflows/security.yml)
 [![PyPI](https://img.shields.io/pypi/v/axor-core?cacheSeconds=300)](https://pypi.org/project/axor-core/)
 [![Python](https://img.shields.io/pypi/pyversions/axor-core?cacheSeconds=300)](https://pypi.org/project/axor-core/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
 **Execution governance kernel for AI agents.**
 
@@ -349,6 +349,18 @@ What benchmarks do **not** prove: full prompt injection prevention, covert chann
 | [`axor-memory-sqlite`](https://github.com/Bucha11/axor-memory-sqlite) | Cross-session memory (SQLite) |
 | [`axor-telemetry`](https://github.com/Bucha11/axor-telemetry) | Privacy-preserving governance feedback |
 | [`axor-benchmarks`](https://github.com/Bucha11/axor-benchmarks) | Governance proof layer |
+| [`axor-control-plane`](https://github.com/Bucha11/axor-control-plane) | Runtime governance & evaluation **platform** built on this kernel |
+
+### Control plane
+
+[**axor-control-plane**](https://github.com/Bucha11/axor-control-plane) is the platform that operates `axor-core`-governed agents at runtime. The kernel enforces; the control plane observes, replays, and operates a fleet:
+
+- **Eval** — run a fault scenario; a caught discrepancy (observed reality vs. the agent's claim) becomes a shareable, exportable **EvidenceCase**.
+- **Replay** — scrub any run and fork counterfactuals ("no exec capability", "this value arrives tainted", "budget cap = N") that re-gate the recorded trace deterministically, with a value-provenance / taint graph.
+- **Control** — live topology of governed nodes: pause / stop / replan / inject / attest / budget-cap, and cascade-stop over a subtree.
+- **Regression** — pin runs into a corpus and replay it under a candidate policy: two-sided, deterministic CI.
+
+Replay reuses the *same* pure kernel (`axor_core.kernel`) that enforcement does, so what you review is what actually ran.
 
 ---
 
@@ -408,7 +420,7 @@ When submitting a security fix: include a test that reproduces the bypass before
 
 ## License
 
-MIT
+Apache-2.0 — see [LICENSE](LICENSE).
 
 ---
 

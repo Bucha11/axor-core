@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any, AsyncIterator, Awaitable, Callable
 
 from axor_core.capability.executor import CapabilityExecutor
 from axor_core.contracts.anomaly import NormalizedIntent
+from axor_core.contracts.cancel import CancelReason
 from axor_core.contracts.envelope import ExecutionEnvelope
 from axor_core.contracts.intent import Intent, IntentKind, ResolvedIntent
 from axor_core.contracts.canonical import ConsequenceClass
@@ -63,6 +64,7 @@ from axor_core.federation.gateway import FederationError
 from axor_core.taint.causal_root import CausalRoot
 
 if TYPE_CHECKING:
+    from axor_core.contracts.admission import AdmissionController
     from axor_core.contracts.reputation import ReputationEnricher
     from axor_core.degradation.engine import DegradationEngine
     from axor_core.contracts.provenance import ValueProvenance
@@ -134,6 +136,10 @@ class IntentLoop:
         reputation_enricher: "ReputationEnricher | None" = None,
         max_intents_per_session: int | None = None,
         max_total_spawns: int | None = None,
+        budget_cap_calls: int | None = None,
+        budget_cap_cost: float | None = None,
+        tool_weights: "dict[str, float] | None" = None,
+        default_tool_weight: float = 1.0,
         value_policies: "dict | None" = None,
         consequence_overrides: "dict | None" = None,
         positional_sinks: "frozenset[str] | set[str] | None" = None,
@@ -149,6 +155,7 @@ class IntentLoop:
         require_tool_roles: bool = False,
         trajectory_observers: "list | None" = None,
         invocation_recorder: "Callable[[str, dict, bool], None] | None" = None,
+        admission: "AdmissionController | None" = None,
     ) -> None:
         self._executor = capability_executor
         self._trace_events = trace_events
@@ -172,6 +179,22 @@ class IntentLoop:
         # DoS guards — opt-in (None = unlimited). GovernedSession sets prod defaults.
         self._max_intents_per_session = max_intents_per_session
         self._max_total_spawns = max_total_spawns
+        # Budget: an operator-declared ceiling on APPROVED tool calls per run
+        # (spec §15). Enforced HERE at the loop boundary — the same cap the replay
+        # kernel checks (axor_core.kernel.replay.evaluate_call, category="budget"),
+        # so a run and its counterfactual agree on when the budget is exhausted.
+        # Exhaustion is a typed denial (recorded like any gate denial and fed to
+        # degradation), never a silent overrun. None = unlimited.
+        self._budget_cap_calls = budget_cap_calls
+        self._budget_spent_calls = 0
+        # Cost budget (spec §15): a cap on the summed per-tool weights of approved
+        # calls, the operator-declared deterministic cost model. Same parity as the
+        # call cap — the replay kernel (KernelConfig.budget_cap_cost / weight_of)
+        # applies the identical would-exceed predicate and weight table.
+        self._budget_cap_cost = budget_cap_cost
+        self._tool_weights = dict(tool_weights or {})
+        self._default_tool_weight = default_tool_weight
+        self._budget_spent_cost = 0.0
         self._value_policies = value_policies or {}
         # Registration validator: reject value policies that try to discharge a
         # field requiring rich-syntax (fuzz) checking with a simple decidable
@@ -229,6 +252,11 @@ class IntentLoop:
         # executed) for the session's closed-session record. Observe-only; never
         # gates execution. Default None → zero overhead when sentinel is not attached.
         self._invocation_recorder = invocation_recorder
+        # Optional control-plane admission (advisory overlay, spec 12.0). None =
+        # no plane attached → governance never waits on the network. Polled at
+        # the intent boundary only, so pause/stop take effect between intents,
+        # never mid-effect.
+        self._admission = admission
         # STRICT obligation: every egress sink must carry an enum allowlist (the
         # sound, paraphrase-proof destination control). Fail closed at construction.
         if require_egress_allowlist:
@@ -280,6 +308,20 @@ class IntentLoop:
         async for event in stream:
             # cooperative cancellation — check before every event
             if envelope.cancel_token.is_cancelled():
+                self._record_cancellation(envelope)
+                return
+
+            # Control-plane admission (advisory overlay). Holds while paused,
+            # returns False on stop; a disconnected/absent plane always admits.
+            # The plane cannot widen — it can only stop or hold — so this is
+            # never part of the allow decision.
+            if self._admission is not None and not await self._admission.await_admission(
+                envelope.node_id
+            ):
+                if not envelope.cancel_token.is_cancelled():
+                    envelope.cancel_token.cancel(
+                        CancelReason.USER_ABORT, "stopped via control plane"
+                    )
                 self._record_cancellation(envelope)
                 return
 
@@ -494,6 +536,43 @@ class IntentLoop:
                 intent=intent,
                 approved=False,
                 reason=decision.reason,
+                result=denial_resp.to_tool_result(),
+            )
+
+        # Budget cap (spec §15) — enforced at the loop boundary, in replay-parity
+        # order (capability passed above; budget before the consequence/value/taint
+        # cascade). The N+1th APPROVED call is denied: spent counts only calls that
+        # cleared every gate (incremented at the execute site below), so a
+        # gate-denied call burns no budget, exactly as the replay kernel folds it.
+        # A budget denial is a typed fact (recorded + fed to degradation), so a run
+        # that hits its ceiling stops loudly — it never silently overruns.
+        budget_reason: str | None = None
+        if (
+            self._budget_cap_calls is not None
+            and self._budget_spent_calls >= self._budget_cap_calls
+        ):
+            budget_reason = (
+                f"budget: call cap {self._budget_cap_calls} exhausted "
+                f"({self._budget_spent_calls} spent)"
+            )
+        elif (
+            self._budget_cap_cost is not None
+            and self._budget_spent_cost + self._tool_weight(tool_name)
+            > self._budget_cap_cost
+        ):
+            budget_reason = (
+                f"budget: cost cap {self._budget_cap_cost} exhausted "
+                f"({self._budget_spent_cost} spent, "
+                f"+{self._tool_weight(tool_name)} for '{tool_name}')"
+            )
+        if budget_reason is not None:
+            self._record_denial(intent, budget_reason, envelope)
+            denial_resp = _make_denial_response(budget_reason, "budget")
+            self._record_degradation_signal(intent, denial_resp)
+            return ResolvedIntent(
+                intent=intent,
+                approved=False,
+                reason=budget_reason,
                 result=denial_resp.to_tool_result(),
             )
 
@@ -747,6 +826,13 @@ class IntentLoop:
         if pending_consumption is not None:
             pending_consumption.commit()
 
+        # Consume one unit of budget for this approved call, mirroring the replay
+        # kernel (which counts every non-DENY TOOL_CALL). Counted here — after all
+        # gates pass, before execute — so an execution error still counts (it was
+        # not a gate denial), keeping runtime and counterfactual budgets identical.
+        self._budget_spent_calls += 1
+        self._budget_spent_cost += self._tool_weight(tool_name)
+
         # approved or transformed — emit the appropriate trace event
         is_transform = decision.kind == PolicyDecisionKind.TRANSFORM
         self._trace_events.append(
@@ -841,6 +927,11 @@ class IntentLoop:
                 reason=reason,
                 result=_denial_result(tool_name, reason),
             )
+
+    def _tool_weight(self, tool_name: str) -> float:
+        """Operator-declared cost weight of one call to `tool_name` (spec §15).
+        Mirrors KernelConfig.weight_of so runtime and replay cost agree."""
+        return float(self._tool_weights.get(tool_name, self._default_tool_weight))
 
     def _evaluate_tool_intent(
         self,
