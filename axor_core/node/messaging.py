@@ -130,9 +130,13 @@ class InMemoryMessageBus:
         emit: Callable[[Event], None] | None = None,
         *,
         verifier_for: Callable[[str], Verifier | None] | None = None,
+        peer_declared: Callable[[str], bool] | None = None,
     ) -> None:
         self._emit = emit or (lambda e: None)
         self._verifier_for = verifier_for
+        # Which foreign peers are DECLARED in operator config (spec v2 Ch.1
+        # §3): undeclared = L0 = the send gate fails closed on peer edges.
+        self._peer_declared = peer_declared or (lambda peer: False)
         self._nodes: dict[str, tuple[TaintEngine, Callable[[], DegradationLevel]]] = {}
         self._inboxes: dict[str, list[MessageEnvelope]] = {}
         self._seq: dict[str, int] = {}
@@ -189,7 +193,10 @@ class InMemoryMessageBus:
             # event, not a silent no-op.
             pass
         _, level_of = self._nodes[env.from_node]
-        deny = evaluate_message_send(level_of(), env.root, env.edge_kind)
+        deny = evaluate_message_send(
+            level_of(), env.root, env.edge_kind,
+            peer_declared=self._peer_declared(env.to_node),
+        )
         if deny is not None:
             self._emit(
                 self._event(

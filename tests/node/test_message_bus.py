@@ -172,3 +172,15 @@ async def test_child_crash_is_a_fact_not_a_clean_return() -> None:
     assert stale, "child crash must leave a CHILD_STALE trace event"
     assert sess._degradation_engine.state.level >= DegradationLevel.CAUTIOUS
     assert "node_stale" in (result.output or "")
+
+
+def test_declared_peer_edge_passes_the_send_gate() -> None:
+    events: list[Event] = []
+    bus = InMemoryMessageBus(emit=events.append,
+                             peer_declared=lambda p: p == "partner")
+    eng = TaintEngine(node_id="a")
+    bus.register("a", eng)
+    bus.register("partner", TaintEngine(node_id="partner"))
+    bus.send(make_envelope(eng, "a", "partner", "peer", "hello"))
+    sent = [e for e in events if e.kind is EventKind.MESSAGE_SENT][-1]
+    assert sent.verdict is Verdict.PASS
