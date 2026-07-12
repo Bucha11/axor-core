@@ -8,6 +8,28 @@ from axor_core.contracts.trace import ChildSpawnedEvent, TraceEventKind
 from axor_core.errors.exceptions import ChildNotAllowedError, SpawnValidationError
 from axor_core.node.intent_loop import IntentLoop
 
+
+def inherit_degradation(parent_engine, child_node_id: str):
+    """Per-node degradation at spawn (spec v2 Ch.4 section 3): the child gets a
+    FRESH engine seeded at max(parent level, NORMAL) — a derived posture, not a
+    blank one. Narrow-or-preserve: a CAUTIOUS parent cannot spawn a NORMAL
+    child to escape its own restriction (spawn-laundering, the tree analog of
+    lateral laundering, closed). The child engine is independent afterwards —
+    no shared governance state (decision v2-13)."""
+    from axor_core.contracts.degradation import DegradationLevel
+    from axor_core.degradation.engine import DegradationEngine
+
+    child = DegradationEngine(node_id=child_node_id)
+    parent_level = parent_engine.state.level
+    if parent_level > DegradationLevel.NORMAL:
+        child.tighten(
+            parent_level,
+            reason="spawn inheritance: child starts at parent's level "
+            "(narrow-or-preserve, spec v2 Ch.4)",
+            trigger_intent="spawn",
+        )
+    return child
+
 # ExportMode restrictiveness order — higher index = more restrictive.
 # FILTERED (output+metadata, 4096 tokens) is less restrictive than SUMMARY (output only, 1024 tokens).
 _EXPORT_MODE_ORDER = [ExportMode.FULL, ExportMode.FILTERED, ExportMode.SUMMARY, ExportMode.RESTRICTED]

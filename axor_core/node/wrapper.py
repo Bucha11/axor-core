@@ -47,6 +47,7 @@ from axor_core.contracts.result import (
     ExecutorEventKind,
     TokenUsage,
 )
+from axor_core.contracts.degradation import DegradationLevel
 from axor_core.contracts.trace import TraceConfig, TraceEventKind
 from axor_core.capability.locked import governance_context
 from axor_core.taint.engine import TaintEngine
@@ -134,6 +135,7 @@ class GovernedNode:
         admission: "AdmissionController | None" = None,
         context_taps: "Sequence | None" = None,
         agent_id: str = "",
+        per_node_degradation: bool = False,
     ) -> None:
         # Optional live-context taps (hot path) so an external monitor
         # (axor-probe) can build drift snapshots. None/empty → the node-level
@@ -155,6 +157,12 @@ class GovernedNode:
         self._escalation_callback = escalation_callback  # None → auto-deny escalation
         self._taint_engine = taint_engine if taint_engine is not None else TaintEngine()
         self._degradation_engine = degradation_engine
+        # Per-node degradation (spec v2 Ch.4 §1/§3): opt-in. False keeps the
+        # v0.13 behavior — one engine shared down the subtree. True gives each
+        # spawned child its OWN engine seeded at max(parent level, NORMAL):
+        # narrow-or-preserve — a CAUTIOUS parent cannot spawn a NORMAL child
+        # to escape its own restriction (spawn-laundering closed).
+        self._per_node_degradation = per_node_degradation
         self._max_intents_per_session = max_intents_per_session
         self._max_total_spawns = max_total_spawns
         self._budget_cap_calls = budget_cap_calls
@@ -545,6 +553,18 @@ class GovernedNode:
         # engine; lateral protection across the node tree is preserved per-value.
         child_taint.inherit_value_ledger(self._taint_engine)
 
+        # Degradation posture at spawn (spec v2 Ch.4 §3). Default: the v0.13
+        # shared engine (subtree lock-down). Opt-in per-node: a FRESH engine
+        # seeded at max(parent level, NORMAL) — the child inherits a derived
+        # posture, not a blank one; spawn narrows or preserves, never widens.
+        child_degradation = self._degradation_engine
+        if self._per_node_degradation and self._degradation_engine is not None:
+            from axor_core.node.spawn import inherit_degradation
+
+            child_degradation = inherit_degradation(
+                self._degradation_engine, child_lineage.node_id
+            )
+
         child_node = GovernedNode(
             executor=self._child_executor or self._executor,
             capability_executor=self._cap_executor,
@@ -558,7 +578,8 @@ class GovernedNode:
             current_depth=self._depth + 1,
             child_executor=self._child_executor,
             escalation_callback=self._escalation_callback,
-            degradation_engine=self._degradation_engine,
+            degradation_engine=child_degradation,
+            per_node_degradation=self._per_node_degradation,
             max_intents_per_session=self._max_intents_per_session,
             max_total_spawns=self._max_total_spawns,
             budget_cap_calls=self._budget_cap_calls,
@@ -585,12 +606,44 @@ class GovernedNode:
         )
 
         child_cancel = envelope.cancel_token.child_token()
-        child_result = await child_node.run(
-            raw_state=child_raw_state,
-            extension_bundle=extension_bundle,
-            parent_policy=parent_policy,
-            cancel_token=child_cancel,
-        )
+        try:
+            child_result = await child_node.run(
+                raw_state=child_raw_state,
+                extension_bundle=extension_bundle,
+                parent_policy=parent_policy,
+                cancel_token=child_cancel,
+            )
+        except Exception as exc:  # noqa: BLE001 — crash/disappearance path
+            # Death by crash (spec v2 Ch.4 §4): a crashed child cannot be
+            # treated as having returned clean — absence is a FACT at the
+            # parent, folded into the degradation recompute. The audit trail
+            # stays intact; cancellation (BaseException) still propagates.
+            from axor_core.contracts.trace import ChildStaleEvent
+
+            stale_child = (
+                child_raw_state.lineage.node_id
+                if child_raw_state.lineage
+                else "unknown"
+            )
+            trace_events.append(
+                ChildStaleEvent(
+                    kind=TraceEventKind.CHILD_STALE,
+                    node_id=envelope.node_id,
+                    sequence=len(trace_events),
+                    payload={
+                        "child_node_id": stale_child,
+                        "error": f"{type(exc).__name__}: {exc}",
+                    },
+                )
+            )
+            if self._degradation_engine is not None:
+                self._degradation_engine.tighten(
+                    DegradationLevel.CAUTIOUS,
+                    reason=f"node_stale: child {stale_child} died without "
+                    f"returning ({type(exc).__name__})",
+                    trigger_intent="spawn",
+                )
+            return f"[child failed: node_stale ({type(exc).__name__})]"
 
         # Provenance of the child's returned output, registered into the parent's
         # per-value ledger so a parent sink later carrying it is gated.
