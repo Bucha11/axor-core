@@ -47,7 +47,7 @@ from axor_core.contracts.result import (
     ExecutorEventKind,
     TokenUsage,
 )
-from axor_core.contracts.degradation import DegradationLevel
+from axor_core.contracts.degradation import DegradationLevel  # noqa: E402 — house pattern: this import block sits mid-file
 from axor_core.contracts.trace import TraceConfig, TraceEventKind
 from axor_core.capability.locked import governance_context
 from axor_core.taint.engine import TaintEngine
