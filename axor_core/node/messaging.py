@@ -20,10 +20,17 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 
 from axor_core.contracts.degradation import DegradationLevel
+from axor_core.federation.ladder import (
+    InboundVerdict,
+    LabelAssertion,
+    PeerDeclaration,
+    receive_foreign,
+)
 from axor_core.federation.signing import Signer, Verifier
 from axor_core.kernel.events import Event, EventKind, Verdict
 from axor_core.kernel.messaging import (
     EDGE_KINDS,
+    EDGE_PEER,
     evaluate_message_send,
     fold_carried_root,
 )
@@ -131,12 +138,20 @@ class InMemoryMessageBus:
         *,
         verifier_for: Callable[[str], Verifier | None] | None = None,
         peer_declared: Callable[[str], bool] | None = None,
+        peer_declaration_for: Callable[[str], PeerDeclaration | None] | None = None,
     ) -> None:
         self._emit = emit or (lambda e: None)
         self._verifier_for = verifier_for
         # Which foreign peers are DECLARED in operator config (spec v2 Ch.1
         # §3): undeclared = L0 = the send gate fails closed on peer edges.
-        self._peer_declared = peer_declared or (lambda peer: False)
+        # peer_declaration_for supplies the full declaration for the INBOUND
+        # ladder (receive_foreign); when it is set, peer_declared defaults to
+        # "has a declaration".
+        self._declaration_for = peer_declaration_for or (lambda peer: None)
+        self._peer_declared = peer_declared or (
+            (lambda peer: self._declaration_for(peer) is not None)
+            if peer_declaration_for is not None else (lambda peer: False)
+        )
         self._nodes: dict[str, tuple[TaintEngine, Callable[[], DegradationLevel]]] = {}
         self._inboxes: dict[str, list[MessageEnvelope]] = {}
         self._seq: dict[str, int] = {}
@@ -193,9 +208,14 @@ class InMemoryMessageBus:
             # event, not a silent no-op.
             pass
         _, level_of = self._nodes[env.from_node]
+        # A peer edge is "declared" when its FOREIGN end is declared in our
+        # config — outbound that is the destination, inbound the origin.
         deny = evaluate_message_send(
             level_of(), env.root, env.edge_kind,
-            peer_declared=self._peer_declared(env.to_node),
+            peer_declared=(
+                self._peer_declared(env.to_node)
+                or self._peer_declared(env.from_node)
+            ),
         )
         if deny is not None:
             self._emit(
@@ -227,21 +247,56 @@ class InMemoryMessageBus:
                     f"forged or tampered envelope from {env.from_node!r}"
                 )
         taint, _ = self._nodes[env.to_node]
-        # Monotone fold: a value returning to its origin (cycle A→B→A)
-        # re-mints the union of what it already carried and what it carries
-        # now — the cycle cannot launder (spec v2 Ch.4 open item, resolved
-        # by causal-root identity, not hop count).
+        evidence: tuple[str, ...] = ()
+        if env.edge_kind == EDGE_PEER:
+            # INTER-federation inbound (spec v2 Ch.1 §2): the carried root is
+            # a CLAIM, not data — re-derive through the trust ladder. The
+            # foreign root is kept as an opaque forensic ref in the event
+            # payload; the LOCAL root is what registers.
+            verdict = self._receive_peer(env)
+            folded = verdict.root
+            evidence = verdict.evidence
+        else:
+            # INTRA: labels are data, carried intact. Monotone fold: a value
+            # returning to its origin (cycle A→B→A) re-mints the union of what
+            # it already carried and what it carries now — the cycle cannot
+            # launder (resolved by causal-root identity, not hop count).
+            folded = fold_carried_root(env.root)
         prior = taint.derive_value(env.value)
-        folded = fold_carried_root(env.root)
         if prior.is_tainted or prior.sensitive:
             folded = CausalRoot.mint(prior, folded)
         taint.register_value(env.value, folded)
         self._inboxes[env.to_node].append(env)
-        self._emit(
-            self._event(
-                env.to_node, EventKind.MESSAGE_RECEIVED, env, Verdict.PASS,
-                peer_field="from",
+        received = self._event(
+            env.to_node, EventKind.MESSAGE_RECEIVED, env, Verdict.PASS,
+            peer_field="from",
+        )
+        if env.edge_kind == EDGE_PEER:
+            received.payload["foreign_root"] = _root_payload(env.root)
+            received.payload["local_root"] = _root_payload(folded)
+            if evidence:
+                received.payload["ladder_evidence"] = list(evidence)
+        self._emit(received)
+
+    def _receive_peer(self, env: MessageEnvelope) -> InboundVerdict:
+        declaration = self._declaration_for(env.from_node)
+        assertion: LabelAssertion | None = None
+        if declaration is not None and env.signature:
+            # The envelope's own signature doubles as the L2 label assertion:
+            # it covers identity, edge, value hash AND the labels — exactly
+            # the claim the ladder discounts.
+            assertion = LabelAssertion(
+                peer_id=env.from_node,
+                message_class="default",
+                sources=tuple(sorted(s.value for s in env.root.sources)),
+                sensitive=env.root.sensitive,
+                payload=env.signed_payload(),
+                signature=env.signature,
             )
+        return receive_foreign(
+            value_sensitive_hint=False,
+            declaration=declaration,
+            assertion=assertion,
         )
 
     def inbox(self, node_id: str) -> list[MessageEnvelope]:

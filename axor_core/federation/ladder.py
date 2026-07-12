@@ -152,6 +152,81 @@ def receive_foreign(
     return InboundVerdict(discounted, full, L2, True, evidence)
 
 
+@dataclass(frozen=True)
+class GovernanceAttestation:
+    """A peer's signed proof it runs under axor-core: kernel version + config
+    hash (fact of governance only, decision v2-6 — the hash pins
+    accountability, never semantics; foreign configs are not parsed)."""
+
+    peer_id: str
+    kernel_version: str
+    config_hash: str
+    signature: bytes
+
+    def payload(self) -> bytes:
+        return (
+            f"governance{self.peer_id}{self.kernel_version}"
+            f"{self.config_hash}"
+        ).encode()
+
+
+@dataclass(frozen=True)
+class ChannelGrant:
+    """The result of establishing a peer channel (protocol v0.2 §6a):
+    the EFFECTIVE level the channel is pinned at, and why."""
+
+    peer_id: str
+    level: str
+    governance_attested: bool
+    config_hash: str | None
+    evidence: tuple[str, ...] = field(default_factory=tuple)
+
+
+def establish_channel(
+    declaration: PeerDeclaration | None,
+    *,
+    transport: str = "native",
+    attestation: GovernanceAttestation | None = None,
+) -> ChannelGrant:
+    """Channel establishment verifies the peer declaration from local config
+    (protocol v0.2 §6a). Undeclared = L0. MCP-as-A2A is pinned L0/L1 at
+    establishment (decision v2-4) — the L2 assertion envelope arrives with the
+    native protocol only. ``governance_attested`` requires a VALID signed
+    kernel+config-hash attestation; verification is repeated on config-hash
+    change by re-establishing (the grant records the hash it verified)."""
+    if declaration is None:
+        return ChannelGrant("", L0, False, None, ("undeclared_peer_l0",))
+
+    level = declaration.level
+    evidence: list[str] = []
+    if transport == "mcp" and level == L2:
+        level = L1
+        evidence.append("mcp_transport_pinned_l1")
+
+    attested = False
+    config_hash: str | None = None
+    if declaration.governance_attested:
+        if (
+            attestation is not None
+            and declaration.verifier is not None
+            and attestation.peer_id == declaration.peer_id
+            and declaration.verifier.verify(
+                attestation.payload(), attestation.signature
+            )
+        ):
+            attested = True
+            config_hash = attestation.config_hash
+            evidence.append("governance_attestation_verified")
+        else:
+            # A declared-attested peer that cannot prove it: the channel still
+            # establishes at the declared level, but WITHOUT the attested
+            # standing (lower discounts apply) — and the failure is evidenced.
+            evidence.append("governance_attestation_failed")
+    return ChannelGrant(
+        declaration.peer_id, level, attested, config_hash, tuple(evidence)
+    )
+
+
 def effective_root_for_sink(
     verdict: InboundVerdict, sink_is_critical: bool
 ) -> CausalRoot:

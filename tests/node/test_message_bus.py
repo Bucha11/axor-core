@@ -184,3 +184,71 @@ def test_declared_peer_edge_passes_the_send_gate() -> None:
     bus.send(make_envelope(eng, "a", "partner", "peer", "hello"))
     sent = [e for e in events if e.kind is EventKind.MESSAGE_SENT][-1]
     assert sent.verdict is Verdict.PASS
+
+
+# ── inter-federation inbound: the ladder in the live path (spec v2 Ch.1 §2) ───
+
+
+def _peer_bus(level: str, *, key: bytes = b"fed-key-32-bytes-long-xxxxxxxxxx"):
+    from axor_core.federation.ladder import L2, PeerDeclaration
+
+    events: list[Event] = []
+    decl = PeerDeclaration(
+        peer_id="partner", level=level,
+        verifier=HmacSigner(shared_key=key),
+        discount_classes=frozenset({"default"}) if level == L2 else frozenset(),
+    )
+    bus = InMemoryMessageBus(
+        emit=events.append,
+        peer_declaration_for=lambda p: decl if p == "partner" else None,
+    )
+    ours = TaintEngine(node_id="ours")
+    theirs = TaintEngine(node_id="partner")
+    bus.register("ours", ours)
+    bus.register("partner", theirs)
+    return bus, ours, theirs, events
+
+
+def test_peer_inbound_l1_remints_despite_clean_claim() -> None:
+    """The peer asserts 'clean'; at L1 that is attribution, not trust — the
+    value registers TAINTED locally (labels are claims across keysets)."""
+    from axor_core.federation.ladder import L1
+
+    bus, ours, theirs, events = _peer_bus(L1)
+    value = "their report"
+    env = make_envelope(theirs, "partner", "ours", "peer", value)  # clean at sender
+    bus.send(env)
+    assert ours.derive_value(value).is_tainted
+    received = [e for e in events if e.kind is EventKind.MESSAGE_RECEIVED][-1]
+    # the foreign root survives as an opaque forensic ref; the local root is minted
+    assert received.payload["foreign_root"]["sources"] == []
+    assert received.payload["local_root"]["sources"] != []
+
+
+def test_peer_inbound_l2_signed_assertion_discounts_never_clean() -> None:
+    from axor_core.federation.ladder import L2
+
+    signer = HmacSigner(shared_key=b"fed-key-32-bytes-long-xxxxxxxxxx")
+    bus, ours, theirs, events = _peer_bus(L2)
+    value = "their web summary"
+    theirs.register_value(value, CausalRoot.cross_process_in())
+    env = make_envelope(theirs, "partner", "ours", "peer", value, signer=signer)
+    bus.send(env)
+    root = ours.derive_value(value)
+    assert root.is_tainted  # discounted is still tainted — never to clean
+    received = [e for e in events if e.kind is EventKind.MESSAGE_RECEIVED][-1]
+    assert "l2_discount_applied" in received.payload["ladder_evidence"]
+
+
+def test_peer_inbound_forged_assertion_falls_to_l0_evidenced() -> None:
+    from axor_core.federation.ladder import L2
+
+    bus, ours, theirs, events = _peer_bus(L2)
+    value = "forged-labels value"
+    env = make_envelope(theirs, "partner", "ours", "peer", value,
+                        signer=HmacSigner(shared_key=b"WRONG-key-32-bytes-xxxxxxxxxxxxxx"))
+    bus.send(env)
+    assert ours.derive_value(value).is_tainted  # L0 handling: full re-mint
+    received = [e for e in events if e.kind is EventKind.MESSAGE_RECEIVED][-1]
+    assert any("assertion_forged_fell_to_l0" in e
+               for e in received.payload["ladder_evidence"])

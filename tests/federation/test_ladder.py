@@ -103,3 +103,60 @@ def test_declared_levels_validate() -> None:
 def test_attested_marks_evidence() -> None:
     v = receive_foreign(False, _decl(attested=True), _assert_env(sources=("web",)))
     assert "governance_attested" in v.evidence
+
+
+# ── channel establishment (protocol v0.2 §6a; decisions v2-4/v2-6) ────────────
+
+from axor_core.federation.ladder import (  # noqa: E402
+    ChannelGrant,
+    GovernanceAttestation,
+    establish_channel,
+)
+
+
+def _attestation(forge: bool = False) -> GovernanceAttestation:
+    att = GovernanceAttestation(
+        peer_id="partner", kernel_version="0.9.2",
+        config_hash="sha256:abc", signature=b"",
+    )
+    signer = HmacSigner(shared_key=b"WRONG-key-32-bytes-xxxxxxxxxxxxxx") if forge else SIGNER
+    return GovernanceAttestation(
+        peer_id=att.peer_id, kernel_version=att.kernel_version,
+        config_hash=att.config_hash, signature=signer.sign(att.payload()),
+    )
+
+
+def test_undeclared_channel_pins_l0() -> None:
+    grant = establish_channel(None)
+    assert grant.level == L0 and "undeclared_peer_l0" in grant.evidence
+
+
+def test_mcp_transport_pins_l2_down_to_l1() -> None:
+    grant = establish_channel(_decl(L2), transport="mcp")
+    assert grant.level == L1
+    assert "mcp_transport_pinned_l1" in grant.evidence
+
+
+def test_native_transport_keeps_l2() -> None:
+    assert establish_channel(_decl(L2), transport="native").level == L2
+
+
+def test_valid_attestation_grants_attested_standing() -> None:
+    grant = establish_channel(_decl(L2, attested=True), attestation=_attestation())
+    assert grant.governance_attested is True
+    assert grant.config_hash == "sha256:abc"
+    assert "governance_attestation_verified" in grant.evidence
+
+
+def test_forged_attestation_is_evidenced_not_attested() -> None:
+    grant = establish_channel(
+        _decl(L2, attested=True), attestation=_attestation(forge=True)
+    )
+    assert grant.governance_attested is False and grant.config_hash is None
+    assert "governance_attestation_failed" in grant.evidence
+
+
+def test_missing_attestation_for_attested_declaration_is_evidenced() -> None:
+    grant = establish_channel(_decl(L2, attested=True))
+    assert grant.governance_attested is False
+    assert "governance_attestation_failed" in grant.evidence
