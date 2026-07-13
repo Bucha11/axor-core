@@ -28,6 +28,23 @@ replay agree on these keys):
   derivations; already-derived values keep their taint (spec 8.2.1)
 - OPERATOR_INTERVENTION / INJECTION_CONSUMED / STATE_APPLIED / HEARTBEAT:
   control-plane bookkeeping (protocol note sections 4-5)
+
+Multi-agent kinds (spec v2 Ch.4 — labels ride in message envelopes; structure
+derives from traced spawn events, never from self-report):
+
+- NODE_SPAWNED: ``{"child_id", "parent_id", "depth", "edge_kind":
+  "delegation"}`` — emitted at the PARENT; replay reconstructs the tree shape
+  from these, the platform derives topology from the same events.
+- MESSAGE_SENT: ``{"to", "edge_kind": "delegation"|"lateral"|"peer",
+  "msg_id", "value_ref", "carried": {"root": {"sources": [...],
+  "sensitive"}}}`` — the message is a sink at the sender; ``verdict`` is the
+  sender-side gate verdict, ``gate`` the denying category. A DENY here is
+  containment at the source (spec v2 Ch.2).
+- MESSAGE_RECEIVED: ``{"from", "edge_kind", "msg_id", "value_ref",
+  "carried": {"root": ...}}`` — the message is a source at the receiver; the
+  fold registers ``value_ref`` under the CARRIED root (labels travel with
+  values, spec v2 Ch.1 §1 — intra-federation labels are data, not claims).
+  ``msg_id`` stitches cross-node causality (no global clock, Ch.4 §5).
 """
 from __future__ import annotations
 
@@ -56,6 +73,10 @@ class EventKind(str, Enum):
     INJECTION_REFUSED = "injection_refused"
     EXCISION_REFUSED = "excision_refused"
     HEARTBEAT = "heartbeat"
+    # Multi-agent (spec v2 Ch.4). Additive; absent from any size-1 trace.
+    NODE_SPAWNED = "node_spawned"
+    MESSAGE_SENT = "message_sent"
+    MESSAGE_RECEIVED = "message_received"
 
 
 class Verdict(str, Enum):

@@ -18,6 +18,8 @@ from dataclasses import asdict
 
 from axor_core.contracts.trace import (
     CancelledEvent,
+    ChildSpawnedEvent,
+    ChildStaleEvent,
     DegradationTransitionEvent,
     IntentDeniedEvent,
     SourceQuarantinedEvent,
@@ -101,6 +103,48 @@ def trace_event_to_kernel(event: TraceEvent, node_id: str | None = None) -> Even
             gate="anomaly", verdict=Verdict.DENY if denied else Verdict.PASS,
             payload={"tool": event.tool, "score": event.score,
                      "reasons": list(event.reasons)},
+        )
+    if isinstance(event, ChildSpawnedEvent) or event.kind is TraceEventKind.CHILD_SPAWNED:
+        # Tree shape derives from traced spawn events, never from a node
+        # self-reporting its parent (spec v2 Ch.4 §6).
+        d = asdict(event)
+        return Event(
+            seq=seq, node_id=nid, kind=EventKind.NODE_SPAWNED, ts=_ts(seq),
+            payload={
+                "child_id": d.get("child_node_id")
+                or event.payload.get("child_node_id", ""),
+                "parent_id": nid,
+                "depth": d.get("child_depth", event.payload.get("child_depth", 0)),
+                "edge_kind": "delegation",
+            },
+        )
+    if isinstance(event, ChildStaleEvent) or event.kind is TraceEventKind.CHILD_STALE:
+        d = asdict(event)
+        child = d.get("child_node_id") or event.payload.get("child_node_id", "")
+        return Event(
+            seq=seq, node_id=nid, kind=EventKind.FACT, ts=_ts(seq),
+            payload={
+                "fact_id": f"stale_{seq}",
+                "fact_type": "node_stale",
+                "severity": _LEVEL_SEVERITY["CAUTIOUS"],
+                "reason": event.payload.get("error", "child died without returning"),
+                "child_id": child,
+            },
+        )
+    if event.kind is TraceEventKind.CHILD_COMPLETED:
+        # Normal death: the result returns up the spawn edge (message-as-source
+        # at the parent, spec v2 Ch.4 §4). Carried labels ride in the payload
+        # when the recorder provided them.
+        return Event(
+            seq=seq, node_id=nid, kind=EventKind.MESSAGE_RECEIVED, ts=_ts(seq),
+            causal_root=event.payload.get("value_ref"),
+            payload={
+                "from": event.payload.get("child_node_id", ""),
+                "edge_kind": "delegation",
+                "msg_id": f"ret_{seq}",
+                "value_ref": event.payload.get("value_ref"),
+                "carried": event.payload.get("carried", {}),
+            },
         )
     if isinstance(event, CancelledEvent):
         return Event(

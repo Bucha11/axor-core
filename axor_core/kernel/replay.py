@@ -48,6 +48,7 @@ from axor_core.kernel.events import (
     fact_from_payload,
 )
 from axor_core.kernel.errors import SchemaVersionError
+from axor_core.kernel.messaging import fold_carried_root
 from axor_core.kernel.state import GovernanceState
 from axor_core.policy.gates import (
     GateDecision,
@@ -326,6 +327,25 @@ def replay(
                     state.tainted_refs[str(ref)] = root
                 if root.sensitive:
                     state.floor_active = True
+        elif event.kind is EventKind.MESSAGE_RECEIVED:
+            # The message is a source (spec v2 Ch.4 §2): the carried root is
+            # folded INTACT into local state — labels travel with values
+            # (Ch.1 §1). A message that lost its labels re-mints untrusted
+            # (fold_carried_root fails closed); cycles re-fold monotonically —
+            # a value returning to its origin cannot arrive cleaner.
+            ref = event.payload.get("value_ref") or event.causal_root
+            if ref:
+                carried = (event.payload.get("carried") or {}).get("root")
+                root = fold_carried_root(
+                    root_from_payload(carried) if carried is not None else None
+                )
+                prior = state.tainted_refs.get(str(ref))
+                if prior is not None:
+                    root = CausalRoot.mint(prior, root)
+                if root.is_tainted or root.sensitive:
+                    state.tainted_refs[str(ref)] = root
+                if root.sensitive:
+                    state.floor_active = True
         elif event.kind is EventKind.FACT:
             fact = fact_from_payload(event.payload)
             state.facts[fact.fact_id] = fact
@@ -353,3 +373,27 @@ def replay(
         )
 
     return ReplayResult(steps=tuple(steps), first_divergence=first_divergence)
+
+
+def replay_tree(
+    events: Sequence[Event], config: KernelConfig | None = None
+) -> dict[str, ReplayResult]:
+    """Fold a multi-node trace: each node's local sequence independently.
+
+    There is no shared governance state (spec v2 Ch.4 §1 / decision v2-13):
+    a node's gates see only its local state plus the labels carried in on its
+    own MESSAGE_RECEIVED events. Cross-node order is established only by
+    message causality (msg_id send→receive), which each node's local fold
+    already respects — independent events are genuinely unordered and their
+    interleaving cannot affect any verdict.
+
+    A single-node trace degenerates to exactly one replay() result — the
+    size-1 path is byte-identical to the v0.13 fold.
+    """
+    by_node: dict[str, list[Event]] = {}
+    for e in events:
+        by_node.setdefault(e.node_id, []).append(e)
+    return {
+        node_id: replay(sorted(node_events, key=lambda e: e.seq), config)
+        for node_id, node_events in by_node.items()
+    }

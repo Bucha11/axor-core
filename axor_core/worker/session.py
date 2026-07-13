@@ -121,6 +121,7 @@ class GovernedSession:
         admission=None,
         session_sink: "SessionSink | None" = None,
         context_taps: "list[ContextTap] | None" = None,
+        per_node_degradation: bool = False,
     ) -> None:
         # Wall-clock the session was constructed — handed to sentinel in the
         # closed-session record (slow-and-low staging compares session start times).
@@ -134,6 +135,9 @@ class GovernedSession:
         # governance hot path — GovernedNode fires node/context_observation on
         # each context build. Observe-only — tap failures are logged, never raised.
         self._context_taps: list[ContextTap] = list(context_taps or [])
+        # Per-node degradation opt-in (spec v2 Ch.4): children get their own
+        # engine seeded at max(parent level, NORMAL) instead of the shared one.
+        self._per_node_degradation = per_node_degradation
 
         # Profile = a named bundle of existing knobs (no new mechanism); it
         # pre-fills mode / isolation / escalation / consequence-ceiling / watcher.
@@ -741,6 +745,7 @@ class GovernedSession:
             admission=self._admission,
             context_taps=self._context_taps or None,
             agent_id=self._agent_def.name if self._agent_def is not None else "",
+            per_node_degradation=self._per_node_degradation,
         )
 
     async def _handle_command(self, raw: str) -> ExecutionResult:
