@@ -4,6 +4,54 @@
 
 (nothing yet)
 
+## 0.9.2 — 2026-07-13
+
+The multi-agent runtime layer (spec v2): labels ride in message envelopes,
+boundary gates run locally on both edge ends, and inter-federation trust is a
+ladder — discount, never label authority.
+
+### Added
+
+- **Kernel messaging (`kernel/messaging.py`, Ch.4).** New event kinds
+  `NODE_SPAWNED` / `MESSAGE_SENT` / `MESSAGE_RECEIVED`; the pure sender-side
+  gate `evaluate_message_send` (LOCKED admits no sends; undeclared peer edges
+  fail closed) and `fold_carried_root` (a message that lost its labels re-mints
+  untrusted). `replay()` folds `MESSAGE_RECEIVED` with carried labels intact and
+  monotonically on cycles (A→B→A cannot launder); `replay_tree()` folds a
+  multi-node trace per node — no shared governance state; size-1 degenerates to
+  exactly `replay()`.
+- **Runtime messaging (`node/messaging.py`).** `MessageEnvelope` (labels travel
+  with the value; federation-key signable, tamper → rejected) and
+  `InMemoryMessageBus` emitting kernel events on both edge ends. Peer-edge
+  delivery re-derives through the trust ladder; the foreign root is kept as an
+  opaque forensic ref beside the minted local root.
+- **Inter-federation trust ladder (`federation/ladder.py`, Ch.1).**
+  `PeerDeclaration` (undeclared = L0), `receive_foreign` (L0 full taint / L1
+  attribution-only / L2 bounded discount never-to-clean, floor never
+  peer-negotiable; forged assertion falls to L0 evidenced),
+  `effective_root_for_sink` (critical sinks ignore discounts entirely),
+  `establish_channel` (MCP-as-A2A pinned L0/L1; governance attestation —
+  signed kernel+config-hash — verified at establishment, failures evidenced).
+  The gateway restore path is documented as intra-keyset-only.
+- **Causal subgraph (`kernel/subgraph.py`, Ch.3).** Backward provenance walk
+  from an anchored claim/denial: minimal causes, roles
+  (origin/conduit/container/anchor), `fault_origin`, `contained_at`,
+  `federation_scope`; message hops become subgraph edges with carried labels.
+- **Spawn & death (Ch.4).** `node/spawn.inherit_degradation` — opt-in per-node
+  degradation (`per_node_degradation` on `GovernedSession`/`GovernedNode`):
+  a child starts at max(parent level, NORMAL), narrow-or-preserve. A crashed
+  child leaves a `CHILD_STALE` trace event and tightens the parent to CAUTIOUS
+  (bridged to a kernel `node_stale` FACT) — absence is a fact, never a clean
+  return.
+- **Bridge.** `CHILD_SPAWNED` → `NODE_SPAWNED`, `CHILD_COMPLETED` →
+  `MESSAGE_RECEIVED` (delegation), `CHILD_STALE` → FACT `node_stale`.
+
+### Compatibility
+
+- Additive only: a single node is a tree with no edges — the v0.13 single-agent
+  paths are unchanged and the 0.9.1 suite passes unmodified (the platform's
+  size-1 golden gate pins byte-identical behavior end-to-end).
+
 ## 0.9.1 — 2026-07-10
 
 The kernel/platform split and one-implementation gate engine.
