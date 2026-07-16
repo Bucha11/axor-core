@@ -117,7 +117,12 @@ wrong guess cheap instead of trying to make the classifier perfect:
   monotonic (capability never re-broadens automatically), so it acts only on
   classifications at or above the confidence threshold. A single
   low-confidence misread turn cannot permanently strip capability from the
-  whole session.
+  whole session. Note the exact scope: the gate applies to *subsequent
+  narrowing only*. The FIRST turn's policy is still classifier-selected
+  regardless of confidence (a session needs a starting policy), so "low
+  confidence" does not mean "no policy effect" — a wrong ambiguous start is
+  recovered per-tool via escalation or overridden by an explicit
+  `policy=` / `default_policy=`, never by automatic re-broadening.
 - **Capability-on-demand.** Presets whose tool surface is narrower than the
   full set carry an `EscalationPolicy` whose `grantable_tools` covers exactly
   what the preset lacks (e.g. `focused_readonly` → `write`, `bash`). An

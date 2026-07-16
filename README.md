@@ -238,13 +238,18 @@ session = GovernedSession(
     executor=..., capability_executor=...,
     # Guard 1 — approve mid-run capability escalations (fail-closed without it):
     escalation_callback=AllowlistEscalationApprover(
-        {"bash": 10, "write": 20}, allowed_path_prefixes=("/workspace",),
+        {"bash": 10, "write": 20},
+        allowed_path_prefixes=("/workspace",),  # confines path-bearing grants (write)
+        unconfined_tools=("bash",),             # bash calls expose no checkable path —
+                                                # grantable only without path restriction
     ),
     # Guard 2 — operator-defined policy for every turn; classifier fully bypassed
     # (recommended for PRODUCTION; classifier-derived policy logs a warning there):
     default_policy=presets.standard(),
 )
 ```
+
+Path containment uses the same canonical resolution as lease enforcement (symlinks and `..` resolved against the real filesystem), so what the approver approves and what the lease enforces cannot disagree. Tools whose calls carry no extractable path argument (`bash` — a command string is not a file path) cannot be path-confined: a path-restricted `bash` lease would deny every call. Listing them in `unconfined_tools` is the explicit operator opt-in to grant them unrestricted (still bounded by `max_ops`, TTL and the flood guard) — omit the tool entirely if that is not acceptable.
 
 `console_escalation_callback` is the interactive alternative to the allowlist approver — it prompts a human on the terminal and denies when no TTY is attached.
 

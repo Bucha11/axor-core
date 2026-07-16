@@ -87,7 +87,9 @@ class GovernedSession:
             mode=ExecutionMode.PRODUCTION,
             default_policy=presets.standard(),
             escalation_callback=AllowlistEscalationApprover(
-                {"bash": 10}, allowed_path_prefixes=("/workspace",),
+                {"write": 20, "bash": 10},
+                allowed_path_prefixes=("/workspace",),  # confines write grants
+                unconfined_tools=("bash",),  # bash exposes no checkable path
             ),
         )
 

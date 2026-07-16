@@ -65,11 +65,63 @@ async def test_allowlist_confined_approver_denies_unconfined_request():
 
 
 @pytest.mark.asyncio
-async def test_allowlist_rejects_dotdot_escape():
+async def test_allowlist_rejects_dotdot_escape(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
     approver = AllowlistEscalationApprover(
-        {"write": 10}, allowed_path_prefixes=("/workspace",)
+        {"write": 10}, allowed_path_prefixes=(str(workspace),)
     )
-    assert await approver("t1", "write", ["/workspace/../etc/passwd"], 1) is False
+    escape = str(workspace / ".." / "etc" / "passwd")
+    assert await approver("t1", "write", [escape], 1) is False
+
+
+@pytest.mark.asyncio
+async def test_allowlist_rejects_symlink_escape(tmp_path):
+    """A symlink inside the workspace must not mint an allowed root outside it.
+    Approval uses the same canonical (symlink-resolving) containment as lease
+    enforcement, so /workspace/link -> /etc is 'outside', not 'inside'."""
+    workspace = tmp_path / "workspace"
+    outside = tmp_path / "outside"
+    workspace.mkdir()
+    outside.mkdir()
+    link = workspace / "link"
+    link.symlink_to(outside)
+
+    approver = AllowlistEscalationApprover(
+        {"write": 10}, allowed_path_prefixes=(str(workspace),)
+    )
+    assert await approver("t1", "write", [str(link)], 1) is False
+    assert await approver("t1", "write", [str(link / "passwd")], 1) is False
+
+
+@pytest.mark.asyncio
+async def test_allowlist_accepts_symlink_resolving_inside(tmp_path):
+    workspace = tmp_path / "workspace"
+    (workspace / "src").mkdir(parents=True)
+    link = workspace / "alias"
+    link.symlink_to(workspace / "src")
+
+    approver = AllowlistEscalationApprover(
+        {"write": 10}, allowed_path_prefixes=(str(workspace),)
+    )
+    assert await approver("t1", "write", [str(link / "a.py")], 1) is True
+
+
+# ── unconfined tools (bash-style: no extractable path in calls) ─────────────────
+
+@pytest.mark.asyncio
+async def test_unconfined_tool_granted_only_without_paths(tmp_path):
+    approver = AllowlistEscalationApprover(
+        {"write": 10, "bash": 5},
+        allowed_path_prefixes=(str(tmp_path),),
+        unconfined_tools=("bash",),
+    )
+    # bash: approvable path-free even though the approver is path-confined
+    assert await approver("t1", "bash", [], 3) is True
+    # a paths-carrying bash request would produce an unusable lease — denied
+    assert await approver("t1", "bash", [str(tmp_path)], 3) is False
+    # write still requires confinement
+    assert await approver("t1", "write", [], 1) is False
 
 
 def test_allowlist_constructor_rejects_empty_and_nonpositive():
@@ -77,6 +129,8 @@ def test_allowlist_constructor_rejects_empty_and_nonpositive():
         AllowlistEscalationApprover({})
     with pytest.raises(ValueError):
         AllowlistEscalationApprover({"write": 0})
+    with pytest.raises(ValueError):
+        AllowlistEscalationApprover({"write": 5}, unconfined_tools=("bash",))
 
 
 # ── console_escalation_callback ─────────────────────────────────────────────────
@@ -103,6 +157,18 @@ async def test_console_parses_answer(monkeypatch, answer, expected):
     monkeypatch.setattr(sys, "stdin", _FakeStdin(tty=True))
     monkeypatch.setattr("builtins.input", lambda _prompt: answer)
     assert await console_escalation_callback("t1", "write", [], 5) is expected
+
+
+@pytest.mark.asyncio
+async def test_console_denies_on_terminal_error(monkeypatch):
+    """EOF mid-prompt (closed stream, ^D) is a denial, not an exception."""
+    monkeypatch.setattr(sys, "stdin", _FakeStdin(tty=True))
+
+    def _eof(_prompt):
+        raise EOFError
+
+    monkeypatch.setattr("builtins.input", _eof)
+    assert await console_escalation_callback("t1", "write", [], 5) is False
 
 
 # ── end-to-end: approver drives a require_human grant ───────────────────────────
@@ -140,6 +206,38 @@ async def test_allowlist_approver_grants_require_human_escalation(make_envelope)
     result = await mgr.grant_from_intent(_escalation_event("write"), env, [])
     assert result.get("granted") is True
     assert mgr.covers("write") is True
+
+
+@pytest.mark.asyncio
+async def test_crashing_callback_is_a_denial_with_trace(make_envelope):
+    """A raising approver must become ESCALATION_DENIED with a trace event —
+    never an exception escaping grant_from_intent."""
+    from axor_core.contracts.trace import TraceEventKind
+
+    async def _boom(tool_use_id, tool, paths, max_ops) -> bool:
+        raise RuntimeError("operator callback exploded")
+
+    env = make_envelope()
+    env = dataclasses.replace(
+        env,
+        policy=dataclasses.replace(
+            env.policy,
+            escalation_policy=EscalationPolicy(
+                allow_escalation=True,
+                grantable_tools=("write",),
+                require_human=True,
+            ),
+        ),
+    )
+    mgr = EscalationManager(escalation_callback=_boom)
+    trace: list = []
+    result = await mgr.grant_from_intent(_escalation_event("write"), env, trace)
+
+    assert result.get("granted") is not True
+    assert "callback failed" in result.get("reason", "")
+    assert mgr.covers("write") is False
+    denied = [e for e in trace if e.kind == TraceEventKind.ESCALATION_DENIED]
+    assert len(denied) == 1
 
 
 @pytest.mark.asyncio

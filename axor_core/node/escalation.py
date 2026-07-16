@@ -16,8 +16,11 @@ Pure move of the loop's logic — same order, same decisions, same trace events.
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
+
+_log = logging.getLogger("axor.escalation")
 
 from axor_core.capability.flood import EscalationFloodGuard
 from axor_core.capability.lease_validator import (
@@ -216,9 +219,19 @@ class EscalationManager:
                 return _deny(
                     "escalation requires human approval but no callback is configured"
                 )
-            approved = await self._escalation_callback(
-                tool_use_id, tool, paths, max_ops
-            )
+            # Fail-closed exception boundary: a crashing approver (terminal
+            # EOF, broken operator callback) is a denial with a proper trace
+            # event, never an exception escaping governed execution.
+            try:
+                approved = await self._escalation_callback(
+                    tool_use_id, tool, paths, max_ops
+                )
+            except Exception:
+                _log.exception(
+                    "escalation approval callback raised for tool %r — denying",
+                    tool,
+                )
+                return _deny("escalation approval callback failed")
             auto_approved = False
             if not approved:
                 return _deny("human denied escalation request")
