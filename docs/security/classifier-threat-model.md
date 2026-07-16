@@ -102,9 +102,29 @@ Mitigations:
 
 ### Classifier Failure
 
-If the classifier raises an exception, `TaskAnalyzer` falls back to the
-DEFAULT policy preset.  The DEFAULT preset is the most restrictive preset —
-fail-closed.
+If the external (ML) classifier raises an exception, `TaskAnalyzer` catches
+it, logs a warning, and keeps the heuristic result — a broken or unreachable
+external classifier can never crash governed execution. The heuristic itself
+never escalates and degrades to "focused / no signal" on malformed
+coefficient data.
+
+### Misclassification Cost Containment
+
+Classification is advisory and will sometimes be wrong. Two mechanisms keep a
+wrong guess cheap instead of trying to make the classifier perfect:
+
+- **Confidence-gated narrowing.** Session-level adaptive narrowing is
+  monotonic (capability never re-broadens automatically), so it acts only on
+  classifications at or above the confidence threshold. A single
+  low-confidence misread turn cannot permanently strip capability from the
+  whole session.
+- **Capability-on-demand.** Presets whose tool surface is narrower than the
+  full set carry an `EscalationPolicy` whose `grantable_tools` covers exactly
+  what the preset lacks (e.g. `focused_readonly` → `write`, `bash`). An
+  under-provisioned task recovers per-tool via `escalate_policy` behind the
+  flood guard and `require_human=True` — nothing is granted unless the
+  operator wires an approval callback, and the overlay/parent intersection
+  can only narrow the grantable set further.
 
 ### Adversarial Task Text
 

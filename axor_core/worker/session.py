@@ -46,6 +46,13 @@ from axor_core.tokens import estimate_tokens
 
 _log = logging.getLogger("axor.session")
 
+# Adaptive narrowing is applied only when the classifier is at least this
+# confident. Narrowing is monotonic (never undone automatically), so acting on
+# a low-confidence guess would make one misread turn permanently strip
+# capability from the whole session. Matches the analyzer's escalation
+# threshold: below it the classification is by definition ambiguous.
+_NARROW_CONFIDENCE_THRESHOLD = 0.75
+
 
 class GovernedSession:
     """
@@ -489,13 +496,21 @@ class GovernedSession:
 
         # Adaptive policy: re-classify each turn; capability surface can only
         # narrow automatically — broadening requires an explicit operator override.
+        # Narrowing is confidence-gated: a low-confidence re-classification must
+        # not permanently strip capability from the whole session (classification
+        # is advisory; its errors have to stay cheap). Recovery from an
+        # over-narrow start is per-tool via escalate_policy, not re-broadening.
         effective_policy = policy
         if policy is None:
-            signal, _ = await self._analyzer.analyze(task)
+            signal, signal_event = await self._analyzer.analyze(task)
             new_policy = self._selector.select(signal)
+            # Custom analyzers may return no event; treat absent confidence as
+            # authoritative (legacy behaviour) — the stock TaskAnalyzer always
+            # reports one.
+            confidence = getattr(signal_event, "confidence", None)
             if self._active_policy is None:
                 self._active_policy = new_policy
-            else:
+            elif confidence is None or confidence >= _NARROW_CONFIDENCE_THRESHOLD:
                 narrowed = self._composer.apply_parent_restrictions(
                     new_policy, self._active_policy
                 )
@@ -507,6 +522,15 @@ class GovernedSession:
                         narrowed.name,
                     )
                 self._active_policy = narrowed
+            else:
+                _log.info(
+                    "session=%s adaptive narrowing skipped: classification "
+                    "confidence %.2f < %.2f (policy stays %s)",
+                    self._session_id,
+                    confidence,
+                    _NARROW_CONFIDENCE_THRESHOLD,
+                    self._active_policy.name,
+                )
             effective_policy = self._active_policy
 
         node = self._make_node(self._context_manager)
