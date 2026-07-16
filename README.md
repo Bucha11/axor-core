@@ -225,9 +225,28 @@ Policy may be selected dynamically from task signals, or fixed explicitly by the
 | Rewrite repo | expansive | broad | light | allowed (d=3) |
 | Audit security | focused_readonly | minimal | aggressive | denied |
 
-The heuristic classifier ships in core: rule-based, zero tokens, zero latency. Plug in `axor-classifier-simple` or `axor-classifier-llm` for higher accuracy on ambiguous tasks.
+The heuristic classifier ships in core: rule-based, zero tokens, zero latency. Plug in `axor-classifier-simple` for higher accuracy on ambiguous tasks (English + Russian).
 
 Policies derive minimum sufficient execution conditions — not static caps. A "rewrite repo" task gets broad context because the task requires it, not because limits were relaxed.
+
+Classification is advisory and misclassification stays cheap: session-level narrowing acts only on confident classifications, and presets with a reduced tool surface allow per-tool recovery via `escalate_policy`. Two operator guards complete the picture:
+
+```python
+from axor_core import GovernedSession, AllowlistEscalationApprover, presets
+
+session = GovernedSession(
+    executor=..., capability_executor=...,
+    # Guard 1 — approve mid-run capability escalations (fail-closed without it):
+    escalation_callback=AllowlistEscalationApprover(
+        {"bash": 10, "write": 20}, allowed_path_prefixes=("/workspace",),
+    ),
+    # Guard 2 — operator-defined policy for every turn; classifier fully bypassed
+    # (recommended for PRODUCTION; classifier-derived policy logs a warning there):
+    default_policy=presets.standard(),
+)
+```
+
+`console_escalation_callback` is the interactive alternative to the allowlist approver — it prompts a human on the terminal and denies when no TTY is attached.
 
 ---
 

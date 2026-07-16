@@ -70,6 +70,8 @@ _LAZY = {
     # capability (Ring 1, light)
     "CapabilityExecutor": "axor_core.capability.executor",
     "ToolHandler": "axor_core.capability.executor",
+    "AllowlistEscalationApprover": "axor_core.capability.approvals",
+    "console_escalation_callback": "axor_core.capability.approvals",
     # governor (Ring 0 kernel only)
     "ToolCallGovernor": "axor_core.governor",
     "GovernanceDecision": "axor_core.governor",
@@ -127,6 +129,9 @@ if TYPE_CHECKING:  # static visibility for type checkers / IDEs (not loaded at r
     from axor_core.worker.session import GovernedSession
     from axor_core.budget import TokenCostRates
     from axor_core.capability.executor import CapabilityExecutor, ToolHandler
+    from axor_core.capability.approvals import (
+        AllowlistEscalationApprover, console_escalation_callback,
+    )
     from axor_core.governor import ToolCallGovernor, GovernanceDecision
     from axor_core.config import GovernanceConfig
     from axor_core.contracts.invokable import Invokable
@@ -165,6 +170,7 @@ __all__ = [
     "NullMemoryProvider",
     # capability
     "CapabilityExecutor", "ToolHandler",
+    "AllowlistEscalationApprover", "console_escalation_callback",
     # governor
     "ToolCallGovernor", "GovernanceDecision",
     "GovernanceConfig",

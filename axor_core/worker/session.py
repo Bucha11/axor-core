@@ -10,6 +10,7 @@ if TYPE_CHECKING:
     from axor_core.contracts.agent import AgentDefinition
     from axor_core.contracts.memory import MemoryProvider
     from axor_core.contracts.session import SessionSink
+    from axor_core.node.intent_loop import EscalationCallback
 from axor_core.contracts.cancel import make_token, CancelReason
 from axor_core.contracts.session import SessionAuditRecord, ToolInvocationRecord
 from axor_core.contracts.context import RawExecutionState, LineageSummary
@@ -73,7 +74,21 @@ class GovernedSession:
         session = GovernedSession(
             executor=ClaudeCodeExecutor(),
             capability_executor=cap_executor,
-            classifier=LocalTrainedClassifier(),
+            classifier=TaskSignalClassifier(),   # axor-classifier-simple
+        )
+
+    Recommended PRODUCTION posture — operator-defined policy (classifier
+    bypassed) plus an escalation approver so a too-narrow policy recovers
+    per-tool instead of failing the task:
+
+        session = GovernedSession(
+            executor=ClaudeCodeExecutor(),
+            capability_executor=cap_executor,
+            mode=ExecutionMode.PRODUCTION,
+            default_policy=presets.standard(),
+            escalation_callback=AllowlistEscalationApprover(
+                {"bash": 10}, allowed_path_prefixes=("/workspace",),
+            ),
         )
 
     With soft token limit:
@@ -98,6 +113,8 @@ class GovernedSession:
         executor: Invokable,
         capability_executor: CapabilityExecutor,
         classifier: SignalClassifier | None = None,
+        escalation_callback: "EscalationCallback | None" = None,
+        default_policy: ExecutionPolicy | None = None,
         behavioral_drift_observer: BehavioralDriftObserver | None = None,
         extension_loaders: list[ExtensionLoader] | None = None,
         trace_config: TraceConfig | None = None,
@@ -238,6 +255,17 @@ class GovernedSession:
 
         self._deny_on_ambiguity: bool = (mode == ExecutionMode.STRICT)
         self._strict_escalation: bool = (mode == ExecutionMode.STRICT)
+
+        # Human/operator escalation gate — threaded into every node's IntentLoop
+        # (children inherit it at spawn). None → require_human escalations are
+        # auto-denied (fail-closed). See axor_core.capability.approvals for
+        # ready-made callbacks.
+        self._escalation_callback = escalation_callback
+        # Session-wide explicit policy: used whenever run() gets no per-call
+        # policy=. With it set the task classifier is bypassed entirely —
+        # the recommended posture for PRODUCTION deployments.
+        self._default_policy = default_policy
+        self._classifier_policy_warned = False
 
         # Process-isolation gate. In PRODUCTION/STRICT an untrusted
         # agent should execute tools out-of-process (DaemonCapabilityClient);
@@ -494,6 +522,21 @@ class GovernedSession:
         cancel_token = make_token()
         self._active_token = cancel_token
 
+        # Explicit policy resolution: per-call policy= wins over the session's
+        # default_policy. With either set, the classifier is bypassed entirely.
+        if policy is None:
+            policy = self._default_policy
+            if policy is None and self._mode == ExecutionMode.PRODUCTION \
+                    and not self._classifier_policy_warned:
+                _log.warning(
+                    "session=%s PRODUCTION mode is deriving policy from task "
+                    "classification (advisory, content-based). Recommended: pass "
+                    "an explicit policy= per call or default_policy= at "
+                    "construction to make policy operator-defined.",
+                    self._session_id,
+                )
+                self._classifier_policy_warned = True
+
         # Adaptive policy: re-classify each turn; capability surface can only
         # narrow automatically — broadening requires an explicit operator override.
         # Narrowing is confidence-gated: a low-confidence re-classification must
@@ -742,6 +785,7 @@ class GovernedSession:
             analyzer=self._analyzer,
             selector=self._selector,
             composer=self._composer,
+            escalation_callback=self._escalation_callback,
             context_manager=context_manager,
             budget_engine=self._budget_engine,
             trace_collector=self._collector,
