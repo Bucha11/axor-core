@@ -84,6 +84,14 @@ _LAZY = {
     "make_token": "axor_core.contracts.cancel",
     "SignalClassifier": "axor_core.contracts.policy",
     "ExecutionPolicy": "axor_core.contracts.policy",
+    "AuthorityPolicy": "axor_core.contracts.authority",
+    "ChildAuthorityPolicy": "axor_core.contracts.authority",
+    "ExportAuthorityPolicy": "axor_core.contracts.authority",
+    "ExecutionPlan": "axor_core.contracts.planning",
+    "RetrievalBreadth": "axor_core.contracts.planning",
+    "DecompositionPreference": "axor_core.contracts.planning",
+    "ResourceBudget": "axor_core.contracts.planning",
+    "split_legacy_policy": "axor_core.policy.legacy",
     "TaskSignal": "axor_core.contracts.policy",
     "TaskComplexity": "axor_core.contracts.policy",
     "TaskNature": "axor_core.contracts.policy",
@@ -139,6 +147,13 @@ if TYPE_CHECKING:  # static visibility for type checkers / IDEs (not loaded at r
     from axor_core.contracts.policy import (
         SignalClassifier, ExecutionPolicy, TaskSignal, TaskComplexity, TaskNature,
     )
+    from axor_core.contracts.authority import (
+        AuthorityPolicy, ChildAuthorityPolicy, ExportAuthorityPolicy,
+    )
+    from axor_core.contracts.planning import (
+        ExecutionPlan, RetrievalBreadth, DecompositionPreference, ResourceBudget,
+    )
+    from axor_core.policy.legacy import split_legacy_policy
     from axor_core.contracts.result import ExecutionResult, TokenUsage
     from axor_core.contracts.extension import ExtensionLoader, ExtensionBundle
     from axor_core.contracts.trace import TraceConfig
@@ -159,6 +174,9 @@ __all__ = [
     "CancelToken", "CancelReason", "make_token",
     "SignalClassifier",
     "ExecutionPolicy",
+    "AuthorityPolicy", "ChildAuthorityPolicy", "ExportAuthorityPolicy",
+    "ExecutionPlan", "RetrievalBreadth", "DecompositionPreference",
+    "ResourceBudget", "split_legacy_policy",
     "TaskSignal", "TaskComplexity", "TaskNature",
     "ExecutionResult", "TokenUsage",
     "ExtensionLoader", "ExtensionBundle",

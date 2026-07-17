@@ -36,6 +36,18 @@ from axor_core.contracts.policy import (
     ChildMode,
     ToolPolicy,
 )
+from axor_core.contracts.authority import (
+    AuthorityPolicy,
+    ChildAuthorityPolicy,
+    ExportAuthorityPolicy,
+)
+from axor_core.contracts.planning import (
+    DecompositionPreference,
+    ExecutionPlan,
+    ResourceBudget,
+    RetrievalBreadth,
+    NEUTRAL_PLAN,
+)
 from axor_core.contracts.canonical import CanonicalizedIntent
 from axor_core.contracts.mode import ExecutionMode
 from axor_core.contracts.envelope import (
@@ -115,6 +127,9 @@ __all__ = [
     # context
     "ContextView", "ContextFragment", "LineageSummary", "RawExecutionState",
     # policy
+    "AuthorityPolicy", "ChildAuthorityPolicy", "ExportAuthorityPolicy",
+    "ExecutionPlan", "RetrievalBreadth", "DecompositionPreference",
+    "ResourceBudget", "NEUTRAL_PLAN",
     "TaskSignal", "TaskComplexity", "TaskNature", "SignalClassifier",
     "ExecutionPolicy", "EscalationPolicy", "PolicyDecision", "PolicyDecisionKind",
     "ContextMode", "CompressionMode", "ExportMode", "ChildMode", "ToolPolicy",

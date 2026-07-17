@@ -63,3 +63,32 @@ source_modules =
     axor_core.node.canonicalizer
 forbidden_modules =
     axor_core.kernel.adjudicator
+
+# Authority/plan separation (RFC: task classification must not determine
+# authority). Enforcement surfaces decide on AuthorityPolicy and structural
+# facts only — an ExecutionPlan import there would be a channel through which
+# an untrusted task classification could reach an allow/deny decision.
+# (Extend source_modules with axor_core.planning when that package lands.)
+[importlinter:contract:authority-plan-separation]
+name = Enforcement surfaces must not import execution planning
+type = forbidden
+source_modules =
+    axor_core.capability
+    axor_core.security
+    axor_core.governor
+    axor_core.kernel
+    axor_core.taint
+    axor_core.degradation
+forbidden_modules =
+    axor_core.contracts.planning
+
+# The reverse direction: the planning layer must not be able to construct
+# authority. A planner that could import AuthorityPolicy could smuggle a
+# classifier-derived authority object into the session wiring.
+[importlinter:contract:planning-non-authoritative]
+name = Planning layer must not import authority constructors
+type = forbidden
+source_modules =
+    axor_core.contracts.planning
+forbidden_modules =
+    axor_core.contracts.authority
