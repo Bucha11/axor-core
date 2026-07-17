@@ -201,13 +201,30 @@ class GovernedNode:
         parent_policy: ExecutionPolicy | None = None,
         override_policy: ExecutionPolicy | None = None,
         cancel_token: CancelToken | None = None,
+        override_authority=None,
+        override_plan=None,
     ) -> ExecutionResult:
         trace_events: list = []
         cancel_token = cancel_token or make_token()
 
         # ── 1. Policy ──────────────────────────────────────────────────────────
         planner_plan = None
-        if override_policy is not None:
+        if override_authority is not None:
+            # Explicit trusted authority (RFC I2): the classifier can shape
+            # only the plan. The legacy policy object is synthesized from the
+            # halves for migration-window consumers.
+            from axor_core.planning.planner import plan_or_neutral
+            from axor_core.policy.legacy import merge_to_legacy_policy
+            if override_plan is not None:
+                planner_plan = override_plan
+            else:
+                signal, signal_event = await self._analyzer.analyze(raw_state.task)
+                trace_events.append(
+                    _stamp(signal_event, node_id="pending", sequence=0)
+                )
+                planner_plan = plan_or_neutral(self._planner, signal)
+            policy = merge_to_legacy_policy(override_authority, planner_plan)
+        elif override_policy is not None:
             policy = override_policy
         else:
             signal, signal_event = await self._analyzer.analyze(raw_state.task)
