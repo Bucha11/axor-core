@@ -12,7 +12,18 @@ choose a policy, it becomes a content-based trust decision.
 
 ## Correct Framing
 
-**Task classification is not a security boundary.**
+**Task classification is not a security boundary — and as of the
+authority/plan split it is not on the authority path at all.**
+
+With the split (`AuthorityPolicy` vs `ExecutionPlan`), the classifier's
+output reaches only execution planning: context breadth, compression,
+decomposition hints, resource reservations — all bounded by
+`ResourceBudget`. No field derived from `TaskAnalyzer` can add or remove a
+tool, change a path or consequence ceiling, grant spawn, alter escalation
+requirements, or widen export. The remaining classifier risks are
+availability-shaped (wasted retrieval/tokens/latency), not
+capability-shaped. The legacy classifier-selected `ExecutionPolicy` remains
+only as a deprecated compatibility path until the next major release.
 
 The classifier may help choose a policy preset (e.g., FOCUSED vs EXPANSIVE),
 but it cannot expand capability surface beyond the operator-defined policy ceiling.

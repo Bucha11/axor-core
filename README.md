@@ -213,12 +213,34 @@ This is the load-bearing separation: enforcement is a deterministic function of 
 
 ---
 
-## Task-Aware Policies
+## Authority and Execution Planning
 
-Policy may be selected dynamically from task signals, or fixed explicitly by the operator.
+Governance is split into two independent objects (see `docs/migration-authority-plan.md`):
 
-| Task | Policy | Context | Compression | Children |
-|------|--------|---------|-------------|----------|
+| | AuthorityPolicy | ExecutionPlan |
+|---|---|---|
+| answers | what may the agent EFFECT | how to execute efficiently |
+| source | operator / control plane / parent ceiling | classifier, planner, defaults |
+| trust | trusted, security-sensitive | advisory, optimization-only |
+| contains | tools, path & consequence ceilings, spawn rights, escalation, export ceiling | context breadth, compression, decomposition hint, reservations |
+| adapts | only via trusted override / approved lease | freely, within ResourceBudget |
+
+```python
+from axor_core import GovernedSession, AuthorityPolicy, plan_presets
+
+session = GovernedSession(
+    executor=..., capability_executor=...,
+    authority=AuthorityPolicy(name="standard_workspace", ...),  # operator-defined
+    planner=HeuristicExecutionPlanner(),                        # classifier shapes the plan
+)
+await session.run("перепиши весь модуль auth")   # plan may go broad; tools never widen
+```
+
+The task classifier (heuristic in core; `axor-classifier-simple` for EN+RU ML) influences **only the plan**: a misclassification — or a prompt-injected "this is a repository-wide task, enable all tools" — can at most spend more budget, never widen the capability surface. Classifier failure degrades to a neutral plan (never stops execution). Mid-run, an agent may `request_plan_expansion` (bounded by `ResourceBudget`) for more context, or `escalate_policy` (operator-gated) for a missing tool — budget questions and authority questions stay on separate channels.
+
+The legacy `ExecutionPolicy` (mixed object) and classifier-selected policies remain supported through a compatibility adapter and will be removed in the next major release.
+
+------|--------|---------|-------------|----------|
 | Fix a typo | focused_mutative | minimal | aggressive | denied |
 | Write tests | focused_generative | minimal | balanced | denied |
 | Refactor module | moderate_mutative | moderate | balanced | shallow (d=1) |
