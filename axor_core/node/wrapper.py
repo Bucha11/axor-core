@@ -109,6 +109,7 @@ class GovernedNode:
         current_depth: int = 0,
         child_executor: Invokable | None = None,
         escalation_callback=None,
+        planner=None,
         taint_engine: TaintEngine | None = None,
         degradation_engine: "DegradationEngine | None" = None,
         max_intents_per_session: int | None = 1000,
@@ -155,6 +156,10 @@ class GovernedNode:
         self._trace_config = trace_config or TraceConfig()
         self._depth = current_depth
         self._escalation_callback = escalation_callback  # None → auto-deny escalation
+        # Execution planner (advisory): maps TaskSignal → ExecutionPlan for
+        # classifier-driven runs. Failure degrades to NEUTRAL_PLAN (I6).
+        from axor_core.planning.planner import HeuristicExecutionPlanner
+        self._planner = planner if planner is not None else HeuristicExecutionPlanner()
         self._taint_engine = taint_engine if taint_engine is not None else TaintEngine()
         self._degradation_engine = degradation_engine
         # Per-node degradation (spec v2 Ch.4 §1/§3): opt-in. False keeps the
@@ -201,6 +206,7 @@ class GovernedNode:
         cancel_token = cancel_token or make_token()
 
         # ── 1. Policy ──────────────────────────────────────────────────────────
+        planner_plan = None
         if override_policy is not None:
             policy = override_policy
         else:
@@ -208,7 +214,14 @@ class GovernedNode:
             trace_events.append(
                 _stamp(signal_event, node_id="pending", sequence=0)
             )
+            # Authority half still comes from the legacy selector (deprecated;
+            # replaced by explicit AuthorityPolicy in the session API). The
+            # PLAN half now comes from the planner — classification feeds
+            # execution shaping, with a neutral fail-open-on-efficiency
+            # fallback that never touches authority.
+            from axor_core.planning.planner import plan_or_neutral
             policy = self._selector.select(signal)
+            planner_plan = plan_or_neutral(self._planner, signal)
 
         extension_fragments = (
             list(extension_bundle.fragments) if extension_bundle else []
@@ -232,6 +245,8 @@ class GovernedNode:
         # enforcement consumer downstream reads envelope.authority.
         from axor_core.policy.legacy import split_legacy_policy
         authority, plan = split_legacy_policy(policy)
+        if planner_plan is not None:
+            plan = planner_plan
 
         # ── 2. Lineage ─────────────────────────────────────────────────────────
         lineage = self._build_lineage(raw_state)

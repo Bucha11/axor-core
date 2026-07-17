@@ -90,6 +90,9 @@ _LAZY = {
     "DecompositionPreference": "axor_core.contracts.planning",
     "ResourceBudget": "axor_core.contracts.planning",
     "split_legacy_policy": "axor_core.policy.legacy",
+    "ExecutionPlanner": "axor_core.planning.planner",
+    "HeuristicExecutionPlanner": "axor_core.planning.planner",
+    "plan_presets": "axor_core.planning.presets",
     "TaskSignal": "axor_core.contracts.policy",
     "TaskComplexity": "axor_core.contracts.policy",
     "TaskNature": "axor_core.contracts.policy",
@@ -114,7 +117,7 @@ _LAZY = {
     "ToolNotAllowedError": "axor_core.errors.exceptions",
     "ChildNotAllowedError": "axor_core.errors.exceptions",
 }
-_SUBMODULES = {"presets"}
+_SUBMODULES = {"presets", "plan_presets"}
 
 
 def __getattr__(name: str):
@@ -149,6 +152,8 @@ if TYPE_CHECKING:  # static visibility for type checkers / IDEs (not loaded at r
         ExecutionPlan, RetrievalBreadth, DecompositionPreference, ResourceBudget,
     )
     from axor_core.policy.legacy import split_legacy_policy
+    from axor_core.planning.planner import ExecutionPlanner, HeuristicExecutionPlanner
+    from axor_core.planning import presets as plan_presets
     from axor_core.contracts.result import ExecutionResult, TokenUsage
     from axor_core.contracts.extension import ExtensionLoader, ExtensionBundle
     from axor_core.contracts.trace import TraceConfig
@@ -172,6 +177,7 @@ __all__ = [
     "AuthorityPolicy", "ChildAuthorityPolicy", "ExportAuthorityPolicy",
     "ExecutionPlan", "RetrievalBreadth", "DecompositionPreference",
     "ResourceBudget", "split_legacy_policy",
+    "ExecutionPlanner", "HeuristicExecutionPlanner", "plan_presets",
     "TaskSignal", "TaskComplexity", "TaskNature",
     "ExecutionResult", "TokenUsage",
     "ExtensionLoader", "ExtensionBundle",
