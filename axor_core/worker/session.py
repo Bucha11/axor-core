@@ -91,6 +91,9 @@ class GovernedSession:
         executor: Invokable,
         capability_executor: CapabilityExecutor,
         classifier: SignalClassifier | None = None,
+        authority=None,
+        default_plan=None,
+        planner=None,
         behavioral_drift_observer: BehavioralDriftObserver | None = None,
         extension_loaders: list[ExtensionLoader] | None = None,
         trace_config: TraceConfig | None = None,
@@ -231,6 +234,14 @@ class GovernedSession:
 
         self._deny_on_ambiguity: bool = (mode == ExecutionMode.STRICT)
         self._strict_escalation: bool = (mode == ExecutionMode.STRICT)
+
+        # Authority/plan split API (RFC I2): explicit operator authority for
+        # every turn; the classifier can then shape only the plan. default_plan
+        # suppresses classification entirely.
+        self._authority = authority
+        self._default_plan = default_plan
+        self._planner = planner
+        self._authority_warned = False
 
         # Process-isolation gate. In PRODUCTION/STRICT an untrusted
         # agent should execute tools out-of-process (DaemonCapabilityClient);
@@ -408,6 +419,8 @@ class GovernedSession:
         self,
         task: str,
         policy: ExecutionPolicy | None = None,
+        authority=None,
+        plan=None,
         session_state: dict | None = None,
         parent_export: str | None = None,
         lineage: LineageSummary | None = None,
@@ -486,6 +499,67 @@ class GovernedSession:
 
         cancel_token = make_token()
         self._active_token = cancel_token
+
+        # ── Authority/plan API (RFC I2) ────────────────────────────────────────
+        # Conflict rule (RFC §18.4): the legacy mixed policy cannot be combined
+        # with the split API in the same call — fail fast, no implicit merge.
+        if policy is not None and (authority is not None or plan is not None):
+            raise ValueError(
+                "Cannot combine legacy policy= with authority=/plan= — "
+                "pass either the mixed legacy object or the split halves"
+            )
+        effective_authority = authority if authority is not None else self._authority
+        if policy is not None and self._authority is not None:
+            raise ValueError(
+                "Cannot combine legacy run(policy=...) with a session-level "
+                "authority= — migrate the call site to run(plan=...)"
+            )
+        if effective_authority is not None:
+            effective_plan = plan if plan is not None else self._default_plan
+            node = self._make_node(self._context_manager)
+            result = await node.run(
+                raw_state=raw_state,
+                extension_bundle=self._registry.current_bundle(),
+                override_authority=effective_authority,
+                override_plan=effective_plan,
+                cancel_token=cancel_token,
+            )
+            self._active_token = None
+            self._tracker.register_node(result.node_id, None, 0)
+            self._tracker.record(
+                node_id=result.node_id,
+                input_tokens=result.token_usage.input_tokens,
+                output_tokens=result.token_usage.output_tokens,
+                tool_tokens=result.token_usage.tool_tokens,
+                context_tokens=result.token_usage.context_tokens,
+                cache_creation_input_tokens=result.token_usage.cache_creation_input_tokens,
+                cache_read_input_tokens=result.token_usage.cache_read_input_tokens,
+            )
+            if self._telemetry is not None:
+                try:
+                    trace = self._collector.get_trace(result.node_id)
+                    if trace is not None:
+                        await self._telemetry.ingest_trace(trace, raw_input=task)
+                except Exception:
+                    pass
+            return result
+
+        # Legacy path (deprecated by the authority/plan split): classification
+        # still selects the mixed policy. PRODUCTION nudges toward explicit
+        # authority — task-derived authority is advisory-quality, not trusted.
+        if (
+            policy is None
+            and self._mode == ExecutionMode.PRODUCTION
+            and not self._authority_warned
+        ):
+            _log.warning(
+                "session=%s PRODUCTION mode is deriving AUTHORITY from task "
+                "classification (legacy path). Pass authority= (session or "
+                "per-run) so authority is operator-defined and the classifier "
+                "shapes only the execution plan.",
+                self._session_id,
+            )
+            self._authority_warned = True
 
         # Adaptive policy: re-classify each turn; capability surface can only
         # narrow automatically — broadening requires an explicit operator override.
@@ -718,6 +792,7 @@ class GovernedSession:
             analyzer=self._analyzer,
             selector=self._selector,
             composer=self._composer,
+            planner=self._planner,
             context_manager=context_manager,
             budget_engine=self._budget_engine,
             trace_collector=self._collector,
