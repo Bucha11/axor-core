@@ -17,6 +17,12 @@ same agent · same model · same prompt
 different policy → different execution behavior
 ```
 
+The kernel *enforces*. When you want to **see** what it caught — replay the
+incident deterministically, prove it, and turn it into a regression test — that
+is the [control plane](#control-plane): catch the discrepancy as an
+EvidenceCase → explain it with counterfactual replay → prevent it with a
+two-sided corpus. Same loop, one story; this repo is the enforcement half.
+
 ---
 
 ## The Problem
@@ -386,10 +392,10 @@ What benchmarks do **not** prove: full prompt injection prevention, covert chann
 
 [**axor-control-plane**](https://github.com/Bucha11/axor-control-plane) is the platform that operates `axor-core`-governed agents at runtime. The kernel enforces; the control plane observes, replays, and operates a fleet:
 
-- **Eval** — run a fault scenario; a caught discrepancy (observed reality vs. the agent's claim) becomes a shareable, exportable **EvidenceCase**.
-- **Replay** — scrub any run and fork counterfactuals ("no exec capability", "this value arrives tainted", "budget cap = N") that re-gate the recorded trace deterministically, with a value-provenance / taint graph.
-- **Control** — live topology of governed nodes: pause / stop / replan / inject / attest / budget-cap, and cascade-stop over a subtree.
-- **Regression** — pin runs into a corpus and replay it under a candidate policy: two-sided, deterministic CI.
+- **Catch** (Eval) — run a fault scenario; a caught discrepancy (observed reality vs. the agent's claim) becomes a shareable, exportable **EvidenceCase**.
+- **Explain** (Replay) — scrub any run and fork counterfactuals ("no exec capability", "this value arrives tainted", "budget cap = N") that re-gate the recorded trace deterministically, with a value-provenance / taint graph.
+- **Prevent** (Regression) — pin runs into a corpus and replay it under a candidate policy: two-sided, deterministic CI.
+- **Govern** (Control) — live topology of governed nodes: pause / stop / replan / inject / attest / budget-cap, and cascade-stop over a subtree.
 
 Replay reuses the *same* pure kernel (`axor_core.kernel`) that enforcement does, so what you review is what actually ran.
 
