@@ -19,6 +19,8 @@ class TraceEventKind(str, Enum):
     SIGNAL_CHOSEN = "signal_chosen"
     POLICY_CHOSEN = "policy_chosen"
     POLICY_ADJUSTED = "policy_adjusted"
+    EXECUTION_PLAN_CHANGED = "execution_plan_changed"
+    PLAN_CONSTRAINED_BY_BUDGET = "plan_constrained_by_budget"
 
     # intents
     INTENT_APPROVED = "intent_approved"

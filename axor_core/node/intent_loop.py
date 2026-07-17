@@ -156,6 +156,7 @@ class IntentLoop:
         trajectory_observers: "list | None" = None,
         invocation_recorder: "Callable[[str, dict, bool], None] | None" = None,
         admission: "AdmissionController | None" = None,
+        resource_budget=None,
     ) -> None:
         self._executor = capability_executor
         self._trace_events = trace_events
@@ -274,6 +275,14 @@ class IntentLoop:
                 "definition; they must stay on the content-derivation path."
             )
         self._spawn_count = 0
+        # Dynamic replanning (advisory): plan expansions are bounded by the
+        # operator's ResourceBudget, never by authority — widening a plan
+        # changes what the run may SPEND, not what it may EFFECT.
+        if resource_budget is None:
+            from axor_core.contracts.planning import ResourceBudget
+            resource_budget = ResourceBudget()
+        self._resource_budget = resource_budget
+        self._plan_expansions = 0
 
     async def run(
         self,
@@ -354,6 +363,24 @@ class IntentLoop:
                                     "tool_result": result,
                                     "approved": True,
                                 },
+                                node_id=envelope.node_id,
+                            )
+                        continue
+
+                    # request_plan_expansion — advisory replanning intent.
+                    # Handled BEFORE the gate cascade (like escalate_policy):
+                    # it is not a tool call and grants nothing — it adjusts
+                    # the envelope's plan within the ResourceBudget.
+                    if tool_name == "request_plan_expansion":
+                        result = self._handle_plan_expansion(event, envelope)
+                        if self._tool_result_callback is not None:
+                            await self._tool_result_callback(
+                                tool_use_id, tool_name, result, True
+                            )
+                        else:
+                            yield ExecutorEvent(
+                                kind=ExecutorEventKind.TEXT,
+                                payload={"tool_result": result, "approved": True},
                                 node_id=envelope.node_id,
                             )
                         continue
@@ -991,6 +1018,75 @@ class IntentLoop:
             kind=PolicyDecisionKind.DENY,
             reason=f"tool '{tool_name}' is not in capabilities for policy '{envelope.authority.name}'",
         ), pending
+
+    def _handle_plan_expansion(self, event: ExecutorEvent, envelope) -> dict:
+        """Adjust envelope.plan within the ResourceBudget (RFC §13).
+
+        Distinct from escalate_policy by design: "need more context" is a
+        budget question, "need another tool" is an authority question. The
+        new plan affects subsequent planning consumers (child context
+        shaping, budget decisions); it never touches envelope.authority or
+        capabilities."""
+        from axor_core.planning.composer import PlanComposer
+
+        args = event.payload.get("args", {}) or {}
+        reason = str(args.get("reason", ""))
+        budget = self._resource_budget
+
+        if (
+            budget.max_plan_expansions is not None
+            and self._plan_expansions >= budget.max_plan_expansions
+        ):
+            self._trace_events.append(TraceEvent(
+                kind=TraceEventKind.PLAN_CONSTRAINED_BY_BUDGET,
+                node_id=envelope.node_id,
+                sequence=len(self._trace_events),
+                payload={"constraints": ["max_plan_expansions reached"],
+                         "reason": reason},
+            ))
+            return {
+                "granted": False,
+                "reason": f"plan expansion budget exhausted "
+                          f"({budget.max_plan_expansions})",
+            }
+
+        new_plan, constraints = PlanComposer().expand(
+            envelope.plan,
+            budget,
+            requested_context_mode=args.get("requested_context_mode"),
+            requested_child_depth=args.get("requested_child_depth"),
+            additional_token_reservation=args.get("additional_token_reservation"),
+            reason=reason,
+        )
+        if constraints:
+            self._trace_events.append(TraceEvent(
+                kind=TraceEventKind.PLAN_CONSTRAINED_BY_BUDGET,
+                node_id=envelope.node_id,
+                sequence=len(self._trace_events),
+                payload={"constraints": constraints, "reason": reason},
+            ))
+        if new_plan is not envelope.plan:
+            envelope.plan = new_plan
+            self._plan_expansions += 1
+            self._trace_events.append(TraceEvent(
+                kind=TraceEventKind.EXECUTION_PLAN_CHANGED,
+                node_id=envelope.node_id,
+                sequence=len(self._trace_events),
+                payload={
+                    "plan_name": new_plan.name,
+                    "context_mode": new_plan.context_mode.value,
+                    "suggested_child_depth": new_plan.suggested_child_depth,
+                    "token_reservation": new_plan.token_reservation,
+                    "reason": reason,
+                    "source": new_plan.source,
+                },
+            ))
+        return {
+            "granted": True,
+            "plan": new_plan.name,
+            "context_mode": new_plan.context_mode.value,
+            "constrained": constraints,
+        }
 
     async def _handle_escalation(
         self,

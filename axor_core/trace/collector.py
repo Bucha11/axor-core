@@ -451,6 +451,11 @@ _KIND_ALLOWED_PAYLOAD: dict[TraceEventKind, set[str]] = {
         "before_tokens", "after_tokens", "compression_ratio",
     },
     TraceEventKind.EXTENSION_LOADED: {"name", "kind", "source"},
+    TraceEventKind.EXECUTION_PLAN_CHANGED: {
+        "plan_name", "context_mode", "suggested_child_depth",
+        "token_reservation", "reason", "source",
+    },
+    TraceEventKind.PLAN_CONSTRAINED_BY_BUDGET: {"constraints", "reason"},
 }
 
 # TaskSignal fields safe to persist. raw_input is gated by persist_inputs.
