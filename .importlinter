@@ -86,6 +86,7 @@ source_modules =
     axor_core.degradation
 forbidden_modules =
     axor_core.contracts.planning
+    axor_core.planning
 ignore_imports =
     axor_core.contracts.envelope -> axor_core.contracts.planning
     axor_core.contracts.envelope -> axor_core.policy.legacy
@@ -98,5 +99,6 @@ name = Planning layer must not import authority constructors
 type = forbidden
 source_modules =
     axor_core.contracts.planning
+    axor_core.planning
 forbidden_modules =
     axor_core.contracts.authority
