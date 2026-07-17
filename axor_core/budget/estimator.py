@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from axor_core.contracts.context import ContextView
+from axor_core.contracts.planning import ExecutionPlan
 from axor_core.contracts.policy import ExecutionPolicy, CompressionMode
 
 
@@ -54,7 +55,7 @@ class BudgetEstimator:
     def compression_headroom(
         self,
         context: ContextView,
-        policy: ExecutionPolicy,
+        policy: "ExecutionPolicy | ExecutionPlan",
     ) -> float:
         """
         How much more can we compress this context if needed?

@@ -7,6 +7,7 @@ from typing import Callable
 from axor_core.budget.estimator import BudgetEstimator
 from axor_core.budget.tracker import BudgetTracker
 from axor_core.contracts.envelope import ExecutionEnvelope
+from axor_core.contracts.planning import ExecutionPlan
 from axor_core.contracts.policy import (
     ExecutionPolicy,
     CompressionMode,
@@ -167,7 +168,7 @@ class BudgetPolicyEngine:
 
         if ratio >= self._thresholds.compress:
             headroom = self._estimator.compression_headroom(
-                envelope.context, envelope.policy
+                envelope.context, envelope.plan
             )
             if headroom > 0.2:
                 return OptimizationDecision(
@@ -182,7 +183,7 @@ class BudgetPolicyEngine:
         self,
         node_id: str,
         result_token_estimate: int,
-        policy: ExecutionPolicy,
+        policy: "ExecutionPolicy | ExecutionPlan",
     ) -> OptimizationDecision:
         if self._soft_limit is None:
             return _proceed("no soft limit set")
@@ -225,7 +226,7 @@ class BudgetPolicyEngine:
 
         slice_tokens = self._estimator.estimate_child_slice_tokens(
             parent_context=parent_envelope.context,
-            fraction=parent_envelope.policy.child_context_fraction,
+            fraction=parent_envelope.plan.child_context_fraction,
         )
         sufficient = self._estimator.is_slice_sufficient(
             child_task=child_task,

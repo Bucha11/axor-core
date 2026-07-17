@@ -6,7 +6,10 @@ from axor_core.contracts.envelope import (
     ExecutionEnvelope,
     ExportContract,
 )
-from axor_core.contracts.policy import ExecutionPolicy, ExportMode
+from axor_core.contracts.authority import AuthorityPolicy
+from axor_core.contracts.planning import ExecutionPlan
+from axor_core.contracts.policy import ContextMode, ExecutionPolicy, ExportMode
+from axor_core.policy.legacy import split_legacy_policy
 from axor_core.contracts.extension import ExtensionTool
 from axor_core.capability.resolver import CapabilityResolver
 
@@ -52,12 +55,24 @@ class EnvelopeBuilder:
         node_id: str | None = None,
         parent_metadata: dict | None = None,
         cancel_token=None,
+        authority: AuthorityPolicy | None = None,
+        plan: ExecutionPlan | None = None,
     ) -> ExecutionEnvelope:
         from axor_core.contracts.cancel import make_token
         node_id = node_id or _new_node_id()
 
-        capabilities = self._resolver.resolve(policy, extension_tools or [])
-        export_contract = self._derive_export_contract(policy)
+        # Authority/plan split: capabilities derive from the trusted half;
+        # the one planning-driven capability flag (context expansion) is
+        # computed HERE — the capability layer never reads ExecutionPlan
+        # (import contract `authority-plan-separation`).
+        if authority is None or plan is None:
+            authority, plan = split_legacy_policy(policy)
+        capabilities = self._resolver.resolve(
+            authority,
+            extension_tools or [],
+            allow_context_expansion=plan.context_mode != ContextMode.MINIMAL,
+        )
+        export_contract = self._derive_export_contract(authority.export_policy.max_mode)
 
         return ExecutionEnvelope(
             node_id=node_id,
@@ -69,10 +84,11 @@ class EnvelopeBuilder:
             lineage=lineage,
             cancel_token=cancel_token or make_token(),
             parent_metadata=parent_metadata or {},
+            authority=authority,
+            plan=plan,
         )
 
-    def _derive_export_contract(self, policy: ExecutionPolicy) -> ExportContract:
-        mode = policy.export_mode
+    def _derive_export_contract(self, mode: ExportMode) -> ExportContract:
         return ExportContract(
             mode=mode,
             allowed_fields=_EXPORT_ALLOWED_FIELDS[mode],

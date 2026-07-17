@@ -170,9 +170,9 @@ class EscalationManager:
         paths = args.get("paths", [])
         max_ops = min(
             _safe_int(args.get("max_ops", 10), default=10),
-            envelope.policy.escalation_policy.max_ops_per_grant,
+            envelope.authority.escalation_policy.max_ops_per_grant,
         )
-        ep = envelope.policy.escalation_policy
+        ep = envelope.authority.escalation_policy
         node_id = envelope.node_id
         tool_use_id = event.payload.get("tool_use_id", "")
 
@@ -233,7 +233,7 @@ class EscalationManager:
                 else LeaseAuthorityType.AUTOMATED_POLICY
             ),
             allowed_tools=[tool],
-            parent_policy=envelope.policy,
+            parent_policy=envelope.authority,
             allowed_paths=paths,
             ttl_seconds=300.0,
             max_uses=max_ops,

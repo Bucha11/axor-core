@@ -3,7 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from axor_core.contracts.authority import AuthorityPolicy
 from axor_core.contracts.context import ContextView, LineageSummary
+from axor_core.contracts.planning import ExecutionPlan
 from axor_core.contracts.policy import ExecutionPolicy
 from axor_core.contracts.cancel import CancelToken, make_token
 
@@ -79,6 +81,27 @@ class ExecutionEnvelope:
     lineage: LineageSummary
     cancel_token: CancelToken = field(default_factory=make_token)
     parent_metadata: dict[str, Any] = field(default_factory=dict)
+    # Authority/plan split (RFC): the trusted and advisory halves of the
+    # legacy policy, carried separately so enforcement consumers read only
+    # `authority` and context/planning consumers read only `plan`. During the
+    # migration window they default to the split of `policy`, so every
+    # existing construction site stays valid and the halves are always
+    # consistent with the legacy object.
+    authority: AuthorityPolicy | None = None
+    plan: ExecutionPlan | None = None
+
+    def __post_init__(self) -> None:
+        if self.authority is None or self.plan is None:
+            # Local import: the mapping lives in policy.legacy (Ring 0, same
+            # ring as contracts) — imported lazily to keep contracts free of
+            # module-level dependencies on the policy package.
+            from axor_core.policy.legacy import split_legacy_policy
+
+            authority, plan = split_legacy_policy(self.policy)
+            if self.authority is None:
+                self.authority = authority
+            if self.plan is None:
+                self.plan = plan
 
     # ── Added in 0.5.0: adapter-facing optimisation hints ─────────────────────
     cache_hints: CacheHints | None = None

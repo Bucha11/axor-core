@@ -958,7 +958,7 @@ class IntentLoop:
 
         # Filesystem ceiling — applies to every path-bearing tool call regardless
         # of how it is later approved (allowed_tools, lease, or escalation grant).
-        policy_paths = getattr(envelope.policy, "allowed_paths", ()) or ()
+        policy_paths = envelope.authority.allowed_paths or ()
         if policy_paths:
             candidate_path = extract_path_arg(tool_args)
             if candidate_path and not path_matches_allowlist(candidate_path, policy_paths):
@@ -981,7 +981,7 @@ class IntentLoop:
                 reason="tool in allowed_tools",
             ), pending
 
-        if tool_name in envelope.policy.tool_policy.extra_denied:
+        if tool_name in envelope.authority.tool_policy.extra_denied:
             return PolicyDecision(
                 kind=PolicyDecisionKind.DENY,
                 reason=f"tool '{tool_name}' is explicitly denied by policy",
@@ -989,7 +989,7 @@ class IntentLoop:
 
         return PolicyDecision(
             kind=PolicyDecisionKind.DENY,
-            reason=f"tool '{tool_name}' is not in capabilities for policy '{envelope.policy.name}'",
+            reason=f"tool '{tool_name}' is not in capabilities for policy '{envelope.authority.name}'",
         ), pending
 
     async def _handle_escalation(
@@ -1011,18 +1011,24 @@ class IntentLoop:
         Called by GovernedNode.wrapper when executor requests a child.
         """
         caps = envelope.capabilities
-        policy = envelope.policy
+        authority = envelope.authority
 
         if not caps.allow_children:
             return PolicyDecision(
                 kind=PolicyDecisionKind.DENY,
-                reason=f"child nodes not allowed by policy '{policy.name}' (child_mode={policy.child_mode})",
+                reason=(
+                    f"child nodes not allowed by policy '{authority.name}' "
+                    f"(allow_spawn={authority.child_authority.allow_spawn})"
+                ),
             )
 
-        if self._depth >= policy.max_child_depth:
+        if self._depth >= authority.child_authority.max_depth:
             return PolicyDecision(
                 kind=PolicyDecisionKind.DENY,
-                reason=f"max child depth reached: current={self._depth}, max={policy.max_child_depth}",
+                reason=(
+                    f"max child depth reached: current={self._depth}, "
+                    f"max={authority.child_authority.max_depth}"
+                ),
             )
 
         # Total-spawn cap (DoS guard against wide fan-out). Opt-in; None = unlimited.
@@ -1158,9 +1164,7 @@ class IntentLoop:
         The governance gate is satisfied by an active escalation grant or
         capability lease for the tool (a human/operator-authorised path).
         """
-        ceiling = getattr(
-            envelope.policy, "max_unattended_consequence", ConsequenceClass.CONSEQUENTIAL
-        )
+        ceiling = envelope.authority.max_unattended_consequence
         # over-ceiling is admissible only through a governance gate (an active
         # escalation grant or capability lease for the tool).
         has_gate = self._escalation.covers(tool_name)

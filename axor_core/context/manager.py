@@ -6,6 +6,7 @@ from axor_core.contracts.context import (
     LineageSummary,
     RawExecutionState,
 )
+from axor_core.contracts.planning import ExecutionPlan
 from axor_core.contracts.policy import ExecutionPolicy
 from axor_core.context.cache import ContextCache
 from axor_core.context.compressor import ContextCompressor
@@ -134,12 +135,15 @@ class ContextManager:
         self,
         raw_state: RawExecutionState,
         lineage: LineageSummary,
-        policy: ExecutionPolicy | None = None,
+        policy: "ExecutionPolicy | ExecutionPlan | None" = None,
     ) -> ContextView:
         """
         Full pipeline: raw state → shaped ContextView.
-        Policy is passed per-call — always reflects the current execution's
-        policy, not a stale value from session initialization.
+        Accepts the legacy ExecutionPolicy or (preferred) the ExecutionPlan —
+        context shaping reads only planning fields (context_mode,
+        compression_mode, name), never authority. Passed per-call — always
+        reflects the current execution's plan, not a stale value from
+        session initialization.
 
         Pinned fragments are always included first — they bypass all
         compression, selection, and scope rules.
@@ -319,7 +323,7 @@ class ContextManager:
         self,
         raw_state: RawExecutionState,
         selected: list[ContextFragment],
-        policy: ExecutionPolicy | None = None,
+        policy: "ExecutionPolicy | ExecutionPlan | None" = None,
     ) -> str:
         facts = [f for f in selected if f.kind == "fact"]
         policy_name = policy.name if policy else "unknown"
@@ -331,7 +335,9 @@ class ContextManager:
             f"Files cached: {len(self._cache.cached_paths())}"
         )
 
-    def _active_constraints(self, policy: ExecutionPolicy | None = None) -> list[str]:
+    def _active_constraints(
+        self, policy: "ExecutionPolicy | ExecutionPlan | None" = None
+    ) -> list[str]:
         constraints = [f"turn={self._turn}"]
         if policy:
             constraints.insert(0, policy.context_mode.value)
