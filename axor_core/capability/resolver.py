@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from axor_core.contracts.authority import AuthorityPolicy
 from axor_core.contracts.envelope import Capabilities
 from axor_core.contracts.extension import ExtensionTool
 from axor_core.contracts.policy import ExecutionPolicy, ChildMode, ExportMode
@@ -36,36 +37,59 @@ class CapabilityResolver:
 
     def resolve(
         self,
-        policy: ExecutionPolicy,
+        policy: "ExecutionPolicy | AuthorityPolicy",
         extension_tools: list[ExtensionTool] | None = None,
+        *,
+        allow_context_expansion: bool | None = None,
     ) -> Capabilities:
-        allowed = self._resolve_builtin_tools(policy)
+        """Derive Capabilities from either the legacy ExecutionPolicy or an
+        AuthorityPolicy (the trusted half of the authority/plan split).
+
+        `allow_context_expansion` is a PLANNING concern (how much context) —
+        the capability layer must not read ExecutionPlan (import contract
+        `authority-plan-separation`), so callers that resolve from an
+        AuthorityPolicy pass the plan-derived flag explicitly. Legacy
+        ExecutionPolicy callers keep the context_mode-derived default.
+        """
+        if isinstance(policy, AuthorityPolicy):
+            spawn_allowed = policy.child_authority.allow_spawn
+            max_depth = policy.child_authority.max_depth
+            nested_shape = max_depth > 1
+            export_ceiling = policy.export_policy.max_mode
+            expansion = bool(allow_context_expansion)
+        else:
+            spawn_allowed = policy.child_mode != ChildMode.DENIED
+            max_depth = policy.max_child_depth
+            nested_shape = policy.child_mode == ChildMode.ALLOWED and max_depth > 1
+            export_ceiling = policy.export_mode
+            expansion = (
+                self._allow_context_expansion(policy)
+                if allow_context_expansion is None
+                else allow_context_expansion
+            )
+
+        allowed = self._resolve_builtin_tools(policy, spawn_allowed)
         allowed = self._apply_extension_tools(allowed, policy, extension_tools or [])
         allowed = self._apply_deny_list(allowed, policy)
 
-        allow_children = (
-            policy.child_mode != ChildMode.DENIED
-            and policy.tool_policy.allow_spawn
-        )
-        allow_nested = (
-            allow_children
-            and policy.child_mode == ChildMode.ALLOWED
-            and policy.max_child_depth > 1
-        )
+        allow_children = spawn_allowed and policy.tool_policy.allow_spawn
+        allow_nested = allow_children and nested_shape
 
         return Capabilities(
             allowed_tools=frozenset(allowed),
             allow_children=allow_children,
             allow_nested_children=allow_nested,
-            allow_context_expansion=self._allow_context_expansion(policy),
-            allow_export=policy.export_mode != ExportMode.RESTRICTED,
+            allow_context_expansion=expansion,
+            allow_export=export_ceiling != ExportMode.RESTRICTED,
             allow_mutation=policy.tool_policy.allow_write or policy.tool_policy.allow_bash,
-            max_child_depth=policy.max_child_depth,
+            max_child_depth=max_depth,
         )
 
     # ── private ────────────────────────────────────────────────────────────────
 
-    def _resolve_builtin_tools(self, policy: ExecutionPolicy) -> set[str]:
+    def _resolve_builtin_tools(
+        self, policy: "ExecutionPolicy | AuthorityPolicy", spawn_allowed: bool
+    ) -> set[str]:
         tp = policy.tool_policy
         tools: set[str] = set()
 
@@ -77,7 +101,7 @@ class CapabilityResolver:
             tools.add(TOOL_BASH)
         if tp.allow_search:
             tools.add(TOOL_SEARCH)
-        if tp.allow_spawn and policy.child_mode != ChildMode.DENIED:
+        if tp.allow_spawn and spawn_allowed:
             tools.add(TOOL_SPAWN)
 
         # extra_allowed — additional named tools requested by policy
@@ -88,7 +112,7 @@ class CapabilityResolver:
     def _apply_extension_tools(
         self,
         allowed: set[str],
-        policy: ExecutionPolicy,
+        policy: "ExecutionPolicy | AuthorityPolicy",
         extension_tools: list[ExtensionTool],
     ) -> set[str]:
         """
@@ -123,7 +147,9 @@ class CapabilityResolver:
 
         return allowed
 
-    def _apply_deny_list(self, allowed: set[str], policy: ExecutionPolicy) -> set[str]:
+    def _apply_deny_list(
+        self, allowed: set[str], policy: "ExecutionPolicy | AuthorityPolicy"
+    ) -> set[str]:
         """extra_denied always wins — explicit deny overrides everything."""
         return allowed - set(policy.tool_policy.extra_denied)
 

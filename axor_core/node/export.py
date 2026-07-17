@@ -69,7 +69,7 @@ class ExportFilter:
             export_payload=export_payload,
             token_usage=token_usage,
             metadata={
-                "policy": envelope.policy.name,
+                "policy": envelope.authority.name,
                 "export_mode": contract.mode,
                 "depth": envelope.lineage.depth,
             },

@@ -156,7 +156,7 @@ class ChildSpawner:
                 sequence=len(trace_events),
                 child_node_id=child_node_id,
                 child_depth=child_depth,
-                context_fraction=parent_envelope.policy.child_context_fraction,
+                context_fraction=parent_envelope.plan.child_context_fraction,
             )
         )
 

@@ -227,6 +227,12 @@ class GovernedNode:
             from axor_core.node.spawn import _validate_child_policy
             _validate_child_policy(policy, parent_policy, self._depth)
 
+        # Authority/plan split: derive the trusted and advisory halves once —
+        # context shaping reads the plan, the envelope carries both, and every
+        # enforcement consumer downstream reads envelope.authority.
+        from axor_core.policy.legacy import split_legacy_policy
+        authority, plan = split_legacy_policy(policy)
+
         # ── 2. Lineage ─────────────────────────────────────────────────────────
         lineage = self._build_lineage(raw_state)
 
@@ -252,7 +258,7 @@ class GovernedNode:
         # ── 3. Context ─────────────────────────────────────────────────────────
         if self._context_manager is not None:
             context = self._context_manager.build(
-                raw_state, lineage, policy=policy
+                raw_state, lineage, policy=plan
             )
         else:
             context = self._stub_context_view(raw_state, policy, lineage)
@@ -281,6 +287,8 @@ class GovernedNode:
             node_id=lineage.node_id,
             parent_metadata={"session_id": raw_state.session_id},
             cancel_token=cancel_token,
+            authority=authority,
+            plan=plan,
         )
 
         # ── 5. Budget pre-check ────────────────────────────────────────────────
@@ -457,7 +465,7 @@ class GovernedNode:
                             result_decision = self._budget_engine.on_result_arrived(
                                 node_id=envelope.node_id,
                                 result_token_estimate=estimate,
-                                policy=envelope.policy,
+                                policy=envelope.plan,
                             )
                             if result_decision.action in (
                                 OptimizationAction.COMPRESS_CONTEXT,
@@ -811,7 +819,7 @@ class GovernedNode:
             export_payload={"output": output, "cancelled": True},
             token_usage=token_usage,
             metadata={
-                "policy": envelope.policy.name,
+                "policy": envelope.authority.name,
                 "cancelled": True,
                 "cancel_reason": envelope.cancel_token.reason.value
                 if envelope.cancel_token.reason
