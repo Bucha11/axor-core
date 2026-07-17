@@ -455,6 +455,25 @@ class GovernedSession:
             **kwargs,
         )
 
+    def _apply_operator_escalation(self, policy: ExecutionPolicy) -> ExecutionPolicy:
+        """Stamp the operator-defined escalation ceiling onto a policy the
+        operator did NOT write per-call (session default_policy or a
+        classifier-selected preset). A per-call policy= keeps its own
+        escalation config — explicit per-call config is the top of the
+        precedence chain:
+
+            per-call policy escalation
+              > session escalation_policy (applied to default_policy and
+                classifier-selected policies)
+              > the policy's own (default: disabled)
+        """
+        if self._operator_escalation is None:
+            return policy
+        import dataclasses
+        return dataclasses.replace(
+            policy, escalation_policy=self._operator_escalation
+        )
+
     async def run(
         self,
         task: str,
@@ -540,18 +559,22 @@ class GovernedSession:
 
         # Explicit policy resolution: per-call policy= wins over the session's
         # default_policy. With either set, the classifier is bypassed entirely.
-        if policy is None:
-            policy = self._default_policy
-            if policy is None and self._mode == ExecutionMode.PRODUCTION \
-                    and not self._classifier_policy_warned:
-                _log.warning(
-                    "session=%s PRODUCTION mode is deriving policy from task "
-                    "classification (advisory, content-based). Recommended: pass "
-                    "an explicit policy= per call or default_policy= at "
-                    "construction to make policy operator-defined.",
-                    self._session_id,
-                )
-                self._classifier_policy_warned = True
+        # The operator escalation ceiling applies to the session default too —
+        # the README production configuration (default_policy + escalation_policy
+        # + approver) works as written; only a per-call policy keeps its own
+        # escalation config (see _apply_operator_escalation).
+        if policy is None and self._default_policy is not None:
+            policy = self._apply_operator_escalation(self._default_policy)
+        if policy is None and self._mode == ExecutionMode.PRODUCTION \
+                and not self._classifier_policy_warned:
+            _log.warning(
+                "session=%s PRODUCTION mode is deriving policy from task "
+                "classification (advisory, content-based). Recommended: pass "
+                "an explicit policy= per call or default_policy= at "
+                "construction to make policy operator-defined.",
+                self._session_id,
+            )
+            self._classifier_policy_warned = True
 
         # Adaptive policy: re-classify each turn; capability surface can only
         # narrow automatically — broadening requires an explicit operator override.
@@ -563,13 +586,9 @@ class GovernedSession:
         if policy is None:
             signal, signal_event = await self._analyzer.analyze(task)
             new_policy = self._selector.select(signal)
-            if self._operator_escalation is not None:
-                # Escalation ceiling is operator authority, not classifier
-                # output — stamp it onto whatever preset was selected.
-                import dataclasses as _dc
-                new_policy = _dc.replace(
-                    new_policy, escalation_policy=self._operator_escalation
-                )
+            # Escalation ceiling is operator authority, not classifier
+            # output — stamp it onto whatever preset was selected.
+            new_policy = self._apply_operator_escalation(new_policy)
             # Custom analyzers may return no event; treat absent confidence as
             # authoritative (legacy behaviour) — the stock TaskAnalyzer always
             # reports one. The ambiguity decision itself belongs to the
@@ -589,13 +608,25 @@ class GovernedSession:
                     self._active_policy = new_policy
                     effective_policy = self._active_policy
                 else:
+                    # An ambiguous classification must not choose authority —
+                    # not even for one turn: an ambiguous "expansive" would
+                    # hand out write/bash/spawn right now, and a completed
+                    # effect cannot be un-happened by refusing to set the
+                    # baseline afterwards. Run fail-closed instead; the
+                    # operator escalation ceiling still applies, so recovery
+                    # is per-tool via escalate_policy, not via trusting the
+                    # guess.
+                    fallback = self._apply_operator_escalation(
+                        self._selector.safe_fallback()
+                    )
                     _log.info(
                         "session=%s ambiguous first classification "
-                        "(confidence %.2f < %.2f): policy %s applies to this "
-                        "turn only, adaptive baseline not set",
-                        self._session_id, confidence, threshold, new_policy.name,
+                        "(confidence %.2f < %.2f): candidate %s NOT applied; "
+                        "running under fail-closed '%s', baseline not set",
+                        self._session_id, confidence, threshold,
+                        new_policy.name, fallback.name,
                     )
-                    effective_policy = new_policy
+                    effective_policy = fallback
             elif confident:
                 narrowed = self._composer.apply_parent_restrictions(
                     new_policy, self._active_policy

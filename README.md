@@ -229,7 +229,7 @@ The heuristic classifier ships in core: rule-based, zero tokens, zero latency. P
 
 Policies derive minimum sufficient execution conditions — not static caps. A "rewrite repo" task gets broad context because the task requires it, not because limits were relaxed.
 
-Classification is advisory and misclassification stays cheap: session-level narrowing acts only on classifications the analyzer itself considers confident (single ambiguity source), an ambiguous first turn never becomes the irreversible session baseline, and the escalation ceiling — which capabilities may later be granted at all — is operator-defined, never preset/classifier-derived. Operator guards:
+Classification is advisory and misclassification stays cheap: session-level narrowing acts only on classifications the analyzer itself considers confident (single ambiguity source), an ambiguous classification never chooses authority (with no confident baseline the turn runs fail-closed under the safe fallback), and the escalation ceiling — which capabilities may later be granted at all — is operator-defined, never preset/classifier-derived. Operator guards:
 
 ```python
 from axor_core import GovernedSession, AllowlistEscalationApprover, presets

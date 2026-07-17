@@ -118,9 +118,11 @@ wrong guess cheap instead of trying to make the classifier perfect:
   ANALYZER considers confident — the threshold is read from
   `TaskAnalyzer.ambiguity_threshold`, never re-derived by the session, so
   the analyzer's configuration and the session's interpretation cannot
-  diverge. An ambiguous FIRST classification applies to that turn only and
-  does not become the irreversible adaptive baseline; the baseline is set
-  by the first confident classification.
+  diverge. An ambiguous classification never chooses authority — not
+  even for one turn: with no confident baseline yet, the turn runs
+  fail-closed under `safe_fallback` (read-only, no spawn; the operator
+  escalation ceiling still applies for per-tool recovery). The adaptive
+  baseline is set only by the first confident classification.
 - **Operator-defined escalation ceiling.** Classifier-selected presets
   carry NO escalation policy: which capabilities may later be granted is an
   authority decision. The operator sets the ceiling via
