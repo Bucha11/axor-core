@@ -17,6 +17,12 @@ class PolicySelector:
     """
     Maps a TaskSignal to an ExecutionPolicy.
 
+    DEPRECATED as an authority source (authority/plan split): classification
+    must not determine agent authority. New code passes an explicit
+    AuthorityPolicy (session or per-run) and lets the planner
+    (axor_core.planning) shape the ExecutionPlan; this selector remains only
+    for the legacy compatibility path and is removed in the next major.
+
     Principle: minimum sufficient for quality.
     Not a hard cap — exactly what the task needs.
 

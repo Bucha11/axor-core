@@ -2,7 +2,33 @@
 
 ## Unreleased
 
-(nothing yet)
+### Added — authority/plan separation (RFC)
+
+Task classification may optimize execution, but no longer determines agent
+authority.
+
+- **`AuthorityPolicy` / `ExecutionPlan`** (`contracts/authority.py`,
+  `contracts/planning.py`): the trusted and advisory halves of the legacy
+  `ExecutionPolicy`, with `split_legacy_policy` / `merge_to_legacy_policy`
+  round-tripping every shipped preset byte-identically.
+- **`ExecutionEnvelope.authority` / `.plan`**: enforcement consumers read
+  authority; context/budget consumers read the plan. Two import-linter
+  contracts pin the boundary.
+- **`axor_core.planning`**: `ExecutionPlanner` protocol,
+  `HeuristicExecutionPlanner`, plan presets (`local`/`component`/
+  `repository`/`neutral`), `PlanComposer` (budget-bounded, non-monotonic).
+- **Session API**: `GovernedSession(authority=, default_plan=, planner=)`
+  and `run(authority=, plan=)`; legacy `policy=` conflicts fail fast;
+  PRODUCTION warns once when authority is classifier-derived.
+- **Dynamic replanning**: `request_plan_expansion` intent — plan widening
+  within `ResourceBudget`, never a capability escalation. New trace kinds
+  `EXECUTION_PLAN_CHANGED`, `PLAN_CONSTRAINED_BY_BUDGET`.
+
+### Deprecated
+
+- Classifier-selected `ExecutionPolicy` (the legacy path in
+  `PolicySelector`) — authority should come from `authority=`;
+  removal in the next major release.
 
 ## 0.9.2 — 2026-07-13
 
