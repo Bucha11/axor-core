@@ -10,6 +10,7 @@ if TYPE_CHECKING:
     from axor_core.contracts.agent import AgentDefinition
     from axor_core.contracts.memory import MemoryProvider
     from axor_core.contracts.session import SessionSink
+    from axor_core.node.intent_loop import EscalationCallback
 from axor_core.contracts.cancel import make_token, CancelReason
 from axor_core.contracts.session import SessionAuditRecord, ToolInvocationRecord
 from axor_core.contracts.context import RawExecutionState, LineageSummary
@@ -18,7 +19,11 @@ from axor_core.contracts.drift import BehavioralDriftObserver
 from axor_core.contracts.observation import ContextTap
 from axor_core.contracts.invokable import Invokable
 from axor_core.contracts.mode import ExecutionMode
-from axor_core.contracts.policy import ExecutionPolicy, SignalClassifier
+from axor_core.contracts.policy import (
+    EscalationPolicy,
+    ExecutionPolicy,
+    SignalClassifier,
+)
 from axor_core.contracts.result import ExecutionResult
 from axor_core.contracts.trace import TraceConfig
 from axor_core.capability.executor import CapabilityExecutor
@@ -46,6 +51,12 @@ from axor_core.tokens import estimate_tokens
 
 _log = logging.getLogger("axor.session")
 
+# Fallback ambiguity threshold, used ONLY when the analyzer does not expose
+# one (custom analyzers). The stock TaskAnalyzer owns the ambiguity decision
+# via its ambiguity_threshold property — the session never re-interprets
+# confidence with its own number, so the two cannot diverge.
+_FALLBACK_AMBIGUITY_THRESHOLD = 0.75
+
 
 class GovernedSession:
     """
@@ -66,7 +77,29 @@ class GovernedSession:
         session = GovernedSession(
             executor=ClaudeCodeExecutor(),
             capability_executor=cap_executor,
-            classifier=LocalTrainedClassifier(),
+            classifier=TaskSignalClassifier(),   # axor-classifier-simple
+        )
+
+    PRODUCTION compatibility/security guard — operator-defined policy
+    (classifier fully bypassed, which also disables task-aware planning;
+    the target model separating authority from planning is the
+    AuthorityPolicy/ExecutionPlan split) plus an operator escalation
+    ceiling and approver so a too-narrow policy recovers per-tool:
+
+        session = GovernedSession(
+            executor=ClaudeCodeExecutor(),
+            capability_executor=cap_executor,
+            mode=ExecutionMode.PRODUCTION,
+            default_policy=presets.standard(),
+            escalation_policy=EscalationPolicy(
+                allow_escalation=True, grantable_tools=("write", "bash"),
+                require_human=True,
+            ),
+            escalation_callback=AllowlistEscalationApprover(
+                {"write": 20, "bash": 10},
+                allowed_path_prefixes=("/workspace",),  # confines write grants
+                unconfined_tools=("bash",),  # bash exposes no checkable path
+            ),
         )
 
     With soft token limit:
@@ -91,6 +124,9 @@ class GovernedSession:
         executor: Invokable,
         capability_executor: CapabilityExecutor,
         classifier: SignalClassifier | None = None,
+        escalation_callback: "EscalationCallback | None" = None,
+        escalation_policy: "EscalationPolicy | None" = None,
+        default_policy: ExecutionPolicy | None = None,
         behavioral_drift_observer: BehavioralDriftObserver | None = None,
         extension_loaders: list[ExtensionLoader] | None = None,
         trace_config: TraceConfig | None = None,
@@ -231,6 +267,21 @@ class GovernedSession:
 
         self._deny_on_ambiguity: bool = (mode == ExecutionMode.STRICT)
         self._strict_escalation: bool = (mode == ExecutionMode.STRICT)
+
+        # Human/operator escalation gate — threaded into every node's IntentLoop
+        # (children inherit it at spawn). None → require_human escalations are
+        # auto-denied (fail-closed). See axor_core.capability.approvals for
+        # ready-made callbacks.
+        self._escalation_callback = escalation_callback
+        # Operator-defined escalation ceiling (authority). Applied to every
+        # classifier-selected policy: which capabilities may later be granted
+        # is never derived from task text — presets carry no escalation.
+        self._operator_escalation = escalation_policy
+        # Session-wide explicit policy: used whenever run() gets no per-call
+        # policy=. With it set the task classifier is bypassed entirely —
+        # the recommended posture for PRODUCTION deployments.
+        self._default_policy = default_policy
+        self._classifier_policy_warned = False
 
         # Process-isolation gate. In PRODUCTION/STRICT an untrusted
         # agent should execute tools out-of-process (DaemonCapabilityClient);
@@ -404,6 +455,25 @@ class GovernedSession:
             **kwargs,
         )
 
+    def _apply_operator_escalation(self, policy: ExecutionPolicy) -> ExecutionPolicy:
+        """Stamp the operator-defined escalation ceiling onto a policy the
+        operator did NOT write per-call (session default_policy or a
+        classifier-selected preset). A per-call policy= keeps its own
+        escalation config — explicit per-call config is the top of the
+        precedence chain:
+
+            per-call policy escalation
+              > session escalation_policy (applied to default_policy and
+                classifier-selected policies)
+              > the policy's own (default: disabled)
+        """
+        if self._operator_escalation is None:
+            return policy
+        import dataclasses
+        return dataclasses.replace(
+            policy, escalation_policy=self._operator_escalation
+        )
+
     async def run(
         self,
         task: str,
@@ -487,15 +557,77 @@ class GovernedSession:
         cancel_token = make_token()
         self._active_token = cancel_token
 
+        # Explicit policy resolution: per-call policy= wins over the session's
+        # default_policy. With either set, the classifier is bypassed entirely.
+        # The operator escalation ceiling applies to the session default too —
+        # the README production configuration (default_policy + escalation_policy
+        # + approver) works as written; only a per-call policy keeps its own
+        # escalation config (see _apply_operator_escalation).
+        if policy is None and self._default_policy is not None:
+            policy = self._apply_operator_escalation(self._default_policy)
+        if policy is None and self._mode == ExecutionMode.PRODUCTION \
+                and not self._classifier_policy_warned:
+            _log.warning(
+                "session=%s PRODUCTION mode is deriving policy from task "
+                "classification (advisory, content-based). Recommended: pass "
+                "an explicit policy= per call or default_policy= at "
+                "construction to make policy operator-defined.",
+                self._session_id,
+            )
+            self._classifier_policy_warned = True
+
         # Adaptive policy: re-classify each turn; capability surface can only
         # narrow automatically — broadening requires an explicit operator override.
+        # Narrowing is confidence-gated: a low-confidence re-classification must
+        # not permanently strip capability from the whole session (classification
+        # is advisory; its errors have to stay cheap). Recovery from an
+        # over-narrow start is per-tool via escalate_policy, not re-broadening.
         effective_policy = policy
         if policy is None:
-            signal, _ = await self._analyzer.analyze(task)
+            signal, signal_event = await self._analyzer.analyze(task)
             new_policy = self._selector.select(signal)
+            # Escalation ceiling is operator authority, not classifier
+            # output — stamp it onto whatever preset was selected.
+            new_policy = self._apply_operator_escalation(new_policy)
+            # Custom analyzers may return no event; treat absent confidence as
+            # authoritative (legacy behaviour) — the stock TaskAnalyzer always
+            # reports one. The ambiguity decision itself belongs to the
+            # analyzer (single source), never re-derived here.
+            confidence = getattr(signal_event, "confidence", None)
+            threshold = getattr(
+                self._analyzer, "ambiguity_threshold", _FALLBACK_AMBIGUITY_THRESHOLD
+            )
+            confident = confidence is None or confidence >= threshold
             if self._active_policy is None:
-                self._active_policy = new_policy
-            else:
+                # An AMBIGUOUS classification is applied to this turn only —
+                # it must not become the session's irreversible adaptive
+                # baseline. The baseline is set by the first confident
+                # classification (which may be broader than an earlier
+                # ambiguous guess: nothing was locked by it).
+                if confident:
+                    self._active_policy = new_policy
+                    effective_policy = self._active_policy
+                else:
+                    # An ambiguous classification must not choose authority —
+                    # not even for one turn: an ambiguous "expansive" would
+                    # hand out write/bash/spawn right now, and a completed
+                    # effect cannot be un-happened by refusing to set the
+                    # baseline afterwards. Run fail-closed instead; the
+                    # operator escalation ceiling still applies, so recovery
+                    # is per-tool via escalate_policy, not via trusting the
+                    # guess.
+                    fallback = self._apply_operator_escalation(
+                        self._selector.safe_fallback()
+                    )
+                    _log.info(
+                        "session=%s ambiguous first classification "
+                        "(confidence %.2f < %.2f): candidate %s NOT applied; "
+                        "running under fail-closed '%s', baseline not set",
+                        self._session_id, confidence, threshold,
+                        new_policy.name, fallback.name,
+                    )
+                    effective_policy = fallback
+            elif confident:
                 narrowed = self._composer.apply_parent_restrictions(
                     new_policy, self._active_policy
                 )
@@ -507,7 +639,17 @@ class GovernedSession:
                         narrowed.name,
                     )
                 self._active_policy = narrowed
-            effective_policy = self._active_policy
+                effective_policy = self._active_policy
+            else:
+                _log.info(
+                    "session=%s adaptive narrowing skipped: classification "
+                    "confidence %.2f < %.2f (policy stays %s)",
+                    self._session_id,
+                    confidence,
+                    threshold,
+                    self._active_policy.name,
+                )
+                effective_policy = self._active_policy
 
         node = self._make_node(self._context_manager)
         result = await node.run(
@@ -718,6 +860,7 @@ class GovernedSession:
             analyzer=self._analyzer,
             selector=self._selector,
             composer=self._composer,
+            escalation_callback=self._escalation_callback,
             context_manager=context_manager,
             budget_engine=self._budget_engine,
             trace_collector=self._collector,

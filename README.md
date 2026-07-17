@@ -225,9 +225,40 @@ Policy may be selected dynamically from task signals, or fixed explicitly by the
 | Rewrite repo | expansive | broad | light | allowed (d=3) |
 | Audit security | focused_readonly | minimal | aggressive | denied |
 
-The heuristic classifier ships in core: rule-based, zero tokens, zero latency. Plug in `axor-classifier-simple` or `axor-classifier-llm` for higher accuracy on ambiguous tasks.
+The heuristic classifier ships in core: rule-based, zero tokens, zero latency. Plug in `axor-classifier-simple` for higher accuracy on ambiguous tasks (English + Russian).
 
 Policies derive minimum sufficient execution conditions — not static caps. A "rewrite repo" task gets broad context because the task requires it, not because limits were relaxed.
+
+Classification is advisory and misclassification stays cheap: session-level narrowing acts only on classifications the analyzer itself considers confident (single ambiguity source), an ambiguous classification never chooses authority (with no confident baseline the turn runs fail-closed under the safe fallback), and the escalation ceiling — which capabilities may later be granted at all — is operator-defined, never preset/classifier-derived. Operator guards:
+
+```python
+from axor_core import GovernedSession, AllowlistEscalationApprover, presets
+
+session = GovernedSession(
+    executor=..., capability_executor=...,
+    # Escalation ceiling — which tools MAY later be granted (authority,
+    # operator-defined; classifier-selected presets carry none):
+    escalation_policy=EscalationPolicy(
+        allow_escalation=True, grantable_tools=("write", "bash"),
+        require_human=True,
+    ),
+    # Approval gate for those grants (fail-closed without it):
+    escalation_callback=AllowlistEscalationApprover(
+        {"bash": 10, "write": 20},
+        allowed_path_prefixes=("/workspace",),  # confines path-bearing grants (write)
+        unconfined_tools=("bash",),             # bash calls expose no checkable path —
+                                                # grantable only without path restriction
+    ),
+    # Compatibility/security guard — operator-defined policy for every turn;
+    # classifier fully bypassed (also disables task-aware planning; the target
+    # model that separates the two is the AuthorityPolicy/ExecutionPlan split):
+    default_policy=presets.standard(),
+)
+```
+
+Path containment uses the same canonical resolution as lease enforcement (symlinks and `..` resolved against the real filesystem), so what the approver approves and what the lease enforces cannot disagree. Tools whose calls carry no extractable path argument (`bash` — a command string is not a file path) cannot be path-confined: a path-restricted `bash` lease would deny every call. Listing them in `unconfined_tools` is the explicit operator opt-in to grant them unrestricted (still bounded by `max_ops`, TTL and the flood guard) — omit the tool entirely if that is not acceptable.
+
+`console_escalation_callback` is the interactive alternative to the allowlist approver — it prompts a human on the terminal and denies when no TTY is attached.
 
 ---
 

@@ -12,6 +12,13 @@ from axor_core.contracts.policy import (
     ToolPolicy,
 )
 
+# NOTE: classifier-selected presets deliberately carry NO EscalationPolicy.
+# Which capabilities may later be granted (the escalation ceiling) is an
+# AUTHORITY decision — it must come from the operator
+# (GovernedSession(escalation_policy=...) or an explicit policy), never from
+# an interpretation of the task text. A preset-carried grantable_tools list
+# would make the classifier a co-author of authority composition.
+
 
 class PolicySelector:
     """
