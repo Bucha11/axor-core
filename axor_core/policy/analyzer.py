@@ -139,6 +139,15 @@ class TaskAnalyzer:
         self._threshold    = escalation_threshold
         self._agent_domain = agent_domain   # from AgentDefinition.domain
 
+    @property
+    def ambiguity_threshold(self) -> float:
+        """The single source of the ambiguity decision: classifications below
+        this confidence are ambiguous. Consumers (e.g. the session's adaptive
+        narrowing) must read this property instead of hard-coding a number —
+        the analyzer's configured threshold and the session's interpretation
+        of confidence must never diverge."""
+        return self._threshold
+
     async def analyze(self, raw_input: str) -> tuple[TaskSignal, SignalChosenEvent]:
         """
         Classify raw input into a TaskSignal with domain detection.

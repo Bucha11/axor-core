@@ -5,7 +5,6 @@ from axor_core.contracts.policy import (
     TaskComplexity,
     TaskNature,
     ExecutionPolicy,
-    EscalationPolicy,
     ContextMode,
     CompressionMode,
     ExportMode,
@@ -13,19 +12,12 @@ from axor_core.contracts.policy import (
     ToolPolicy,
 )
 
-
-def _on_demand_escalation(*grantable: str) -> EscalationPolicy:
-    """Capability-on-demand escalation for a preset whose tool surface is
-    narrower than the full set. Classification is advisory and can be wrong;
-    when it under-provisions, the agent recovers per-tool via escalate_policy
-    instead of failing the task. require_human=True keeps this fail-closed:
-    without an operator-wired escalation callback nothing is ever granted,
-    and PolicyComposer's overlay intersection can only narrow it further."""
-    return EscalationPolicy(
-        allow_escalation=True,
-        grantable_tools=tuple(grantable),
-        require_human=True,
-    )
+# NOTE: classifier-selected presets deliberately carry NO EscalationPolicy.
+# Which capabilities may later be granted (the escalation ceiling) is an
+# AUTHORITY decision — it must come from the operator
+# (GovernedSession(escalation_policy=...) or an explicit policy), never from
+# an interpretation of the task text. A preset-carried grantable_tools list
+# would make the classifier a co-author of authority composition.
 
 
 class PolicySelector:
@@ -71,7 +63,6 @@ class PolicySelector:
                     ),
                     export_mode=ExportMode.SUMMARY,
                     child_context_fraction=0.0,
-                    escalation_policy=_on_demand_escalation("write", "bash"),
                 )
 
             case (TaskComplexity.FOCUSED, TaskNature.GENERATIVE):
@@ -91,7 +82,6 @@ class PolicySelector:
                     ),
                     export_mode=ExportMode.SUMMARY,
                     child_context_fraction=0.0,
-                    escalation_policy=_on_demand_escalation("bash"),
                 )
 
             case (TaskComplexity.FOCUSED, TaskNature.MUTATIVE):
@@ -130,7 +120,6 @@ class PolicySelector:
                     ),
                     export_mode=ExportMode.FILTERED,
                     child_context_fraction=0.0,
-                    escalation_policy=_on_demand_escalation("write", "bash"),
                 )
 
             case (TaskComplexity.MODERATE, TaskNature.GENERATIVE):
@@ -213,5 +202,4 @@ class PolicySelector:
             ),
             export_mode=ExportMode.SUMMARY,
             child_context_fraction=0.0,
-            escalation_policy=_on_demand_escalation("search", "write", "bash"),
         )

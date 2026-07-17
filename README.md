@@ -229,22 +229,29 @@ The heuristic classifier ships in core: rule-based, zero tokens, zero latency. P
 
 Policies derive minimum sufficient execution conditions — not static caps. A "rewrite repo" task gets broad context because the task requires it, not because limits were relaxed.
 
-Classification is advisory and misclassification stays cheap: session-level narrowing acts only on confident classifications, and presets with a reduced tool surface allow per-tool recovery via `escalate_policy`. Two operator guards complete the picture:
+Classification is advisory and misclassification stays cheap: session-level narrowing acts only on classifications the analyzer itself considers confident (single ambiguity source), an ambiguous first turn never becomes the irreversible session baseline, and the escalation ceiling — which capabilities may later be granted at all — is operator-defined, never preset/classifier-derived. Operator guards:
 
 ```python
 from axor_core import GovernedSession, AllowlistEscalationApprover, presets
 
 session = GovernedSession(
     executor=..., capability_executor=...,
-    # Guard 1 — approve mid-run capability escalations (fail-closed without it):
+    # Escalation ceiling — which tools MAY later be granted (authority,
+    # operator-defined; classifier-selected presets carry none):
+    escalation_policy=EscalationPolicy(
+        allow_escalation=True, grantable_tools=("write", "bash"),
+        require_human=True,
+    ),
+    # Approval gate for those grants (fail-closed without it):
     escalation_callback=AllowlistEscalationApprover(
         {"bash": 10, "write": 20},
         allowed_path_prefixes=("/workspace",),  # confines path-bearing grants (write)
         unconfined_tools=("bash",),             # bash calls expose no checkable path —
                                                 # grantable only without path restriction
     ),
-    # Guard 2 — operator-defined policy for every turn; classifier fully bypassed
-    # (recommended for PRODUCTION; classifier-derived policy logs a warning there):
+    # Compatibility/security guard — operator-defined policy for every turn;
+    # classifier fully bypassed (also disables task-aware planning; the target
+    # model that separates the two is the AuthorityPolicy/ExecutionPlan split):
     default_policy=presets.standard(),
 )
 ```

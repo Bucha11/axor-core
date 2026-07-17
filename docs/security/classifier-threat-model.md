@@ -113,31 +113,28 @@ coefficient data.
 Classification is advisory and will sometimes be wrong. Two mechanisms keep a
 wrong guess cheap instead of trying to make the classifier perfect:
 
-- **Confidence-gated narrowing.** Session-level adaptive narrowing is
-  monotonic (capability never re-broadens automatically), so it acts only on
-  classifications at or above the confidence threshold. A single
-  low-confidence misread turn cannot permanently strip capability from the
-  whole session. Note the exact scope: the gate applies to *subsequent
-  narrowing only*. The FIRST turn's policy is still classifier-selected
-  regardless of confidence (a session needs a starting policy), so "low
-  confidence" does not mean "no policy effect" — a wrong ambiguous start is
-  recovered per-tool via escalation or overridden by an explicit
-  `policy=` / `default_policy=`, never by automatic re-broadening.
-- **Capability-on-demand.** Presets whose tool surface is narrower than the
-  full set carry an `EscalationPolicy` whose `grantable_tools` covers exactly
-  what the preset lacks (e.g. `focused_readonly` → `write`, `bash`). An
-  under-provisioned task recovers per-tool via `escalate_policy` behind the
-  flood guard and `require_human=True` — nothing is granted unless the
-  operator wires an approval callback, and the overlay/parent intersection
-  can only narrow the grantable set further.
+- **Confidence-gated narrowing (single ambiguity source).** Session-level
+  adaptive narrowing is monotonic, so it acts only on classifications the
+  ANALYZER considers confident — the threshold is read from
+  `TaskAnalyzer.ambiguity_threshold`, never re-derived by the session, so
+  the analyzer's configuration and the session's interpretation cannot
+  diverge. An ambiguous FIRST classification applies to that turn only and
+  does not become the irreversible adaptive baseline; the baseline is set
+  by the first confident classification.
+- **Operator-defined escalation ceiling.** Classifier-selected presets
+  carry NO escalation policy: which capabilities may later be granted is an
+  authority decision. The operator sets the ceiling via
+  `GovernedSession(escalation_policy=...)` (stamped onto every
+  classifier-selected policy) or an explicit policy; `escalate_policy`
+  grants then run behind the approval callback, flood guard and TTL leases.
 
-### Adversarial Task Text
-
-Task text is attacker-controlled when the user is untrusted or when the
-session is processing external content.  In STRICT mode, no classification
-happens from task text, so this attack surface is eliminated.
-
----
+Note on scope: these mechanisms contain the cost of the LEGACY model, in
+which classification still selects the initial `ExecutionPolicy` (tools
+included). The structural fix — classification removed from the authority
+path entirely (`AuthorityPolicy` operator-defined, `ExecutionPlan`
+classifier-shaped) — is the authority/plan split series; `default_policy=`
+and the containment above are the compatibility-window guards, not the
+target architecture.
 
 ## What the Classifier Does Not Do
 

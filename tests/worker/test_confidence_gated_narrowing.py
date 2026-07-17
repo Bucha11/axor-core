@@ -124,15 +124,60 @@ async def test_missing_confidence_keeps_legacy_narrowing():
 
 
 @pytest.mark.asyncio
-async def test_first_turn_policy_is_set_regardless_of_confidence():
-    """The session needs a starting policy even from an ambiguous first turn;
-    recovery from a wrong start is per-tool via escalate_policy."""
+async def test_ambiguous_first_turn_is_not_sticky():
+    """An ambiguous first classification applies to that turn only — it must
+    not become the irreversible adaptive baseline. A later confident broad
+    classification sets the baseline broad (nothing was locked)."""
     session = _make_session()
-    _patch(session, [(NARROW, 0.1)])
+    _patch(session, [(NARROW, 0.1), (BROAD, 0.9)])
 
-    await session.run("turn 1 — ambiguous")
+    await session.run("turn 1 — ambiguous narrow guess")
+    assert session._active_policy is None   # per-turn only, no baseline
+
+    await session.run("turn 2 — confident broad")
+    assert session._active_policy is not None
+    assert session._active_policy.tool_policy.allow_bash is True
+
+
+@pytest.mark.asyncio
+async def test_confident_first_turn_sets_baseline():
+    session = _make_session()
+    _patch(session, [(NARROW, 0.9)])
+    await session.run("turn 1 — confident")
     assert session._active_policy is not None
     assert session._active_policy.name == "narrow"
+
+
+@pytest.mark.asyncio
+async def test_threshold_comes_from_the_analyzer_not_a_session_constant():
+    """The ambiguity decision has a single source: the analyzer. A stricter
+    analyzer (threshold 0.9) must make the session treat confidence 0.8 as
+    ambiguous even though it clears the default 0.75."""
+    from axor_core.policy.analyzer import TaskAnalyzer
+
+    session = _make_session()
+    session._analyzer = TaskAnalyzer(escalation_threshold=0.9)
+    _patch(session, [(BROAD, 0.95), (NARROW, 0.8)])
+
+    await session.run("turn 1 — confident broad")
+    assert session._active_policy.tool_policy.allow_bash is True
+
+    await session.run("turn 2 — 0.8 is ambiguous for THIS analyzer")
+    assert session._active_policy.tool_policy.allow_bash is True  # no narrowing
+
+
+@pytest.mark.asyncio
+async def test_lenient_analyzer_threshold_allows_narrowing():
+    """Symmetric case: analyzer threshold 0.6 makes confidence 0.7 confident."""
+    from axor_core.policy.analyzer import TaskAnalyzer
+
+    session = _make_session()
+    session._analyzer = TaskAnalyzer(escalation_threshold=0.6)
+    _patch(session, [(BROAD, 0.95), (NARROW, 0.7)])
+
+    await session.run("turn 1")
+    await session.run("turn 2 — 0.7 clears the configured 0.6")
+    assert session._active_policy.tool_policy.allow_bash is False
 
 
 @pytest.mark.asyncio

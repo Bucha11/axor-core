@@ -111,8 +111,19 @@ async def test_per_call_policy_wins_over_default():
 
 @pytest.mark.asyncio
 async def test_without_default_policy_classifier_still_runs():
+    from types import SimpleNamespace
+
     session = _session()
+    real_analyze = session._analyzer.analyze
+
+    async def _analyze(raw_input):
+        signal, _event = await real_analyze(raw_input)
+        return signal, SimpleNamespace(confidence=0.95)
+
+    session._analyzer.analyze = _analyze
     result = await session.run("explain what the function does")
+    # confident classification sets the adaptive baseline (ambiguous ones
+    # are per-turn only and leave it None)
     assert session._active_policy is not None
 
 
