@@ -30,7 +30,6 @@ source_modules =
     axor_core.degradation
     axor_core.governor
 forbidden_modules =
-    axor_core.plane
     axor_core.capability
     axor_core.node
     axor_core.worker

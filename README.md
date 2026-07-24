@@ -381,6 +381,7 @@ What benchmarks do **not** prove: full prompt injection prevention, covert chann
 | [`axor-cli`](https://github.com/Bucha11/axor-cli) | Governed terminal runtime |
 | [`axor-claude`](https://github.com/Bucha11/axor-claude) | Claude / Claude Code adapter |
 | [`axor-langchain`](https://github.com/Bucha11/axor-langchain) | LangChain governance middleware |
+| [`axor-wrap`](https://github.com/Bucha11/axor-wrap) | Wrap engine — scan agent code → tool manifests → governance config → wrapped runtime; **also hosts the control-plane client** (`axor_wrap.plane`) |
 | [`axor-classifier-simple`](https://github.com/Bucha11/axor-classifier-simple) | ML task signal derivation (zero tokens) |
 | [`axor-classifier-llm`](https://github.com/Bucha11/axor-classifier-llm) | LLM verifier for gray-zone escalation |
 | [`axor-memory-sqlite`](https://github.com/Bucha11/axor-memory-sqlite) | Cross-session memory (SQLite) |
@@ -398,6 +399,22 @@ What benchmarks do **not** prove: full prompt injection prevention, covert chann
 - **Govern** (Control) — live topology of governed nodes: pause / stop / replan / inject / attest / budget-cap, and cascade-stop over a subtree.
 
 Replay reuses the *same* pure kernel (`axor_core.kernel`) that enforcement does, so what you review is what actually ran.
+
+#### Attaching a node to the plane
+
+The plane **client** is not in this package. `PlaneSession`, `PlaneClient`, `PlaneAdmission` and the trace→event bridge live in [`axor-wrap`](https://github.com/Bucha11/axor-wrap) as `axor_wrap.plane`:
+
+```python
+# before (axor-core ≤ 0.9.x)          # now (axor-core ≥ 0.10, axor-wrap[plane])
+from axor_core.plane import (         from axor_wrap.plane import (
+    PlaneSession, PlaneClient,            PlaneSession, PlaneClient,
+    PlaneAdmission, trace_to_kernel,      PlaneAdmission, trace_to_kernel,
+)                                     )
+```
+
+What stays here is what the kernel reasons over whether or not a plane is ever attached: the desired-state lattice and its provenance guard (`axor_core.kernel.state`), the canonical byte form commands are signed over (`axor_core.kernel.jcs`), the event schema (`axor_core.kernel.events`), and the `AdmissionController` contract the loop steers through (`axor_core.contracts.admission`).
+
+The reason for the split is the guarantee itself. The plane is an advisory overlay that can only *narrow*, and it never enters the decision path (spec 12.0). A kernel that **cannot import** a plane client cannot grow a dependency on one — so that property is now enforced by the dependency graph rather than by review, and axor-core keeps zero required dependencies and no network surface at all. The `plane` extra is gone with the code; install `axor-wrap[plane]` instead.
 
 ---
 
