@@ -7,8 +7,20 @@ only, whether it may proceed. A paused node holds here (completing its current
 intent first, never mid-effect); a stopped node returns False and the loop
 winds down exactly like a cancellation.
 
-Pure contract, no imports — the implementation (axor_core.plane.PlaneAdmission)
-lives in Ring 1, the kernel/contract layer stays free of it.
+Pure contract, no imports — and the implementation is not in this package at
+all. ``PlaneAdmission``, and every other plane-specific primitive (the protocol
+session, the outbound transport, the trace→event projection), lives in
+**axor-wrap** (``axor_wrap.plane``), which depends on axor-core rather than the
+other way round. What stays here is only what the kernel reasons over
+regardless of whether a plane is ever attached: this contract, the desired-state
+lattice and its provenance guard (:mod:`axor_core.kernel.state`), the canonical
+byte form commands are signed over (:mod:`axor_core.kernel.jcs`), and the event
+schema (:mod:`axor_core.kernel.events`).
+
+That is the packaging expression of spec 12.0: a kernel that *cannot import* a
+plane client cannot grow a dependency on one, so "the plane never enters the
+decision path" is enforced by the dependency graph, not by review. It is also
+why axor-core has zero required dependencies and no network surface.
 """
 from __future__ import annotations
 
