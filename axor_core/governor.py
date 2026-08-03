@@ -28,6 +28,7 @@ from axor_core.contracts.anomaly import NormalizedIntent
 from axor_core.contracts.canonical import ConsequenceClass
 from axor_core.contracts.intent import Intent, IntentKind
 from axor_core.policy.normalizer import IntentNormalizer
+from axor_core.contracts.trace import IntentDeniedEvent, TraceEvent, TraceEventKind
 from axor_core.policy.gates import (
     GateDecision,
     carrier_gate,
@@ -150,6 +151,13 @@ class ToolCallGovernor:
                 raise ValueError("strict egress allowlist: " + "; ".join(errors))
         self._normalizer = IntentNormalizer()
         self._taint = TaintEngine(node_id=node_id)
+        self._node_id = node_id
+        # The SAME TraceEvents the IntentLoop emits. Both are ways of wrapping an
+        # agent, so both must feed the one instrumentation path: axor-wrap's
+        # trace bridge turns these into kernel-schema Events, and the plane and
+        # Lab read that. A gating path that decides without recording forces its
+        # consumers to invent a second trace — which is exactly what happened.
+        self._trace_events: list[TraceEvent] = []
 
     # ── decision ────────────────────────────────────────────────────────────────
 
@@ -165,6 +173,15 @@ class ToolCallGovernor:
         normalized = self._normalizer.normalize(intent)
 
         def _deny(gd: GateDecision) -> GovernanceDecision:
+            self._trace_events.append(
+                IntentDeniedEvent(
+                    kind=TraceEventKind.INTENT_DENIED,
+                    node_id=self._node_id,
+                    sequence=len(self._trace_events),
+                    intent_kind=IntentKind.TOOL_CALL.value,
+                    reason=gd.reason,
+                )
+            )
             return GovernanceDecision(
                 allowed=False, reason=gd.reason, category=gd.category,
                 _normalized=normalized,
@@ -241,7 +258,33 @@ class ToolCallGovernor:
         if gd is not None:
             return _deny(gd)
 
+        self._trace_events.append(
+            TraceEvent(
+                kind=TraceEventKind.INTENT_APPROVED,
+                node_id=self._node_id,
+                sequence=len(self._trace_events),
+                payload={"tool": tool_name},
+            )
+        )
         return GovernanceDecision(allowed=True, _normalized=normalized)
+
+    @property
+    def trace_events(self) -> "list[TraceEvent]":
+        """Every verdict this governor reached, in call order.
+
+        The kernel reports what it DECIDED; whether the caller then blocked the
+        call is the caller's business (a Lab ungoverned arm observes without
+        enforcing). So a denial is recorded here even when the wrapper chose to
+        execute anyway — otherwise an ungoverned run would have no verdicts to
+        replay, and the ungoverned/governed comparison would have nothing to
+        compare.
+        """
+        return list(self._trace_events)
+
+    def drain_trace_events(self) -> "list[TraceEvent]":
+        """Take the events and reset, for a caller streaming per trial."""
+        events, self._trace_events = self._trace_events, []
+        return events
 
     # ── ledger ────────────────────────────────────────────────────────────────
 
