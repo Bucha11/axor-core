@@ -105,6 +105,58 @@ class TestTheSynchronousPathRecords(unittest.TestCase):
         self.assertEqual(governor.trace_events[-1].kind, TraceEventKind.INTENT_DENIED)
 
 
+class TestTheVerdictCarriesItsProvenance(unittest.TestCase):
+    """Recording only the tool name is what forces a consumer to build a second
+    taint ledger: the trace says a call was denied but not what it was denied
+    ON, so anything wanting to show the operator *why* has to re-derive the
+    provenance the kernel already computed. The kernel event schema documents
+    ``arg_refs`` / ``driving_root`` / ``floor_active`` for TOOL_CALL — this is
+    the path that fills them in."""
+
+    def _denial(self):
+        governor = _governor()
+        approved = governor.evaluate("read_txns", {})
+        governor.register_output(approved, {"description": "PAY DE89370400440532013000"})
+        governor.evaluate("send_money", {"recipient": "PAY DE89370400440532013000"})
+        return governor.trace_events[-1].payload
+
+    def test_an_approval_names_its_tool(self) -> None:
+        governor = _governor()
+        governor.evaluate("read_txns", {})
+        self.assertEqual(governor.trace_events[0].payload["tool"], "read_txns")
+
+    def test_each_argument_carries_the_sources_it_was_derived_from(self) -> None:
+        payload = self._denial()
+        self.assertEqual(sorted(payload["arg_refs"]), ["recipient"])
+        self.assertTrue(payload["arg_refs"]["recipient"]["sources"])
+
+    def test_the_driving_root_is_the_join_over_the_declared_driving_args(self) -> None:
+        """The verdict turns on the driving root, not on every argument, so a
+        consumer reading only ``arg_refs`` could not tell an incidental tainted
+        argument from the one that actually caused the denial."""
+        payload = self._denial()
+        self.assertEqual(payload["driving_args"], ["recipient"])
+        self.assertEqual(
+            payload["driving_root"]["sources"], payload["arg_refs"]["recipient"]["sources"],
+        )
+
+    def test_a_denial_carries_its_category(self) -> None:
+        self.assertEqual(self._denial()["category"], "taint_enforcement")
+
+    def test_untainted_arguments_report_no_sources_rather_than_being_omitted(self) -> None:
+        """Absence and clean must be distinguishable — an omitted entry reads as
+        'not recorded', which is exactly the ambiguity that makes a trace
+        un-auditable."""
+        governor = _governor()
+        governor.evaluate("send_money", {"recipient": "self"})
+        payload = governor.trace_events[-1].payload
+        self.assertEqual(payload["arg_refs"]["recipient"]["sources"], [])
+        self.assertFalse(payload["driving_root"]["sensitive"])
+
+    def test_the_floor_state_is_reported(self) -> None:
+        self.assertIn("floor_active", self._denial())
+
+
 class TestDraining(unittest.TestCase):
     def test_trace_events_is_a_copy(self) -> None:
         """A caller mutating the returned list must not corrupt the record."""

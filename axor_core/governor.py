@@ -161,6 +161,37 @@ class ToolCallGovernor:
 
     # ── decision ────────────────────────────────────────────────────────────────
 
+    def _call_payload(self, tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
+        """The provenance this call was judged on, in the shape the kernel event
+        schema documents for TOOL_CALL: ``arg_refs``, ``driving_root``,
+        ``floor_active``.
+
+        The governor computes all of it to reach a verdict; recording only the
+        tool name threw it away and left every consumer unable to see WHY the
+        verdict was what it was. A consumer that cannot reconstruct provenance
+        from the trace has to re-derive it, which is how a second taint ledger
+        gets built downstream.
+        """
+        driving = self._driving_args.get(tool_name)
+        arg_refs: dict[str, dict[str, Any]] = {}
+        for name, value in args.items():
+            root = self._taint.derive_value(value)
+            arg_refs[name] = {
+                "sources": sorted(str(s) for s in root.sources),
+                "sensitive": bool(root.sensitive),
+            }
+        driving_root = self._taint.derive_value(driving_subset(args, driving))
+        return {
+            "tool": tool_name,
+            "arg_refs": arg_refs,
+            "driving_args": sorted(driving) if driving else [],
+            "driving_root": {
+                "sources": sorted(str(s) for s in driving_root.sources),
+                "sensitive": bool(driving_root.sensitive),
+            },
+            "floor_active": bool(self._taint.confidentiality_floor_active()),
+        }
+
     def evaluate(self, tool_name: str, args: dict[str, Any]) -> GovernanceDecision:
         """Decide whether this tool call may execute. Pure — no side effects on
         the ledger (call :meth:`register_output` after a tool actually runs)."""
@@ -180,6 +211,8 @@ class ToolCallGovernor:
                     sequence=len(self._trace_events),
                     intent_kind=IntentKind.TOOL_CALL.value,
                     reason=gd.reason,
+                    payload={**self._call_payload(tool_name, args),
+                             "category": gd.category},
                 )
             )
             return GovernanceDecision(
@@ -263,7 +296,7 @@ class ToolCallGovernor:
                 kind=TraceEventKind.INTENT_APPROVED,
                 node_id=self._node_id,
                 sequence=len(self._trace_events),
-                payload={"tool": tool_name},
+                payload=self._call_payload(tool_name, args),
             )
         )
         return GovernanceDecision(allowed=True, _normalized=normalized)
