@@ -378,7 +378,8 @@ class IntentLoop:
                         )
                         if spawn_decision.kind == PolicyDecisionKind.DENY:
                             self._record_denial(
-                                spawn_intent, spawn_decision.reason, envelope
+                                spawn_intent, spawn_decision.reason, envelope,
+                                "capability",
                             )
                             denial = _denial_result(tool_name, spawn_decision.reason)
                             if self._tool_result_callback is not None:
@@ -403,7 +404,7 @@ class IntentLoop:
                         spawn_args = event.payload.get("args", {})
                         taint_reason = self._spawn_taint_reason(spawn_args)
                         if taint_reason is not None:
-                            self._record_denial(spawn_intent, taint_reason, envelope)
+                            self._record_denial(spawn_intent, taint_reason, envelope, "taint_enforcement")
                             denial = _denial_result(tool_name, taint_reason)
                             if self._tool_result_callback is not None:
                                 await self._tool_result_callback(
@@ -518,7 +519,7 @@ class IntentLoop:
             reason = (
                 f"session intent limit reached ({self._max_intents_per_session})"
             )
-            self._record_denial(intent, reason, envelope)
+            self._record_denial(intent, reason, envelope, "budget")
             return ResolvedIntent(
                 intent=intent,
                 approved=False,
@@ -529,7 +530,7 @@ class IntentLoop:
         decision, pending_consumption = self._evaluate_tool_intent(intent, envelope)
 
         if decision.kind == PolicyDecisionKind.DENY:
-            self._record_denial(intent, decision.reason, envelope)
+            self._record_denial(intent, decision.reason, envelope, "capability")
             denial_resp = _make_denial_response(decision.reason)
             self._record_degradation_signal(intent, denial_resp)
             return ResolvedIntent(
@@ -566,7 +567,7 @@ class IntentLoop:
                 f"+{self._tool_weight(tool_name)} for '{tool_name}')"
             )
         if budget_reason is not None:
-            self._record_denial(intent, budget_reason, envelope)
+            self._record_denial(intent, budget_reason, envelope, "budget")
             denial_resp = _make_denial_response(budget_reason, "budget")
             self._record_degradation_signal(intent, denial_resp)
             return ResolvedIntent(
@@ -617,7 +618,7 @@ class IntentLoop:
                 "refuses an unclassified tool (it would default to a clean read and "
                 "arm no floor)"
             )
-            self._record_denial(intent, role_denial, envelope)
+            self._record_denial(intent, role_denial, envelope, "unclassified_tool")
             denial_resp = _make_denial_response(role_denial, "unclassified_tool")
             self._record_degradation_signal(intent, denial_resp)
             return ResolvedIntent(
@@ -637,7 +638,7 @@ class IntentLoop:
             operation=normalized.operation if normalized is not None else None,
         )
         if consequence_denial is not None:
-            self._record_denial(intent, consequence_denial, envelope)
+            self._record_denial(intent, consequence_denial, envelope, "consequence_gate")
             denial_resp = _make_denial_response(consequence_denial, "consequence_gate")
             self._record_degradation_signal(intent, denial_resp)
             return ResolvedIntent(
@@ -653,7 +654,7 @@ class IntentLoop:
         # by decidable decision procedures.
         value_denial = check_value_policies(tool_name, tool_args, self._value_policies)
         if value_denial is not None:
-            self._record_denial(intent, value_denial, envelope)
+            self._record_denial(intent, value_denial, envelope, "value_policy")
             denial_resp = _make_denial_response(value_denial, "value_policy")
             self._record_degradation_signal(intent, denial_resp)
             return ResolvedIntent(
@@ -684,7 +685,7 @@ class IntentLoop:
                 tool_name, normalized, envelope, driving_root=check_root
             )
             if degradation_denial is not None:
-                self._record_denial(intent, degradation_denial, envelope)
+                self._record_denial(intent, degradation_denial, envelope, "degradation")
                 denial_resp = _make_denial_response(degradation_denial)
                 self._record_degradation_signal(intent, denial_resp, normalized)
                 return ResolvedIntent(
@@ -696,7 +697,7 @@ class IntentLoop:
 
         # Shared gate denial → ResolvedIntent (records denial + degradation signal).
         def _gate_denial(gd) -> ResolvedIntent:
-            self._record_denial(intent, gd.reason, envelope)
+            self._record_denial(intent, gd.reason, envelope, gd.category)
             denial_resp = _make_denial_response(gd.reason, gd.category)
             self._record_degradation_signal(intent, denial_resp, normalized)
             return ResolvedIntent(
@@ -811,7 +812,7 @@ class IntentLoop:
                     f"adjudicator (advisory): denied '{tool_name}' on its "
                     f"projection (hash {projection_hash(projection)})"
                 )
-                self._record_denial(intent, reason, envelope)
+                self._record_denial(intent, reason, envelope, "budget")
                 denial_resp = _make_denial_response(reason, "adjudicator")
                 self._record_degradation_signal(intent, denial_resp, normalized)
                 return ResolvedIntent(
@@ -874,7 +875,7 @@ class IntentLoop:
                     )
                 except FederationError as exc:
                     reason = f"federation: rejected peer value — {exc}"
-                    self._record_denial(intent, reason, envelope)
+                    self._record_denial(intent, reason, envelope, "budget")
                     denial_resp = _make_denial_response(reason, "federation_gate")
                     return ResolvedIntent(
                         intent=intent, approved=False, reason=reason,
@@ -902,7 +903,7 @@ class IntentLoop:
             )
         except _KNOWN_TOOL_EXCEPTIONS as exc:
             reason = str(exc)
-            self._record_denial(intent, reason, envelope)
+            self._record_denial(intent, reason, envelope, "budget")
             return ResolvedIntent(
                 intent=intent,
                 approved=False,
@@ -923,7 +924,7 @@ class IntentLoop:
                 tb,
             )
             reason = f"tool execution failed: {type(exc).__name__}: {exc}"
-            self._record_denial(intent, reason, envelope)
+            self._record_denial(intent, reason, envelope, "budget")
             return ResolvedIntent(
                 intent=intent,
                 approved=False,
@@ -1109,6 +1110,7 @@ class IntentLoop:
         intent: Intent,
         reason: str,
         envelope: ExecutionEnvelope,
+        category: str = "capability",
     ) -> None:
         payload: dict = {}
         if intent.kind is IntentKind.TOOL_CALL and self._taint_engine is not None:
@@ -1119,6 +1121,10 @@ class IntentLoop:
             payload = self._call_payload(
                 str(body.get("tool", "")), dict(body.get("args") or {}),
             )
+        # the category NAMES the gate a consumer records. Without it a denial can
+        # only be written as "refused, somehow", and trace/v1's `gate` field —
+        # which takes a gate name, not a category — has nothing to fill in.
+        payload["category"] = category
         self._trace_events.append(
             IntentDeniedEvent(
                 kind=TraceEventKind.INTENT_DENIED,

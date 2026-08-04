@@ -88,6 +88,34 @@ class TestTheVocabularyIsComplete(unittest.TestCase):
         self.assertEqual(gate_of("unclassified_tool"), "capability")
 
 
+class TestTheStreamingPathNamesItsGateToo(unittest.TestCase):
+    """A denial has to name the gate that produced it on BOTH wrapping paths.
+
+    The streaming path recorded a reason string and nothing else, so a consumer
+    writing `trace/v1` — whose `gate` field takes a gate name, not a reason —
+    had nothing to fill in. Every `_record_denial` site now passes a category,
+    and every one of those categories has to be in the closed set.
+    """
+
+    def _categories_passed_to_record_denial(self) -> set[str]:
+        import re
+
+        source = (SOURCE_ROOT / "node" / "intent_loop.py").read_text()
+        return set(re.findall(
+            r"_record_denial\([^)]*?envelope,\s*[\"'](\w+)[\"']", source, re.S,
+        ))
+
+    def test_every_denial_site_names_a_known_category(self) -> None:
+        used = self._categories_passed_to_record_denial()
+        self.assertTrue(used, "no categorised denial site found — did the call shape change?")
+        self.assertEqual(used - DENIAL_CATEGORIES, set())
+
+    def test_each_maps_to_a_gate(self) -> None:
+        for category in self._categories_passed_to_record_denial():
+            with self.subTest(category=category):
+                self.assertIn(gate_of(category), KNOWN_GATES)
+
+
 class TestEveryDenialIsRecorded(unittest.TestCase):
     def test_the_unclassified_tool_denial_emits_its_event(self) -> None:
         """STRICT mode's refusal of an undeclared tool is the kernel's
