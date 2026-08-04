@@ -49,6 +49,49 @@ from axor_core.kernel.registration import (
 )
 from axor_core.taint.engine import TaintEngine
 
+# The closed set of denial categories, and the GATE each one names.
+#
+# Categories are an internal vocabulary; the gate names are the kernel's own
+# nine-gate sequence, and they are what a recorded trace has to carry — a
+# consumer asking "which gate denied this?" should not have to reverse-engineer
+# it from a category string. Exporting the mapping is what stops every consumer
+# from keeping a private copy: axor-lab kept one whose keys were `ssrf`,
+# `consequence`, `positional`, `carrier` — names this kernel does not emit (it
+# emits `ssrf_gate`, `consequence_gate`, …) — so seven of eleven categories fell
+# through unmapped and produced traces that failed schema validation.
+#
+# Adding a category without adding it here fails `test_gate_vocabulary.py`.
+GATE_OF_CATEGORY: dict[str, str] = {
+    "taint_enforcement": "taint_floor",
+    "consequence_gate": "consequence",
+    "value_policy": "value_policies",
+    "ssrf_gate": "ssrf",
+    "positional_gate": "positional",
+    "carrier_gate": "carrier",
+    "message_gate": "message",
+    "budget": "budget",
+    "degradation": "degradation",
+    "capability": "capability",
+    # an unclassified tool is refused by the capability gate: it has no declared
+    # role, so no capability to act under.
+    "unclassified_tool": "capability",
+}
+
+DENIAL_CATEGORIES: frozenset[str] = frozenset(GATE_OF_CATEGORY)
+
+
+def gate_of(category: str) -> str:
+    """The gate a denial category names. Unknown categories raise rather than
+    passing the raw category through — a category leaking into a field that
+    expects a gate name is how an unrecognised denial became an invalid trace
+    instead of a loud error."""
+    try:
+        return GATE_OF_CATEGORY[category]
+    except KeyError:
+        raise ValueError(
+            f"unknown denial category {category!r}; known: {sorted(DENIAL_CATEGORIES)}"
+        ) from None
+
 
 @dataclass
 class GovernanceDecision:
@@ -203,22 +246,28 @@ class ToolCallGovernor:
         )
         normalized = self._normalizer.normalize(intent)
 
-        def _deny(gd: GateDecision) -> GovernanceDecision:
+        def _denied(reason: str, category: str) -> GovernanceDecision:
+            """EVERY denial goes through here. A denial that returns directly is
+            a verdict with no trace: replay sees an intent with no decision, and
+            a consumer never learns the kernel blocked anything."""
             self._trace_events.append(
                 IntentDeniedEvent(
                     kind=TraceEventKind.INTENT_DENIED,
                     node_id=self._node_id,
                     sequence=len(self._trace_events),
                     intent_kind=IntentKind.TOOL_CALL.value,
-                    reason=gd.reason,
+                    reason=reason,
                     payload={**self._call_payload(tool_name, args),
-                             "category": gd.category},
+                             "category": category},
                 )
             )
             return GovernanceDecision(
-                allowed=False, reason=gd.reason, category=gd.category,
+                allowed=False, reason=reason, category=category,
                 _normalized=normalized,
             )
+
+        def _deny(gd: GateDecision) -> GovernanceDecision:
+            return _denied(gd.reason, gd.category)
 
         # 0. STRICT role completeness (lazy): an unclassified tool fails closed
         #    rather than defaulting to a clean benign read. This is the fix for the
@@ -233,16 +282,12 @@ class ToolCallGovernor:
             benign_tools=self._benign_tools,
             value_policies=self._value_policies,
         ):
-            return GovernanceDecision(
-                allowed=False,
-                reason=(
-                    f"tool {tool_name!r} has no declared data-flow role; STRICT mode "
-                    "refuses an unclassified tool (it would default to a clean read "
-                    "and arm no floor). Declare it as a source/sink/positional/"
-                    "value_policy or explicitly benign."
-                ),
-                category="unclassified_tool",
-                _normalized=normalized,
+            return _denied(
+                f"tool {tool_name!r} has no declared data-flow role; STRICT mode "
+                "refuses an unclassified tool (it would default to a clean read "
+                "and arm no floor). Declare it as a source/sink/positional/"
+                "value_policy or explicitly benign.",
+                "unclassified_tool",
             )
 
         # 1. consequence — content-blind action-class gate. (No lease/escalation
