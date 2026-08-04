@@ -63,7 +63,7 @@ EGRESS = {"write"}
 DRIVING = {"write": ["recipient"]}
 TAINTED = "PAY DE89370400440532013000"
 
-PROVENANCE_KEYS = {"tool", "arg_refs", "driving_args", "driving_root", "floor_active"}
+PROVENANCE_KEYS = {"tool", "arg_provenance", "driving_args", "driving_root", "floor_active"}
 
 
 def _verdicts(events):
@@ -145,9 +145,9 @@ class TestTheStreamingPathRecordsProvenance:
         assert denials, "the tainted egress was not denied"
         payload = denials[0].payload
         assert payload["driving_args"] == ["recipient"]
-        assert payload["arg_refs"]["recipient"]["sources"]
+        assert payload["arg_provenance"]["recipient"]["sources"]
         assert payload["driving_root"]["sources"] == \
-            payload["arg_refs"]["recipient"]["sources"]
+            payload["arg_provenance"]["recipient"]["sources"]
 
 
 @pytest.mark.asyncio

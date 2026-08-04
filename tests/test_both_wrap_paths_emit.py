@@ -109,9 +109,14 @@ class TestTheVerdictCarriesItsProvenance(unittest.TestCase):
     """Recording only the tool name is what forces a consumer to build a second
     taint ledger: the trace says a call was denied but not what it was denied
     ON, so anything wanting to show the operator *why* has to re-derive the
-    provenance the kernel already computed. The kernel event schema documents
-    ``arg_refs`` / ``driving_root`` / ``floor_active`` for TOOL_CALL — this is
-    the path that fills them in."""
+    provenance the kernel already computed.
+
+    It goes under ``arg_provenance``, not the schema's ``arg_refs``: that field
+    is ``{arg: value_ref}`` — opaque ids the replay fold looks up and the
+    subgraph walks as edges — and filling it with nested dicts crashed the fold
+    (`TypeError: unhashable type: 'dict'`). See
+    `test_governor_payload_survives_replay.py`, which puts these bytes through
+    the real fold rather than comparing them to a docstring."""
 
     def _denial(self):
         governor = _governor()
@@ -127,17 +132,17 @@ class TestTheVerdictCarriesItsProvenance(unittest.TestCase):
 
     def test_each_argument_carries_the_sources_it_was_derived_from(self) -> None:
         payload = self._denial()
-        self.assertEqual(sorted(payload["arg_refs"]), ["recipient"])
-        self.assertTrue(payload["arg_refs"]["recipient"]["sources"])
+        self.assertEqual(sorted(payload["arg_provenance"]), ["recipient"])
+        self.assertTrue(payload["arg_provenance"]["recipient"]["sources"])
 
     def test_the_driving_root_is_the_join_over_the_declared_driving_args(self) -> None:
         """The verdict turns on the driving root, not on every argument, so a
-        consumer reading only ``arg_refs`` could not tell an incidental tainted
-        argument from the one that actually caused the denial."""
+        consumer reading only the per-argument breakdown could not tell an
+        incidental tainted argument from the one that caused the denial."""
         payload = self._denial()
         self.assertEqual(payload["driving_args"], ["recipient"])
         self.assertEqual(
-            payload["driving_root"]["sources"], payload["arg_refs"]["recipient"]["sources"],
+            payload["driving_root"]["sources"], payload["arg_provenance"]["recipient"]["sources"],
         )
 
     def test_a_denial_carries_its_category(self) -> None:
@@ -150,7 +155,7 @@ class TestTheVerdictCarriesItsProvenance(unittest.TestCase):
         governor = _governor()
         governor.evaluate("send_money", {"recipient": "self"})
         payload = governor.trace_events[-1].payload
-        self.assertEqual(payload["arg_refs"]["recipient"]["sources"], [])
+        self.assertEqual(payload["arg_provenance"]["recipient"]["sources"], [])
         self.assertFalse(payload["driving_root"]["sensitive"])
 
     def test_the_floor_state_is_reported(self) -> None:

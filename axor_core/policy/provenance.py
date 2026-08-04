@@ -77,8 +77,20 @@ def call_payload(
 ) -> "dict[str, object]":
     """The provenance a tool-call verdict was reached on.
 
-    The shape the kernel event schema documents for TOOL_CALL: ``arg_refs``,
-    ``driving_args``, ``driving_root``, ``floor_active``.
+    ``driving_root`` is the shape the kernel event schema documents for
+    TOOL_CALL, and ``kernel.replay.root_from_payload`` reads it directly.
+
+    The per-argument breakdown goes under ``arg_provenance``, NOT ``arg_refs``.
+    That distinction is load-bearing and this got it wrong: the schema's
+    ``arg_refs`` is ``{arg: value_ref}`` — a mapping to opaque value REFERENCES
+    that ``replay._derive_driving_root`` looks up in ``state.tainted_refs`` and
+    ``subgraph`` walks as edges. Writing a nested provenance dict there crashed
+    the replay fold outright (`TypeError: unhashable type: 'dict'`).
+
+    This governor has no value-ref vocabulary — it derives taint from content,
+    not from minted ids — so it must leave ``arg_refs`` alone and let replay
+    take its documented fallback to ``driving_root``, which is what the verdict
+    turned on anyway.
 
     Shared by BOTH ways of wrapping an agent — ``ToolCallGovernor`` (the
     synchronous per-call path) and ``IntentLoop`` (the async streaming path) —
@@ -91,17 +103,17 @@ def call_payload(
     from axor_core.policy.gates import driving_subset
 
     driving = (driving_args or {}).get(tool_name)
-    arg_refs: dict[str, object] = {}
+    arg_provenance: dict[str, object] = {}
     for name, value in (args or {}).items():
         root = taint.derive_value(value)  # type: ignore[attr-defined]
-        arg_refs[name] = {
+        arg_provenance[name] = {
             "sources": source_tokens(root.sources),
             "sensitive": bool(root.sensitive),
         }
     driving_root = taint.derive_value(driving_subset(args or {}, driving))  # type: ignore[attr-defined]
     return {
         "tool": tool_name,
-        "arg_refs": arg_refs,
+        "arg_provenance": arg_provenance,
         "driving_args": sorted(driving) if driving else [],
         "driving_root": {
             "sources": source_tokens(driving_root.sources),

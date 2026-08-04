@@ -15,6 +15,10 @@ replay agree on these keys):
 
 - TOOL_CALL: ``{"tool", "args", "arg_refs": {arg: value_ref}, "normalized":
   {NormalizedIntent fields}, "driving_root": {"sources": [...], "sensitive"},
+  "arg_provenance": {arg: {"sources": [...], "sensitive"}} — OPTIONAL, and NOT
+  ``arg_refs``: refs are opaque value ids the fold looks up in tainted_refs and
+  the subgraph walks as edges, while this is a per-argument taint summary a
+  producer with no ref vocabulary (the synchronous governor) can still record,
   "floor_active": bool}`` — ``verdict`` on the event is the recorded overall
   gate verdict for this call; ``gate`` is the denying gate's category if denied.
 - TOOL_RESULT: ``{"tool", "status", "value_ref", "root": {"sources": [...],
