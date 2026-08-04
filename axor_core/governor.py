@@ -80,6 +80,17 @@ GATE_OF_CATEGORY: dict[str, str] = {
 DENIAL_CATEGORIES: frozenset[str] = frozenset(GATE_OF_CATEGORY)
 
 
+def _source_tokens(sources: object) -> list[str]:
+    """Taint sources as their declared string values (`web`, `mcp`, …).
+
+    `str()` on a `(str, Enum)` member yields `TaintSource.WEB` — a Python
+    implementation detail, and these tokens go into recorded governance
+    artifacts that other languages read and hash. Emit the value the enum
+    actually declares.
+    """
+    return sorted(getattr(s, "value", None) or str(s) for s in sources or ())
+
+
 def gate_of(category: str) -> str:
     """The gate a denial category names. Unknown categories raise rather than
     passing the raw category through — a category leaking into a field that
@@ -220,7 +231,7 @@ class ToolCallGovernor:
         for name, value in args.items():
             root = self._taint.derive_value(value)
             arg_refs[name] = {
-                "sources": sorted(str(s) for s in root.sources),
+                "sources": _source_tokens(root.sources),
                 "sensitive": bool(root.sensitive),
             }
         driving_root = self._taint.derive_value(driving_subset(args, driving))
@@ -229,7 +240,7 @@ class ToolCallGovernor:
             "arg_refs": arg_refs,
             "driving_args": sorted(driving) if driving else [],
             "driving_root": {
-                "sources": sorted(str(s) for s in driving_root.sources),
+                "sources": _source_tokens(driving_root.sources),
                 "sensitive": bool(driving_root.sensitive),
             },
             "floor_active": bool(self._taint.confidentiality_floor_active()),

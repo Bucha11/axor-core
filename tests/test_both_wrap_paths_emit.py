@@ -156,6 +156,19 @@ class TestTheVerdictCarriesItsProvenance(unittest.TestCase):
     def test_the_floor_state_is_reported(self) -> None:
         self.assertIn("floor_active", self._denial())
 
+    def test_sources_are_declared_tokens_not_python_reprs(self) -> None:
+        """These tokens land in recorded governance artifacts that other
+        languages read and hash. `str()` on a `(str, Enum)` member yields
+        `TaintSource.WEB` — a Python implementation detail no Rust or TS
+        producer would ever emit for the same value."""
+        from axor_core.contracts.taint import TaintSource
+
+        declared = {s.value for s in TaintSource}
+        payload = self._denial()
+        for token in payload["driving_root"]["sources"]:
+            self.assertIn(token, declared, f"{token!r} is not a declared source value")
+        self.assertTrue(payload["driving_root"]["sources"])
+
 
 class TestDraining(unittest.TestCase):
     def test_trace_events_is_a_copy(self) -> None:
