@@ -30,7 +30,7 @@ from axor_core.kernel.registration import (
 )
 from axor_core.taint.engine import TaintEngine
 from axor_core.policy.sinks import INSTRUCTION_COMPLETE_SINKS
-from axor_core.policy.provenance import output_root
+from axor_core.policy.provenance import call_payload, output_root
 from axor_core.contracts.result import ExecutorEvent, ExecutorEventKind
 from axor_core.contracts.trace import (
     CancelledEvent,
@@ -840,7 +840,10 @@ class IntentLoop:
                 kind=TraceEventKind.INTENT_TRANSFORMED if is_transform else TraceEventKind.INTENT_APPROVED,
                 node_id=envelope.node_id,
                 sequence=len(self._trace_events),
-                payload={"tool": tool_name},
+                # the SHARED payload builder — the synchronous governor records
+                # the identical shape from the identical function, so the two
+                # ways of wrapping an agent cannot drift into two vocabularies.
+                payload=self._call_payload(tool_name, tool_args),
             )
         )
 
@@ -1093,12 +1096,29 @@ class IntentLoop:
         )
         return gd.reason if gd is not None else None
 
+    def _call_payload(self, tool_name: str, args: dict) -> dict:
+        """The provenance a verdict was reached on — the SHARED builder, the one
+        ``ToolCallGovernor`` uses. Recording only the tool name left every
+        consumer re-deriving provenance the kernel had already computed."""
+        return call_payload(
+            tool_name, args, taint=self._taint_engine, driving_args=self._driving_args,
+        )
+
     def _record_denial(
         self,
         intent: Intent,
         reason: str,
         envelope: ExecutionEnvelope,
     ) -> None:
+        payload: dict = {}
+        if intent.kind is IntentKind.TOOL_CALL and self._taint_engine is not None:
+            # a denied call carries the provenance it was denied ON. Without it a
+            # consumer can see THAT the kernel refused but not what it refused
+            # over — and an operator asking "why" gets nothing.
+            body = intent.payload if isinstance(intent.payload, dict) else {}
+            payload = self._call_payload(
+                str(body.get("tool", "")), dict(body.get("args") or {}),
+            )
         self._trace_events.append(
             IntentDeniedEvent(
                 kind=TraceEventKind.INTENT_DENIED,
@@ -1106,6 +1126,7 @@ class IntentLoop:
                 sequence=len(self._trace_events),
                 intent_kind=intent.kind.value,
                 reason=reason,
+                payload=payload,
             )
         )
 

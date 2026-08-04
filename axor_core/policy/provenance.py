@@ -56,3 +56,56 @@ def output_root(
         )
         return CausalRoot.external_read(TaintSource.FILE, sensitive=sensitive)
     return None
+
+
+def source_tokens(sources: object) -> list[str]:
+    """Taint sources as their declared string values (`web`, `mcp`, …).
+
+    ``str()`` on a ``(str, Enum)`` member yields ``TaintSource.WEB`` — a Python
+    implementation detail, and these tokens go into recorded governance
+    artifacts that other languages read and hash.
+    """
+    return sorted(getattr(s, "value", None) or str(s) for s in sources or ())
+
+
+def call_payload(
+    tool_name: str,
+    args: "dict[str, object]",
+    *,
+    taint: object,
+    driving_args: "dict[str, frozenset[str]] | dict[str, set[str]] | None" = None,
+) -> "dict[str, object]":
+    """The provenance a tool-call verdict was reached on.
+
+    The shape the kernel event schema documents for TOOL_CALL: ``arg_refs``,
+    ``driving_args``, ``driving_root``, ``floor_active``.
+
+    Shared by BOTH ways of wrapping an agent — ``ToolCallGovernor`` (the
+    synchronous per-call path) and ``IntentLoop`` (the async streaming path) —
+    because they are two entry points to one kernel, not two kernels. Each
+    computed this provenance to reach a verdict and then recorded only the tool
+    name, so every consumer had to re-derive it from raw arguments, which is how
+    a second taint ledger gets built downstream. Living in one function is what
+    stops the two paths from drifting into two vocabularies.
+    """
+    from axor_core.policy.gates import driving_subset
+
+    driving = (driving_args or {}).get(tool_name)
+    arg_refs: dict[str, object] = {}
+    for name, value in (args or {}).items():
+        root = taint.derive_value(value)  # type: ignore[attr-defined]
+        arg_refs[name] = {
+            "sources": source_tokens(root.sources),
+            "sensitive": bool(root.sensitive),
+        }
+    driving_root = taint.derive_value(driving_subset(args or {}, driving))  # type: ignore[attr-defined]
+    return {
+        "tool": tool_name,
+        "arg_refs": arg_refs,
+        "driving_args": sorted(driving) if driving else [],
+        "driving_root": {
+            "sources": source_tokens(driving_root.sources),
+            "sensitive": bool(driving_root.sensitive),
+        },
+        "floor_active": bool(taint.confidentiality_floor_active()),  # type: ignore[attr-defined]
+    }

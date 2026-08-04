@@ -41,7 +41,7 @@ from axor_core.policy.gates import (
     value_policy_gate,
 )
 from axor_core.policy.sinks import INSTRUCTION_COMPLETE_SINKS
-from axor_core.policy.provenance import output_root
+from axor_core.policy.provenance import call_payload, output_root
 from axor_core.kernel.registration import (
     validate_driving_arg_allowlists,
     validate_egress_allowlists,
@@ -78,17 +78,6 @@ GATE_OF_CATEGORY: dict[str, str] = {
 }
 
 DENIAL_CATEGORIES: frozenset[str] = frozenset(GATE_OF_CATEGORY)
-
-
-def _source_tokens(sources: object) -> list[str]:
-    """Taint sources as their declared string values (`web`, `mcp`, …).
-
-    `str()` on a `(str, Enum)` member yields `TaintSource.WEB` — a Python
-    implementation detail, and these tokens go into recorded governance
-    artifacts that other languages read and hash. Emit the value the enum
-    actually declares.
-    """
-    return sorted(getattr(s, "value", None) or str(s) for s in sources or ())
 
 
 def gate_of(category: str) -> str:
@@ -216,35 +205,14 @@ class ToolCallGovernor:
     # ── decision ────────────────────────────────────────────────────────────────
 
     def _call_payload(self, tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
-        """The provenance this call was judged on, in the shape the kernel event
-        schema documents for TOOL_CALL: ``arg_refs``, ``driving_root``,
-        ``floor_active``.
+        """The provenance this call was judged on — the SHARED builder.
 
-        The governor computes all of it to reach a verdict; recording only the
-        tool name threw it away and left every consumer unable to see WHY the
-        verdict was what it was. A consumer that cannot reconstruct provenance
-        from the trace has to re-derive it, which is how a second taint ledger
-        gets built downstream.
+        Both ways of wrapping an agent record this identical shape, from one
+        function, so the two cannot drift into two vocabularies.
         """
-        driving = self._driving_args.get(tool_name)
-        arg_refs: dict[str, dict[str, Any]] = {}
-        for name, value in args.items():
-            root = self._taint.derive_value(value)
-            arg_refs[name] = {
-                "sources": _source_tokens(root.sources),
-                "sensitive": bool(root.sensitive),
-            }
-        driving_root = self._taint.derive_value(driving_subset(args, driving))
-        return {
-            "tool": tool_name,
-            "arg_refs": arg_refs,
-            "driving_args": sorted(driving) if driving else [],
-            "driving_root": {
-                "sources": _source_tokens(driving_root.sources),
-                "sensitive": bool(driving_root.sensitive),
-            },
-            "floor_active": bool(self._taint.confidentiality_floor_active()),
-        }
+        return call_payload(
+            tool_name, args, taint=self._taint, driving_args=self._driving_args,
+        )
 
     def evaluate(self, tool_name: str, args: dict[str, Any]) -> GovernanceDecision:
         """Decide whether this tool call may execute. Pure — no side effects on
