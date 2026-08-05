@@ -19,8 +19,16 @@ replay agree on these keys):
   ``arg_refs``: refs are opaque value ids the fold looks up in tainted_refs and
   the subgraph walks as edges, while this is a per-argument taint summary a
   producer with no ref vocabulary (the synchronous governor) can still record,
-  "floor_active": bool}`` — ``verdict`` on the event is the recorded overall
-  gate verdict for this call; ``gate`` is the denying gate's category if denied.
+  "floor_active": bool, "roles": {"untrusted_source", "sensitive_source",
+  "egress_sink", "imperative_sink", "positional_sink"} — the OPERATOR's declared
+  data-flow roles for this tool, which is what the taint gate keys on and what
+  ``normalized`` cannot tell you: the normalizer classifies structurally from the
+  tool's name, so a deployment's ``send_email`` normalises to
+  ``destination_kind: none`` and looks like a local no-op}`` — ``verdict`` on the
+  event is the recorded overall gate verdict for this call; ``gate`` is the
+  denying gate's category if denied. A REFUSED tool call is a TOOL_CALL with
+  ``verdict: deny``, not a DENIAL: this branch is the only one replay re-gates,
+  and DENIAL is for refusals that are not tool calls (a spawn, a message).
 - TOOL_RESULT: ``{"tool", "status", "value_ref", "root": {"sources": [...],
   "sensitive"}}`` — registers ``value_ref`` in the taint fold.
 - FAULT_INJECTED: ``{"tool", "mode", "canary"}``

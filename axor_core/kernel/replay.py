@@ -165,14 +165,37 @@ def _derive_driving_root(
     if not arg_refs:
         return root_from_payload(payload.get("driving_root"))
     roots = []
+    excised = False
+    unresolved = False
     for ref in arg_refs.values():
         if ref in state.excised_refs:
+            excised = True
             continue  # excision removes future influence (spec 8.2.1)
+        known = False
         if ref in state.tainted_refs:
             roots.append(state.tainted_refs[ref])
+            known = True
         if ref in config.synthetic_taint_refs:
             roots.append(CausalRoot.cross_process_in())
-    return CausalRoot.mint(*roots) if roots else CausalRoot.constant()
+            known = True
+        if not known:
+            unresolved = True
+    if roots:
+        return CausalRoot.mint(*roots)
+    if excised:
+        # A deliberate operator counterfactual: the ref stops influencing future
+        # derivations, so a clean root here is the ANSWER, not missing data.
+        return CausalRoot.constant()
+    if unresolved:
+        # Every ref is unknown to this fold — the TOOL_RESULT that minted them is
+        # not in the events being folded (a bridge dropped it, a partial window,
+        # a run stitched from one node's slice). Returning clean here re-decides
+        # a recorded DENY as ALLOW: silently fail-open, on missing data, in the
+        # exact direction that hides a breach. The producer recorded the root it
+        # actually gated on; fall back to it, the same as for a payload with no
+        # refs at all.
+        return root_from_payload(payload.get("driving_root"))
+    return CausalRoot.constant()
 
 
 def evaluate_call(

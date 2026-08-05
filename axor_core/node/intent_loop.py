@@ -30,12 +30,20 @@ from axor_core.kernel.registration import (
 )
 from axor_core.taint.engine import TaintEngine
 from axor_core.policy.sinks import INSTRUCTION_COMPLETE_SINKS
-from axor_core.policy.provenance import call_payload, output_root
+from axor_core.policy.provenance import (
+    ValueRefLedger,
+    call_payload,
+    declared_roles,
+    output_root,
+    result_payload,
+    source_tokens,
+)
 from axor_core.contracts.result import ExecutorEvent, ExecutorEventKind
 from axor_core.contracts.trace import (
     CancelledEvent,
     IntentDeniedEvent,
     SinkDensityEvent,
+    TaintPropagatedEvent,
     TokensSpentEvent,
     TraceEvent,
     TraceEventKind,
@@ -174,6 +182,11 @@ class IntentLoop:
         self._degradation_engine = degradation_engine
         self._reputation_enricher = reputation_enricher
         self._normalizer = IntentNormalizer()
+        # The value-ref vocabulary the kernel event schema is written in — the
+        # same ledger the synchronous governor keeps, so both paths record refs
+        # the replay fold and the plane's value graph can resolve.
+        self._value_refs = ValueRefLedger()
+        self._normalized_of_call: NormalizedIntent | None = None
         self._intent_sequence = 0
         self._token_totals = _TokenAccumulator()
         # DoS guards — opt-in (None = unlimited). GovernedSession sets prod defaults.
@@ -599,6 +612,11 @@ class IntentLoop:
                 self._degradation_engine.record_detection(normalized)
                 for ev in self._degradation_engine.drain_events():
                     self._trace_events.append(ev)
+        # Stashed for `_call_payload`: a denial can be recorded from a dozen
+        # places in this method, and threading the projection through every one
+        # of them is how one of them ends up recording a call with no
+        # `normalized` block — which replay then re-gates as a local no-op.
+        self._normalized_of_call = normalized
 
         # STRICT role completeness (lazy, per call): an unclassified tool fails
         # closed instead of defaulting to a clean benign read. Mirrors the governor;
@@ -1101,8 +1119,22 @@ class IntentLoop:
         """The provenance a verdict was reached on — the SHARED builder, the one
         ``ToolCallGovernor`` uses. Recording only the tool name left every
         consumer re-deriving provenance the kernel had already computed."""
+        normalized = self._normalized_of_call
+        if normalized is not None and normalized.tool != tool_name:
+            # a spawn/message denial recorded while a tool call's projection is
+            # still stashed — better no block than another call's.
+            normalized = None
         return call_payload(
             tool_name, args, taint=self._taint_engine, driving_args=self._driving_args,
+            normalized=normalized, refs=self._value_refs,
+            roles=declared_roles(
+                tool_name,
+                untrusted_sources=self._untrusted_sources,
+                sensitive_sources=self._sensitive_sources,
+                egress_sinks=self._egress_sinks,
+                imperative_sinks=self._imperative_sinks,
+                positional_sinks=self._positional_sinks,
+            ),
         )
 
     def _record_denial(
@@ -1150,11 +1182,18 @@ class IntentLoop:
         `override_root` short-circuits the structural derivation — used when the
         federation gateway has already decided the value's provenance (a peer value
         whose receipt was restored or re-minted untrusted).
+
+        An arming read is also RECORDED (see :meth:`_record_taint_propagated`):
+        the trace's only statement of where taint entered the run.
         """
         if self._taint_engine is None:
             return
         if override_root is not None:
             self._taint_engine.register_value(result, override_root)
+            self._record_taint_propagated(
+                effective_intent.node_id,
+                str(effective_intent.payload.get("tool", "")), result, override_root,
+            )
             return
         tool_name = effective_intent.payload.get("tool", "")
         # Shared arming map (policy.provenance.output_root) — the same mapping the
@@ -1170,6 +1209,34 @@ class IntentLoop:
         if root is None:
             return  # clean read — nothing to register
         self._taint_engine.register_value(result, root)
+        self._record_taint_propagated(
+            effective_intent.node_id, str(tool_name), result, root,
+        )
+
+    def _record_taint_propagated(
+        self, node_id: str, tool_name: str, result: Any, root: "CausalRoot",
+    ) -> None:
+        """Record the read that introduced provenance, with its minted value ref.
+
+        This is the trace's SOURCE event. Without it a run is a list of verdicts
+        with no origin: the replay fold has nothing to put in ``tainted_refs``,
+        so a later ``arg_refs`` binding resolves to nothing, and the Control
+        Plane refuses the run ("no untrusted source in the recorded run"). The
+        synchronous governor records the identical payload from the identical
+        builder — the two paths must not differ on what a source looks like.
+        """
+        self._trace_events.append(
+            TaintPropagatedEvent(
+                kind=TraceEventKind.TAINT_PROPAGATED,
+                node_id=node_id,
+                sequence=len(self._trace_events),
+                taint_source=",".join(source_tokens(root.sources)),
+                taint_scope="value",
+                payload=result_payload(
+                    tool_name, self._value_refs.mint(result, root), root,
+                ),
+            )
+        )
 
     def _check_consequence(
         self,

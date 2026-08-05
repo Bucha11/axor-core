@@ -28,7 +28,12 @@ from axor_core.contracts.anomaly import NormalizedIntent
 from axor_core.contracts.canonical import ConsequenceClass
 from axor_core.contracts.intent import Intent, IntentKind
 from axor_core.policy.normalizer import IntentNormalizer
-from axor_core.contracts.trace import IntentDeniedEvent, TraceEvent, TraceEventKind
+from axor_core.contracts.trace import (
+    IntentDeniedEvent,
+    TaintPropagatedEvent,
+    TraceEvent,
+    TraceEventKind,
+)
 from axor_core.policy.gates import (
     GateDecision,
     carrier_gate,
@@ -41,7 +46,14 @@ from axor_core.policy.gates import (
     value_policy_gate,
 )
 from axor_core.policy.sinks import INSTRUCTION_COMPLETE_SINKS
-from axor_core.policy.provenance import call_payload, output_root
+from axor_core.policy.provenance import (
+    ValueRefLedger,
+    call_payload,
+    declared_roles,
+    output_root,
+    result_payload,
+    source_tokens,
+)
 from axor_core.kernel.registration import (
     validate_driving_arg_allowlists,
     validate_egress_allowlists,
@@ -194,6 +206,11 @@ class ToolCallGovernor:
                 raise ValueError("strict egress allowlist: " + "; ".join(errors))
         self._normalizer = IntentNormalizer()
         self._taint = TaintEngine(node_id=node_id)
+        # The value-ref vocabulary the kernel event schema is written in. The
+        # gates decide on content derivation and need no ids; the RECORD does —
+        # `arg_refs` and `value_ref` are what let a consumer bind a denied sink
+        # argument back to the read that tainted it.
+        self._refs = ValueRefLedger()
         self._node_id = node_id
         # The SAME TraceEvents the IntentLoop emits. Both are ways of wrapping an
         # agent, so both must feed the one instrumentation path: axor-wrap's
@@ -204,7 +221,12 @@ class ToolCallGovernor:
 
     # ── decision ────────────────────────────────────────────────────────────────
 
-    def _call_payload(self, tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
+    def _call_payload(
+        self,
+        tool_name: str,
+        args: dict[str, Any],
+        normalized: NormalizedIntent | None = None,
+    ) -> dict[str, Any]:
         """The provenance this call was judged on — the SHARED builder.
 
         Both ways of wrapping an agent record this identical shape, from one
@@ -212,6 +234,15 @@ class ToolCallGovernor:
         """
         return call_payload(
             tool_name, args, taint=self._taint, driving_args=self._driving_args,
+            normalized=normalized, refs=self._refs,
+            roles=declared_roles(
+                tool_name,
+                untrusted_sources=self._untrusted_sources,
+                sensitive_sources=self._sensitive_sources,
+                egress_sinks=self._egress_sinks,
+                imperative_sinks=self._imperative_sinks,
+                positional_sinks=self._positional_sinks,
+            ),
         )
 
     def evaluate(self, tool_name: str, args: dict[str, Any]) -> GovernanceDecision:
@@ -236,7 +267,7 @@ class ToolCallGovernor:
                     sequence=len(self._trace_events),
                     intent_kind=IntentKind.TOOL_CALL.value,
                     reason=reason,
-                    payload={**self._call_payload(tool_name, args),
+                    payload={**self._call_payload(tool_name, args, normalized),
                              "category": category},
                 )
             )
@@ -320,7 +351,7 @@ class ToolCallGovernor:
                 kind=TraceEventKind.INTENT_APPROVED,
                 node_id=self._node_id,
                 sequence=len(self._trace_events),
-                payload=self._call_payload(tool_name, args),
+                payload=self._call_payload(tool_name, args, normalized),
             )
         )
         return GovernanceDecision(allowed=True, _normalized=normalized)
@@ -354,6 +385,13 @@ class ToolCallGovernor:
         produced value untrusted; secret/system reads also mark it sensitive,
         which arms the confidentiality floor. A clean read registers nothing.
         Call this only for calls that actually executed.
+
+        An arming read is also RECORDED, as a TAINT_PROPAGATED event carrying the
+        minted value ref and its root. Without it the trace has verdicts and no
+        source: replay has nothing to put in ``tainted_refs``, so a later
+        ``arg_refs`` binding resolves to nothing, and the Control Plane refuses
+        the run outright ("no untrusted source in the recorded run"). A clean
+        read still records nothing — it introduces no provenance to report.
         """
         ni = decision._normalized
         tool_name = ni.tool if ni is not None else ""
@@ -367,6 +405,16 @@ class ToolCallGovernor:
         if root is None:
             return  # clean read — nothing to register
         self._taint.register_value(output, root)
+        self._trace_events.append(
+            TaintPropagatedEvent(
+                kind=TraceEventKind.TAINT_PROPAGATED,
+                node_id=self._node_id,
+                sequence=len(self._trace_events),
+                taint_source=",".join(source_tokens(root.sources)),
+                taint_scope="value",
+                payload=result_payload(tool_name, self._refs.mint(output, root), root),
+            )
+        )
 
     # ── introspection ────────────────────────────────────────────────────────
 

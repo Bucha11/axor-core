@@ -25,10 +25,12 @@ from axor_core.contracts.trace import TraceEventKind
 from axor_core.governor import ToolCallGovernor
 
 # The kinds the IntentLoop emits for a tool-call verdict (intent_loop.py: the
-# approved/transformed emit, and _record_denial).
+# approved/transformed emit, and _record_denial) plus the source event it emits
+# when a read arms taint (_register_value_taint → _record_taint_propagated).
 INTENT_LOOP_VERDICT_KINDS = {
     TraceEventKind.INTENT_APPROVED,
     TraceEventKind.INTENT_DENIED,
+    TraceEventKind.TAINT_PROPAGATED,
 }
 
 
@@ -59,7 +61,10 @@ class TestTheSynchronousPathRecords(unittest.TestCase):
         self.assertFalse(denied.allowed)
         self.assertEqual(
             [e.kind for e in governor.trace_events],
-            [TraceEventKind.INTENT_APPROVED, TraceEventKind.INTENT_DENIED],
+            [TraceEventKind.INTENT_APPROVED,
+             # the read armed taint — the trace says WHERE it came from
+             TraceEventKind.TAINT_PROPAGATED,
+             TraceEventKind.INTENT_DENIED],
         )
 
     def test_it_emits_only_kinds_the_intent_loop_also_emits(self) -> None:

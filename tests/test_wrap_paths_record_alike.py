@@ -73,6 +73,10 @@ def _verdicts(events):
     ]
 
 
+def _sources(events):
+    return [e for e in events if e.kind is TraceEventKind.TAINT_PROPAGATED]
+
+
 def _path_b():
     """The synchronous path: the framework owns the loop."""
     governor = ToolCallGovernor(
@@ -81,7 +85,7 @@ def _path_b():
     approved = governor.evaluate("read", {})
     governor.register_output(approved, {"description": TAINTED})
     governor.evaluate("write", {"recipient": TAINTED})
-    return _verdicts(governor.trace_events)
+    return governor.trace_events
 
 
 async def _path_a(make_envelope, _focused):
@@ -113,12 +117,12 @@ async def _path_a(make_envelope, _focused):
     )
     async for _ in loop.run(_stream(), make_envelope(policy=_focused)):
         pass
-    return _verdicts(events)
+    return events
 
 
 class TestTheSynchronousPathRecordsProvenance:
     def test_every_verdict_carries_the_full_shape(self) -> None:
-        for event in _path_b():
+        for event in _verdicts(_path_b()):
             assert PROVENANCE_KEYS <= set(event.payload), event.payload
 
 
@@ -127,7 +131,7 @@ class TestTheStreamingPathRecordsProvenance:
     async def test_every_verdict_carries_the_full_shape(
         self, make_envelope, focused_policy,
     ) -> None:
-        verdicts = await _path_a(make_envelope, focused_policy)
+        verdicts = _verdicts(await _path_a(make_envelope, focused_policy))
         assert verdicts, "the loop recorded no verdict at all"
         for event in verdicts:
             assert PROVENANCE_KEYS <= set(event.payload), event.payload
@@ -139,7 +143,7 @@ class TestTheStreamingPathRecordsProvenance:
         kernel refused and never what it refused over — so an operator asking
         'why' got the reason string and nothing to anchor it to."""
         denials = [
-            e for e in await _path_a(make_envelope, focused_policy)
+            e for e in _verdicts(await _path_a(make_envelope, focused_policy))
             if e.kind is TraceEventKind.INTENT_DENIED
         ]
         assert denials, "the tainted egress was not denied"
@@ -158,15 +162,37 @@ class TestBothPathsAgree:
         """The property the whole design rests on: a downstream consumer cannot
         tell which entry point produced the record, so one bridge and one replay
         fold serve both."""
-        a = await _path_a(make_envelope, focused_policy)
-        b = _path_b()
+        a = _verdicts(await _path_a(make_envelope, focused_policy))
+        b = _verdicts(_path_b())
         assert [e.kind for e in a] == [e.kind for e in b]
         for ea, eb in zip(a, b):
             assert {k: ea.payload[k] for k in PROVENANCE_KEYS} == \
                    {k: eb.payload[k] for k in PROVENANCE_KEYS}
 
     async def test_both_deny_the_same_call(self, make_envelope, focused_policy) -> None:
-        a = await _path_a(make_envelope, focused_policy)
-        b = _path_b()
+        a = _verdicts(await _path_a(make_envelope, focused_policy))
+        b = _verdicts(_path_b())
         assert [e.kind is TraceEventKind.INTENT_DENIED for e in a] == \
                [e.kind is TraceEventKind.INTENT_DENIED for e in b] == [False, True]
+
+    async def test_both_record_the_same_source_event(
+        self, make_envelope, focused_policy,
+    ) -> None:
+        """The event that says WHERE the taint entered. Neither path emitted one,
+        so a trace was a list of verdicts with no origin: nothing to fold into
+        `tainted_refs`, so the `arg_refs` on the denial resolved to nothing, and
+        the Control Plane refused the run for having no untrusted source."""
+        a = _sources(await _path_a(make_envelope, focused_policy))
+        b = _sources(_path_b())
+        assert len(a) == len(b) == 1, (len(a), len(b))
+        assert a[0].payload == b[0].payload
+        assert a[0].payload["root"]["sources"] == ["web"]
+
+    async def test_the_denied_argument_binds_to_that_source_on_both_paths(
+        self, make_envelope, focused_policy,
+    ) -> None:
+        for events in (await _path_a(make_envelope, focused_policy), _path_b()):
+            source = _sources(events)[0]
+            denial = _verdicts(events)[-1]
+            assert denial.payload["arg_refs"]["recipient"] == \
+                source.payload["value_ref"]
