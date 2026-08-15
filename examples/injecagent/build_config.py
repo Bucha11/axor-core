@@ -21,7 +21,37 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
+
+# --- consequence taxonomy: role-blind, by the tool's LEADING action verb ---------
+# The first CamelCase word that is a recognised action verb decides the class. This
+# is applied uniformly to EVERY tool (user and attacker alike), blind to its role in
+# the benchmark, so it is a semantic classification, not an answer-fitted list. It
+# only ever *raises* a tool to CATASTROPHIC for a genuinely irreversible action
+# (money movement / physical access / data destruction / security disable / exec);
+# a read verb seen first keeps the tool a read. Same axis as AgentDojo workspace's
+# delete=catastrophic, whose false-positive cost we measured there (benign-delete
+# denials in the -15.5pp) — so this axis is not a free lunch even though InjecAgent
+# (all-attack, benign user-tools are all reads) cannot show that cost itself.
+_READ_VERBS = frozenset({"get", "view", "search", "list", "read", "check", "retrieve",
+                         "access", "find", "show", "fetch", "browse", "lookup"})
+_CATASTROPHIC_VERBS = frozenset({"transfer", "withdraw", "deposit", "pay", "paybill",
+                                 "wire", "unlock", "delete", "remove", "erase", "wipe",
+                                 "disable", "deactivate", "grant", "revoke", "execute",
+                                 "deploy", "reset", "factoryreset", "shutdown", "reboot"})
+
+
+def consequence_of(tool: str) -> str | None:
+    """CATASTROPHIC iff the tool's leading action verb is an irreversible one;
+    None (leave at the default class) otherwise. Role-blind, semantic."""
+    for w in re.findall(r"[A-Z][a-z]+", tool):
+        lw = w.lower()
+        if lw in _READ_VERBS:
+            return None
+        if lw in _CATASTROPHIC_VERBS:
+            return "catastrophic"
+    return None
 
 INJECAGENT_DIR = os.environ.get("INJECAGENT_DIR", "/home/user/InjecAgent")
 sys.path.insert(0, INJECAGENT_DIR)
@@ -63,12 +93,21 @@ def build() -> dict:
     egress = sorted(dh_egress | ds_s2_egress)
     driving = {t: _params(tool_dict, t) for t in egress if _params(tool_dict, t)}
 
+    # consequence taxonomy, role-blind: classify EVERY tool, keep the catastrophic
+    # egress sinks. consequence_class() lower-cases the sink name for lookup, so the
+    # override KEYS are emitted lower-cased (a case-sensitivity wart worth knowing).
+    all_atk = dh_egress | ds_s1_read | ds_s2_egress
+    cata_egress = {t.lower(): "catastrophic" for t in egress if consequence_of(t)}
+    cata_user = sorted(t for t in user_tools if consequence_of(t))  # anti-cherry-pick check
+    cata_atk = sorted(t for t in all_atk if consequence_of(t))
+
     return {
         "mode": "production",
         "untrusted_sources": sorted(user_tools),
         "sensitive_sources": sorted(ds_s1_read),
         "egress_sinks": egress,
         "driving_args": driving,
+        "consequence_overrides": cata_egress,
         "_meta": {
             "user_tools": len(user_tools),
             "dh_egress": len(dh_egress),
@@ -76,6 +115,12 @@ def build() -> dict:
             "ds_s2_egress": len(ds_s2_egress),
             "egress_sinks_total": len(egress),
             "egress_with_driving_args": len(driving),
+            "consequence_catastrophic_egress": len(cata_egress),
+            "consequence_catastrophic_user_tools": len(cata_user),
+            "consequence_catastrophic_attacker_tools": len(cata_atk),
+            "_note": ("catastrophic_user_tools=0 here because InjecAgent's user tools "
+                      "are all benign reads; the same role-blind axis flags user-usable "
+                      "tools on AgentDojo (workspace delete) with a measured FP cost."),
         },
     }
 
@@ -96,6 +141,13 @@ def to_yaml(cfg: dict) -> str:
     lines += ["", "driving_args:"]
     for t, ps in cfg["driving_args"].items():
         lines.append(f"  {t}: [{', '.join(ps)}]")
+    lines += ["",
+              "# Role-blind consequence taxonomy (leading action verb -> catastrophic for",
+              "# irreversible actions). Keys are lower-cased (consequence_class lower-cases",
+              "# the sink for lookup). Reported separately from the taint/floor result.",
+              "consequence_overrides:"]
+    for t, cls in cfg["consequence_overrides"].items():
+        lines.append(f"  {t}: {cls}")
     return "\n".join(lines) + "\n"
 
 

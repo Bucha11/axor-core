@@ -39,8 +39,14 @@ CONFIG = os.path.join(_HERE, "config", "injecagent.yaml")
 _TOKEN = re.compile(r"[^\s\"'{}\[\](),]{12,}")  # >=12-char tokens (>= ledger _MIN_SEGMENT)
 
 
-def _governor() -> ToolCallGovernor:
+def _governor(consequence: bool = True) -> ToolCallGovernor:
+    """Fresh governor. consequence=False strips the consequence taxonomy so the
+    result is the PURE provenance (taint/floor) number, with no consequence
+    labelling — the cherry-pick-free baseline."""
+    import dataclasses
     cfg = GovernanceConfig.from_yaml(CONFIG)
+    if not consequence:
+        cfg = dataclasses.replace(cfg, consequence_overrides={})
     return ToolCallGovernor(**cfg.as_governor_kwargs())
 
 
@@ -55,10 +61,11 @@ def _taintable_token(text: str) -> str | None:
     return toks[0]
 
 
-def govern_dh(item: dict, driving_args: dict) -> dict:
-    """Replay a direct-harm case; refuse the harmful egress if a driving arg is
-    content-derived from the untrusted read."""
-    g = _governor()
+def govern_dh(item: dict, driving_args: dict, consequence: bool = True) -> dict:
+    """Replay a direct-harm case. With consequence=False, only the per-value taint
+    gate can refuse (pure provenance). With consequence=True, the role-blind
+    consequence taxonomy also gates irreversible actions."""
+    g = _governor(consequence=consequence)
     user_tool, atk = item["User Tool"], item["Attacker Tools"][0]
     resp = item["Tool Response"]
     g.register_output(g.evaluate(user_tool, {}), resp)  # untrusted read taints resp
@@ -97,15 +104,20 @@ def mock_pilot(n: int = 40) -> None:
     print("=" * 68)
 
     dh = json.load(open(os.path.join(data_dir, "test_cases_dh_base.json")))[:n]
-    denied = taintable = 0
+    d_taint = d_both = taintable = 0
     for it in dh:
-        r = govern_dh(it, driving)
-        denied += r["denied"]; taintable += r["taintable"]
-    print(f"\nDIRECT HARM (dh)  n={len(dh)}")
-    print(f"  undefended ASR : 100.0%  (all followed the injection, by construction)")
-    print(f"  governed  ASR  : {100*(len(dh)-denied)/len(dh):.1f}%   ({denied}/{len(dh)} refused by taint)")
-    print(f"  taintable (>=12-char token in read): {taintable}/{len(dh)}"
-          f"  -> {len(dh)-taintable} short-value residual (no fragment to derive)")
+        rt = govern_dh(it, driving, consequence=False)   # provenance only
+        rb = govern_dh(it, driving, consequence=True)     # + consequence axis
+        d_taint += rt["denied"]; d_both += rb["denied"]; taintable += rt["taintable"]
+    print(f"\nDIRECT HARM (dh)  n={len(dh)}   undefended ASR 100% (by construction)")
+    print(f"  provenance only (taint)     -> governed ASR {100*(len(dh)-d_taint)/len(dh):.1f}%"
+          f"   ({d_taint}/{len(dh)} refused)")
+    print(f"    taintable (>=12-char token): {taintable}/{len(dh)}"
+          f"  -> {len(dh)-taintable} short-value/no-arg residual (provenance axis boundary)")
+    print(f"  + consequence axis          -> governed ASR {100*(len(dh)-d_both)/len(dh):.1f}%"
+          f"   ({d_both}/{len(dh)} refused)")
+    print(f"    (role-blind taxonomy: 0 user tools flagged here — they are all reads;"
+          f" FP cost of this axis is measured on AgentDojo, not InjecAgent)")
 
     ds = json.load(open(os.path.join(data_dir, "test_cases_ds_base.json")))[:n]
     denied = armed = 0

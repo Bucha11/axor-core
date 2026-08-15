@@ -51,19 +51,38 @@ ASR = 100% by construction) and measures what governance removes. Result
 
 | suite | undefended ASR | governed ASR | mechanism |
 |---|---|---|---|
-| direct-harm | 100% | **24%** | taint (38/50 refused) |
-| data-stealing | 100% | **0%** | floor (50/50 S2 refused) |
+| direct-harm (provenance only) | 100% | **24%** | per-value taint (38/50) |
+| direct-harm (+ consequence axis) | 100% | **0%** | + consequence gate (50/50) |
+| data-stealing | 100% | **0%** | confidentiality floor (50/50 S2) |
 
 **Control:** a clean `GmailSendEmail` (recipient from the prompt, no sensitive
 read) is **ALLOWED** — governance is not a blanket attacker-tool block.
 
-**Honest residual (dh 24%):** the 12/50 not caught split evenly — 6 *short-value*
-harms (the harmful value is <12 chars, below the content-ledger threshold) and
-6 *no-argument actions* (`AugustSmartLockUnlockDoor`, disable-2FA — no arg carries
-an attacker-derived value, so taint is blind). The latter are the **consequence
-axis**, not the taint axis: marking clearly-destructive tools catastrophic (as
-`workspace.yaml` does for `delete`) would catch them. That is a taxonomy choice
-to make before the real run, not folded in silently.
+**Two dh numbers, reported separately (never merged), because they are two
+different axes:**
+
+- **Provenance only — 24% governed.** This is the honest *content-derivation
+  boundary*: per-value taint catches exfil-shaped harms (the attacker's
+  destination — an email / URL / long account ≥12 chars — is lifted from the
+  untrusted read), but is blind to the 12/50 residual: 6 *short-value* harms
+  (value <12 chars, below the ledger threshold, which exists to avoid
+  false positives on short common substrings — a deliberate guard, not a bug) and
+  6 *no-argument actions* (`AugustSmartLockUnlockDoor`, disable-2FA — no arg
+  carries an attacker-derived value, so taint can *never* see them).
+- **+ consequence axis — 0% governed.** The residual is the **consequence** axis,
+  not provenance: irreversible actions (money movement / physical access / data
+  destruction / security disable / exec) are content-blind and length-agnostic.
+  The taxonomy is **role-blind and semantic** (leading action verb; see
+  `build_config.py`), applied to *every* tool — not a hand-picked attacker list.
+  It flags **10 attacker tools and 0 user tools here** — because InjecAgent's
+  user tools are all benign reads, not because it is fitted to the attack set.
+  Its false-positive cost is **measured on AgentDojo** (the same axis:
+  `workspace.yaml` `delete=catastrophic` blocked benign deletes, part of the
+  −15.5pp), so it is not a free lunch; InjecAgent (all-attack) simply cannot show
+  that cost itself.
+
+We report **both** so the reader sees the pure provenance result *and* the full
+stack, and can judge — the +consequence 0% is not a manipulated headline.
 
 ## Real run (needs a model + key)
 
