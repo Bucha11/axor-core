@@ -113,6 +113,8 @@ jobs:
           VERSION="${VERSION#v}"   # strip leading "v" so pip can use it directly
           PAYLOAD="{\"event_type\":\"axor-core-published\",\"client_payload\":{\"version\":\"${VERSION}\"}}"
           for REPO in \
+            Bucha11/axor-lab \
+            Bucha11/axor-control-plane \
             Bucha11/axor-sentinel \
             Bucha11/axor-claude \
             Bucha11/axor-cli \
