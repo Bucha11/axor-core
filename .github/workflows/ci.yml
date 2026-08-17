@@ -115,6 +115,7 @@ jobs:
           for REPO in \
             Bucha11/axor-lab \
             Bucha11/axor-control-plane \
+            Bucha11/axor-wrap \
             Bucha11/axor-sentinel \
             Bucha11/axor-claude \
             Bucha11/axor-cli \
