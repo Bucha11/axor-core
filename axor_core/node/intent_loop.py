@@ -30,12 +30,20 @@ from axor_core.kernel.registration import (
 )
 from axor_core.taint.engine import TaintEngine
 from axor_core.policy.sinks import INSTRUCTION_COMPLETE_SINKS
-from axor_core.policy.provenance import output_root
+from axor_core.policy.provenance import (
+    ValueRefLedger,
+    call_payload,
+    declared_roles,
+    output_root,
+    result_payload,
+    source_tokens,
+)
 from axor_core.contracts.result import ExecutorEvent, ExecutorEventKind
 from axor_core.contracts.trace import (
     CancelledEvent,
     IntentDeniedEvent,
     SinkDensityEvent,
+    TaintPropagatedEvent,
     TokensSpentEvent,
     TraceEvent,
     TraceEventKind,
@@ -174,6 +182,11 @@ class IntentLoop:
         self._degradation_engine = degradation_engine
         self._reputation_enricher = reputation_enricher
         self._normalizer = IntentNormalizer()
+        # The value-ref vocabulary the kernel event schema is written in — the
+        # same ledger the synchronous governor keeps, so both paths record refs
+        # the replay fold and the plane's value graph can resolve.
+        self._value_refs = ValueRefLedger()
+        self._normalized_of_call: NormalizedIntent | None = None
         self._intent_sequence = 0
         self._token_totals = _TokenAccumulator()
         # DoS guards — opt-in (None = unlimited). GovernedSession sets prod defaults.
@@ -378,7 +391,8 @@ class IntentLoop:
                         )
                         if spawn_decision.kind == PolicyDecisionKind.DENY:
                             self._record_denial(
-                                spawn_intent, spawn_decision.reason, envelope
+                                spawn_intent, spawn_decision.reason, envelope,
+                                "capability",
                             )
                             denial = _denial_result(tool_name, spawn_decision.reason)
                             if self._tool_result_callback is not None:
@@ -403,7 +417,7 @@ class IntentLoop:
                         spawn_args = event.payload.get("args", {})
                         taint_reason = self._spawn_taint_reason(spawn_args)
                         if taint_reason is not None:
-                            self._record_denial(spawn_intent, taint_reason, envelope)
+                            self._record_denial(spawn_intent, taint_reason, envelope, "taint_enforcement")
                             denial = _denial_result(tool_name, taint_reason)
                             if self._tool_result_callback is not None:
                                 await self._tool_result_callback(
@@ -518,7 +532,7 @@ class IntentLoop:
             reason = (
                 f"session intent limit reached ({self._max_intents_per_session})"
             )
-            self._record_denial(intent, reason, envelope)
+            self._record_denial(intent, reason, envelope, "budget")
             return ResolvedIntent(
                 intent=intent,
                 approved=False,
@@ -529,7 +543,7 @@ class IntentLoop:
         decision, pending_consumption = self._evaluate_tool_intent(intent, envelope)
 
         if decision.kind == PolicyDecisionKind.DENY:
-            self._record_denial(intent, decision.reason, envelope)
+            self._record_denial(intent, decision.reason, envelope, "capability")
             denial_resp = _make_denial_response(decision.reason)
             self._record_degradation_signal(intent, denial_resp)
             return ResolvedIntent(
@@ -566,7 +580,7 @@ class IntentLoop:
                 f"+{self._tool_weight(tool_name)} for '{tool_name}')"
             )
         if budget_reason is not None:
-            self._record_denial(intent, budget_reason, envelope)
+            self._record_denial(intent, budget_reason, envelope, "budget")
             denial_resp = _make_denial_response(budget_reason, "budget")
             self._record_degradation_signal(intent, denial_resp)
             return ResolvedIntent(
@@ -598,6 +612,11 @@ class IntentLoop:
                 self._degradation_engine.record_detection(normalized)
                 for ev in self._degradation_engine.drain_events():
                     self._trace_events.append(ev)
+        # Stashed for `_call_payload`: a denial can be recorded from a dozen
+        # places in this method, and threading the projection through every one
+        # of them is how one of them ends up recording a call with no
+        # `normalized` block — which replay then re-gates as a local no-op.
+        self._normalized_of_call = normalized
 
         # STRICT role completeness (lazy, per call): an unclassified tool fails
         # closed instead of defaulting to a clean benign read. Mirrors the governor;
@@ -617,7 +636,7 @@ class IntentLoop:
                 "refuses an unclassified tool (it would default to a clean read and "
                 "arm no floor)"
             )
-            self._record_denial(intent, role_denial, envelope)
+            self._record_denial(intent, role_denial, envelope, "unclassified_tool")
             denial_resp = _make_denial_response(role_denial, "unclassified_tool")
             self._record_degradation_signal(intent, denial_resp)
             return ResolvedIntent(
@@ -637,7 +656,7 @@ class IntentLoop:
             operation=normalized.operation if normalized is not None else None,
         )
         if consequence_denial is not None:
-            self._record_denial(intent, consequence_denial, envelope)
+            self._record_denial(intent, consequence_denial, envelope, "consequence_gate")
             denial_resp = _make_denial_response(consequence_denial, "consequence_gate")
             self._record_degradation_signal(intent, denial_resp)
             return ResolvedIntent(
@@ -653,7 +672,7 @@ class IntentLoop:
         # by decidable decision procedures.
         value_denial = check_value_policies(tool_name, tool_args, self._value_policies)
         if value_denial is not None:
-            self._record_denial(intent, value_denial, envelope)
+            self._record_denial(intent, value_denial, envelope, "value_policy")
             denial_resp = _make_denial_response(value_denial, "value_policy")
             self._record_degradation_signal(intent, denial_resp)
             return ResolvedIntent(
@@ -684,7 +703,7 @@ class IntentLoop:
                 tool_name, normalized, envelope, driving_root=check_root
             )
             if degradation_denial is not None:
-                self._record_denial(intent, degradation_denial, envelope)
+                self._record_denial(intent, degradation_denial, envelope, "degradation")
                 denial_resp = _make_denial_response(degradation_denial)
                 self._record_degradation_signal(intent, denial_resp, normalized)
                 return ResolvedIntent(
@@ -696,7 +715,7 @@ class IntentLoop:
 
         # Shared gate denial → ResolvedIntent (records denial + degradation signal).
         def _gate_denial(gd) -> ResolvedIntent:
-            self._record_denial(intent, gd.reason, envelope)
+            self._record_denial(intent, gd.reason, envelope, gd.category)
             denial_resp = _make_denial_response(gd.reason, gd.category)
             self._record_degradation_signal(intent, denial_resp, normalized)
             return ResolvedIntent(
@@ -811,7 +830,7 @@ class IntentLoop:
                     f"adjudicator (advisory): denied '{tool_name}' on its "
                     f"projection (hash {projection_hash(projection)})"
                 )
-                self._record_denial(intent, reason, envelope)
+                self._record_denial(intent, reason, envelope, "budget")
                 denial_resp = _make_denial_response(reason, "adjudicator")
                 self._record_degradation_signal(intent, denial_resp, normalized)
                 return ResolvedIntent(
@@ -840,7 +859,10 @@ class IntentLoop:
                 kind=TraceEventKind.INTENT_TRANSFORMED if is_transform else TraceEventKind.INTENT_APPROVED,
                 node_id=envelope.node_id,
                 sequence=len(self._trace_events),
-                payload={"tool": tool_name},
+                # the SHARED payload builder — the synchronous governor records
+                # the identical shape from the identical function, so the two
+                # ways of wrapping an agent cannot drift into two vocabularies.
+                payload=self._call_payload(tool_name, tool_args),
             )
         )
 
@@ -871,7 +893,7 @@ class IntentLoop:
                     )
                 except FederationError as exc:
                     reason = f"federation: rejected peer value — {exc}"
-                    self._record_denial(intent, reason, envelope)
+                    self._record_denial(intent, reason, envelope, "budget")
                     denial_resp = _make_denial_response(reason, "federation_gate")
                     return ResolvedIntent(
                         intent=intent, approved=False, reason=reason,
@@ -899,7 +921,7 @@ class IntentLoop:
             )
         except _KNOWN_TOOL_EXCEPTIONS as exc:
             reason = str(exc)
-            self._record_denial(intent, reason, envelope)
+            self._record_denial(intent, reason, envelope, "budget")
             return ResolvedIntent(
                 intent=intent,
                 approved=False,
@@ -920,7 +942,7 @@ class IntentLoop:
                 tb,
             )
             reason = f"tool execution failed: {type(exc).__name__}: {exc}"
-            self._record_denial(intent, reason, envelope)
+            self._record_denial(intent, reason, envelope, "budget")
             return ResolvedIntent(
                 intent=intent,
                 approved=False,
@@ -1093,12 +1115,48 @@ class IntentLoop:
         )
         return gd.reason if gd is not None else None
 
+    def _call_payload(self, tool_name: str, args: dict) -> dict:
+        """The provenance a verdict was reached on — the SHARED builder, the one
+        ``ToolCallGovernor`` uses. Recording only the tool name left every
+        consumer re-deriving provenance the kernel had already computed."""
+        normalized = self._normalized_of_call
+        if normalized is not None and normalized.tool != tool_name:
+            # a spawn/message denial recorded while a tool call's projection is
+            # still stashed — better no block than another call's.
+            normalized = None
+        return call_payload(
+            tool_name, args, taint=self._taint_engine, driving_args=self._driving_args,
+            normalized=normalized, refs=self._value_refs,
+            roles=declared_roles(
+                tool_name,
+                untrusted_sources=self._untrusted_sources,
+                sensitive_sources=self._sensitive_sources,
+                egress_sinks=self._egress_sinks,
+                imperative_sinks=self._imperative_sinks,
+                positional_sinks=self._positional_sinks,
+            ),
+        )
+
     def _record_denial(
         self,
         intent: Intent,
         reason: str,
         envelope: ExecutionEnvelope,
+        category: str = "capability",
     ) -> None:
+        payload: dict = {}
+        if intent.kind is IntentKind.TOOL_CALL and self._taint_engine is not None:
+            # a denied call carries the provenance it was denied ON. Without it a
+            # consumer can see THAT the kernel refused but not what it refused
+            # over — and an operator asking "why" gets nothing.
+            body = intent.payload if isinstance(intent.payload, dict) else {}
+            payload = self._call_payload(
+                str(body.get("tool", "")), dict(body.get("args") or {}),
+            )
+        # the category NAMES the gate a consumer records. Without it a denial can
+        # only be written as "refused, somehow", and trace/v1's `gate` field —
+        # which takes a gate name, not a category — has nothing to fill in.
+        payload["category"] = category
         self._trace_events.append(
             IntentDeniedEvent(
                 kind=TraceEventKind.INTENT_DENIED,
@@ -1106,6 +1164,7 @@ class IntentLoop:
                 sequence=len(self._trace_events),
                 intent_kind=intent.kind.value,
                 reason=reason,
+                payload=payload,
             )
         )
 
@@ -1123,11 +1182,18 @@ class IntentLoop:
         `override_root` short-circuits the structural derivation — used when the
         federation gateway has already decided the value's provenance (a peer value
         whose receipt was restored or re-minted untrusted).
+
+        An arming read is also RECORDED (see :meth:`_record_taint_propagated`):
+        the trace's only statement of where taint entered the run.
         """
         if self._taint_engine is None:
             return
         if override_root is not None:
             self._taint_engine.register_value(result, override_root)
+            self._record_taint_propagated(
+                effective_intent.node_id,
+                str(effective_intent.payload.get("tool", "")), result, override_root,
+            )
             return
         tool_name = effective_intent.payload.get("tool", "")
         # Shared arming map (policy.provenance.output_root) — the same mapping the
@@ -1143,6 +1209,34 @@ class IntentLoop:
         if root is None:
             return  # clean read — nothing to register
         self._taint_engine.register_value(result, root)
+        self._record_taint_propagated(
+            effective_intent.node_id, str(tool_name), result, root,
+        )
+
+    def _record_taint_propagated(
+        self, node_id: str, tool_name: str, result: Any, root: "CausalRoot",
+    ) -> None:
+        """Record the read that introduced provenance, with its minted value ref.
+
+        This is the trace's SOURCE event. Without it a run is a list of verdicts
+        with no origin: the replay fold has nothing to put in ``tainted_refs``,
+        so a later ``arg_refs`` binding resolves to nothing, and the Control
+        Plane refuses the run ("no untrusted source in the recorded run"). The
+        synchronous governor records the identical payload from the identical
+        builder — the two paths must not differ on what a source looks like.
+        """
+        self._trace_events.append(
+            TaintPropagatedEvent(
+                kind=TraceEventKind.TAINT_PROPAGATED,
+                node_id=node_id,
+                sequence=len(self._trace_events),
+                taint_source=",".join(source_tokens(root.sources)),
+                taint_scope="value",
+                payload=result_payload(
+                    tool_name, self._value_refs.mint(result, root), root,
+                ),
+            )
+        )
 
     def _check_consequence(
         self,

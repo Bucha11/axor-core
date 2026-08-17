@@ -28,6 +28,12 @@ from axor_core.contracts.anomaly import NormalizedIntent
 from axor_core.contracts.canonical import ConsequenceClass
 from axor_core.contracts.intent import Intent, IntentKind
 from axor_core.policy.normalizer import IntentNormalizer
+from axor_core.contracts.trace import (
+    IntentDeniedEvent,
+    TaintPropagatedEvent,
+    TraceEvent,
+    TraceEventKind,
+)
 from axor_core.policy.gates import (
     GateDecision,
     carrier_gate,
@@ -40,13 +46,63 @@ from axor_core.policy.gates import (
     value_policy_gate,
 )
 from axor_core.policy.sinks import INSTRUCTION_COMPLETE_SINKS
-from axor_core.policy.provenance import output_root
+from axor_core.policy.provenance import (
+    ValueRefLedger,
+    call_payload,
+    declared_roles,
+    output_root,
+    result_payload,
+    source_tokens,
+)
 from axor_core.kernel.registration import (
     validate_driving_arg_allowlists,
     validate_egress_allowlists,
     tool_is_classified,
 )
 from axor_core.taint.engine import TaintEngine
+
+# The closed set of denial categories, and the GATE each one names.
+#
+# Categories are an internal vocabulary; the gate names are the kernel's own
+# nine-gate sequence, and they are what a recorded trace has to carry — a
+# consumer asking "which gate denied this?" should not have to reverse-engineer
+# it from a category string. Exporting the mapping is what stops every consumer
+# from keeping a private copy: axor-lab kept one whose keys were `ssrf`,
+# `consequence`, `positional`, `carrier` — names this kernel does not emit (it
+# emits `ssrf_gate`, `consequence_gate`, …) — so seven of eleven categories fell
+# through unmapped and produced traces that failed schema validation.
+#
+# Adding a category without adding it here fails `test_gate_vocabulary.py`.
+GATE_OF_CATEGORY: dict[str, str] = {
+    "taint_enforcement": "taint_floor",
+    "consequence_gate": "consequence",
+    "value_policy": "value_policies",
+    "ssrf_gate": "ssrf",
+    "positional_gate": "positional",
+    "carrier_gate": "carrier",
+    "message_gate": "message",
+    "budget": "budget",
+    "degradation": "degradation",
+    "capability": "capability",
+    # an unclassified tool is refused by the capability gate: it has no declared
+    # role, so no capability to act under.
+    "unclassified_tool": "capability",
+}
+
+DENIAL_CATEGORIES: frozenset[str] = frozenset(GATE_OF_CATEGORY)
+
+
+def gate_of(category: str) -> str:
+    """The gate a denial category names. Unknown categories raise rather than
+    passing the raw category through — a category leaking into a field that
+    expects a gate name is how an unrecognised denial became an invalid trace
+    instead of a loud error."""
+    try:
+        return GATE_OF_CATEGORY[category]
+    except KeyError:
+        raise ValueError(
+            f"unknown denial category {category!r}; known: {sorted(DENIAL_CATEGORIES)}"
+        ) from None
 
 
 @dataclass
@@ -150,8 +206,44 @@ class ToolCallGovernor:
                 raise ValueError("strict egress allowlist: " + "; ".join(errors))
         self._normalizer = IntentNormalizer()
         self._taint = TaintEngine(node_id=node_id)
+        # The value-ref vocabulary the kernel event schema is written in. The
+        # gates decide on content derivation and need no ids; the RECORD does —
+        # `arg_refs` and `value_ref` are what let a consumer bind a denied sink
+        # argument back to the read that tainted it.
+        self._refs = ValueRefLedger()
+        self._node_id = node_id
+        # The SAME TraceEvents the IntentLoop emits. Both are ways of wrapping an
+        # agent, so both must feed the one instrumentation path: axor-wrap's
+        # trace bridge turns these into kernel-schema Events, and the plane and
+        # Lab read that. A gating path that decides without recording forces its
+        # consumers to invent a second trace — which is exactly what happened.
+        self._trace_events: list[TraceEvent] = []
 
     # ── decision ────────────────────────────────────────────────────────────────
+
+    def _call_payload(
+        self,
+        tool_name: str,
+        args: dict[str, Any],
+        normalized: NormalizedIntent | None = None,
+    ) -> dict[str, Any]:
+        """The provenance this call was judged on — the SHARED builder.
+
+        Both ways of wrapping an agent record this identical shape, from one
+        function, so the two cannot drift into two vocabularies.
+        """
+        return call_payload(
+            tool_name, args, taint=self._taint, driving_args=self._driving_args,
+            normalized=normalized, refs=self._refs,
+            roles=declared_roles(
+                tool_name,
+                untrusted_sources=self._untrusted_sources,
+                sensitive_sources=self._sensitive_sources,
+                egress_sinks=self._egress_sinks,
+                imperative_sinks=self._imperative_sinks,
+                positional_sinks=self._positional_sinks,
+            ),
+        )
 
     def evaluate(self, tool_name: str, args: dict[str, Any]) -> GovernanceDecision:
         """Decide whether this tool call may execute. Pure — no side effects on
@@ -164,11 +256,28 @@ class ToolCallGovernor:
         )
         normalized = self._normalizer.normalize(intent)
 
-        def _deny(gd: GateDecision) -> GovernanceDecision:
+        def _denied(reason: str, category: str) -> GovernanceDecision:
+            """EVERY denial goes through here. A denial that returns directly is
+            a verdict with no trace: replay sees an intent with no decision, and
+            a consumer never learns the kernel blocked anything."""
+            self._trace_events.append(
+                IntentDeniedEvent(
+                    kind=TraceEventKind.INTENT_DENIED,
+                    node_id=self._node_id,
+                    sequence=len(self._trace_events),
+                    intent_kind=IntentKind.TOOL_CALL.value,
+                    reason=reason,
+                    payload={**self._call_payload(tool_name, args, normalized),
+                             "category": category},
+                )
+            )
             return GovernanceDecision(
-                allowed=False, reason=gd.reason, category=gd.category,
+                allowed=False, reason=reason, category=category,
                 _normalized=normalized,
             )
+
+        def _deny(gd: GateDecision) -> GovernanceDecision:
+            return _denied(gd.reason, gd.category)
 
         # 0. STRICT role completeness (lazy): an unclassified tool fails closed
         #    rather than defaulting to a clean benign read. This is the fix for the
@@ -183,16 +292,12 @@ class ToolCallGovernor:
             benign_tools=self._benign_tools,
             value_policies=self._value_policies,
         ):
-            return GovernanceDecision(
-                allowed=False,
-                reason=(
-                    f"tool {tool_name!r} has no declared data-flow role; STRICT mode "
-                    "refuses an unclassified tool (it would default to a clean read "
-                    "and arm no floor). Declare it as a source/sink/positional/"
-                    "value_policy or explicitly benign."
-                ),
-                category="unclassified_tool",
-                _normalized=normalized,
+            return _denied(
+                f"tool {tool_name!r} has no declared data-flow role; STRICT mode "
+                "refuses an unclassified tool (it would default to a clean read "
+                "and arm no floor). Declare it as a source/sink/positional/"
+                "value_policy or explicitly benign.",
+                "unclassified_tool",
             )
 
         # 1. consequence — content-blind action-class gate. (No lease/escalation
@@ -241,7 +346,33 @@ class ToolCallGovernor:
         if gd is not None:
             return _deny(gd)
 
+        self._trace_events.append(
+            TraceEvent(
+                kind=TraceEventKind.INTENT_APPROVED,
+                node_id=self._node_id,
+                sequence=len(self._trace_events),
+                payload=self._call_payload(tool_name, args, normalized),
+            )
+        )
         return GovernanceDecision(allowed=True, _normalized=normalized)
+
+    @property
+    def trace_events(self) -> "list[TraceEvent]":
+        """Every verdict this governor reached, in call order.
+
+        The kernel reports what it DECIDED; whether the caller then blocked the
+        call is the caller's business (a Lab ungoverned arm observes without
+        enforcing). So a denial is recorded here even when the wrapper chose to
+        execute anyway — otherwise an ungoverned run would have no verdicts to
+        replay, and the ungoverned/governed comparison would have nothing to
+        compare.
+        """
+        return list(self._trace_events)
+
+    def drain_trace_events(self) -> "list[TraceEvent]":
+        """Take the events and reset, for a caller streaming per trial."""
+        events, self._trace_events = self._trace_events, []
+        return events
 
     # ── ledger ────────────────────────────────────────────────────────────────
 
@@ -254,6 +385,13 @@ class ToolCallGovernor:
         produced value untrusted; secret/system reads also mark it sensitive,
         which arms the confidentiality floor. A clean read registers nothing.
         Call this only for calls that actually executed.
+
+        An arming read is also RECORDED, as a TAINT_PROPAGATED event carrying the
+        minted value ref and its root. Without it the trace has verdicts and no
+        source: replay has nothing to put in ``tainted_refs``, so a later
+        ``arg_refs`` binding resolves to nothing, and the Control Plane refuses
+        the run outright ("no untrusted source in the recorded run"). A clean
+        read still records nothing — it introduces no provenance to report.
         """
         ni = decision._normalized
         tool_name = ni.tool if ni is not None else ""
@@ -267,6 +405,16 @@ class ToolCallGovernor:
         if root is None:
             return  # clean read — nothing to register
         self._taint.register_value(output, root)
+        self._trace_events.append(
+            TaintPropagatedEvent(
+                kind=TraceEventKind.TAINT_PROPAGATED,
+                node_id=self._node_id,
+                sequence=len(self._trace_events),
+                taint_source=",".join(source_tokens(root.sources)),
+                taint_scope="value",
+                payload=result_payload(tool_name, self._refs.mint(output, root), root),
+            )
+        )
 
     # ── introspection ────────────────────────────────────────────────────────
 
