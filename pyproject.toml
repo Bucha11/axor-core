@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "axor-core"
-version = "0.10.2"
+version = "0.11.0"
 description = "Provider-agnostic governance kernel for agent systems"
 readme = "README.md"
 license = { text = "Apache-2.0" }
