@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://useaxor.net/schemas/trace.schema.json",
-  "title": "Axor Lab Trace",
+  "title": "Axor Trace",
   "description": "A recorded run of one trial: an ordered event log plus a value ledger carrying per-value provenance. This is the artifact governance verdicts replay over. Provenance is explicit-flow only, built over a closed constructor set (paper O2); it over-taints, never silently under-taints, and is NOT derived by watching a black-box HTTP boundary — it requires the wrapped runtime or an instrumented endpoint that emits value lineage. A plain request/response endpoint cannot produce a conformant trace.",
   "type": "object",
   "required": [

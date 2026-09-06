@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://useaxor.net/schemas/predicate.schema.json",
-  "title": "Axor Lab Predicate",
+  "title": "Axor Predicate",
   "description": "A typed, structured predicate evaluated over a trace — never natural language. Matches on events, fields and provenance, with boolean composition. Values may reference declared scenario inputs via $inputs.x so a test never scrapes entities out of free-text prompts.\n\nIt lives in the kernel because `tool-manifest` does: a manifest's `effect.resolve[].when` is a predicate, so a tool manifest is not a self-contained artifact without it. A consumer validating a manifest that resolves its effect class from arguments would otherwise be told the reference is unknown and reject a perfectly valid manifest.",
   "oneOf": [
     {

@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://useaxor.net/schemas/tool-manifest.schema.json",
-  "title": "Axor Lab Tool Manifest",
+  "title": "Axor Tool Manifest",
   "description": "The runnable contract for one tool. A tool is more than {name, sink}: the runner needs arg/result schemas to bind and type-check, an effect model to gate on, field-level untrusted mapping for per-value provenance, and a simulation/reset strategy so an attack benchmark does not create a real side effect. The effect class is resolved from operation+resource+args, not from the tool name alone — one tool (send_email) can be internal, external, or a draft depending on arguments.",
   "type": "object",
   "required": [
