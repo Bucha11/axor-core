@@ -1,0 +1,207 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://useaxor.net/schemas/predicate.schema.json",
+  "title": "Axor Lab Predicate",
+  "description": "A typed, structured predicate evaluated over a trace — never natural language. Matches on events, fields and provenance, with boolean composition. Values may reference declared scenario inputs via $inputs.x so a test never scrapes entities out of free-text prompts.\n\nIt lives in the kernel because `tool-manifest` does: a manifest's `effect.resolve[].when` is a predicate, so a tool manifest is not a self-contained artifact without it. A consumer validating a manifest that resolves its effect class from arguments would otherwise be told the reference is unknown and reject a perfectly valid manifest.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/event_match"
+    },
+    {
+      "$ref": "#/$defs/bool_all"
+    },
+    {
+      "$ref": "#/$defs/bool_any"
+    },
+    {
+      "$ref": "#/$defs/bool_not"
+    },
+    {
+      "$ref": "#/$defs/sequence"
+    }
+  ],
+  "$defs": {
+    "event_match": {
+      "type": "object",
+      "required": [
+        "event"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "event": {
+          "enum": [
+            "tool_call",
+            "tool_result",
+            "final_output",
+            "gate_decision",
+            "message_send"
+          ]
+        },
+        "tool": {
+          "type": "string",
+          "description": "restrict to a tool id; validated to exist in the scenario's tool set"
+        },
+        "where": {
+          "$ref": "#/$defs/matcher_map"
+        },
+        "count": {
+          "type": "object",
+          "description": "optional cardinality constraint on how many events match; must bound at least one side (min and/or max) so an empty {} — which is a no-op tautology — is rejected",
+          "additionalProperties": false,
+          "minProperties": 1,
+          "properties": {
+            "min": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "max": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        }
+      }
+    },
+    "matcher_map": {
+      "type": "object",
+      "description": "maps a field address to a typed matcher. Field addresses: args.<name>, result.<path>, output.<path>, prov(args.<name>) for provenance labels.",
+      "minProperties": 1,
+      "additionalProperties": {
+        "$ref": "#/$defs/matcher"
+      }
+    },
+    "matcher": {
+      "type": "object",
+      "description": "exactly one operator key",
+      "minProperties": 1,
+      "maxProperties": 1,
+      "additionalProperties": false,
+      "properties": {
+        "equal": {
+          "$ref": "#/$defs/operand"
+        },
+        "not_equal": {
+          "$ref": "#/$defs/operand"
+        },
+        "in": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/operand"
+          }
+        },
+        "not_in": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/operand"
+          }
+        },
+        "matches": {
+          "type": "string"
+        },
+        "provenance_is": {
+          "enum": [
+            "trusted",
+            "untrusted_derived",
+            "prompt_given",
+            "sensitive"
+          ]
+        },
+        "gt": {
+          "type": "number"
+        },
+        "lt": {
+          "type": "number"
+        }
+      }
+    },
+    "operand": {
+      "description": "a literal, or a structured reference to a declared scenario input. Structured (not a $-prefixed string) so it can never ambiguously match a literal.",
+      "oneOf": [
+        {
+          "type": [
+            "string",
+            "number",
+            "boolean"
+          ],
+          "not": {
+            "type": "object"
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "input_ref"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "input_ref": {
+              "type": "string",
+              "description": "resolves against scenario.inputs at validation time; unresolved refs fail the check"
+            }
+          }
+        }
+      ]
+    },
+    "bool_all": {
+      "type": "object",
+      "required": [
+        "all"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "all": {
+          "type": "array",
+          "items": {
+            "$ref": "#"
+          },
+          "minItems": 1
+        }
+      }
+    },
+    "bool_any": {
+      "type": "object",
+      "required": [
+        "any"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "any": {
+          "type": "array",
+          "items": {
+            "$ref": "#"
+          },
+          "minItems": 1
+        }
+      }
+    },
+    "bool_not": {
+      "type": "object",
+      "required": [
+        "not"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "not": {
+          "$ref": "#"
+        }
+      }
+    },
+    "sequence": {
+      "type": "object",
+      "required": [
+        "sequence"
+      ],
+      "description": "ordered occurrence: each predicate must match in order (e.g. read-secret THEN egress). Order is by event seq / message causality.",
+      "additionalProperties": false,
+      "properties": {
+        "sequence": {
+          "type": "array",
+          "items": {
+            "$ref": "#"
+          },
+          "minItems": 2
+        }
+      }
+    }
+  }
+}

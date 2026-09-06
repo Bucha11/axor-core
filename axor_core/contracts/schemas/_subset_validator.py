@@ -67,9 +67,10 @@ def _check(
         )
         if matched != 1:
             errors.append(f"{path}: oneOf matched {matched} branches (must be exactly 1)")
-    if "anyOf" in schema:
-        if not any(_matches(node, sub, root, schemas) for sub in schema["anyOf"]):  # type: ignore[union-attr]
-            errors.append(f"{path}: anyOf matched 0 branches")
+    if "anyOf" in schema and not any(
+        _matches(node, sub, root, schemas) for sub in schema["anyOf"]  # type: ignore[union-attr]
+    ):
+        errors.append(f"{path}: anyOf matched 0 branches")
     if "allOf" in schema:
         for sub in schema["allOf"]:  # type: ignore[union-attr]
             _check(node, sub, path, root, schemas, errors)
@@ -85,9 +86,10 @@ def _check(
         if not any(_is_type(node, str(t)) for t in types):
             errors.append(f"{path}: type {declared}, got {type(node).__name__}")
             return
-    if "pattern" in schema and isinstance(node, str):
-        if not re.search(str(schema["pattern"]), node):
-            errors.append(f"{path}: pattern {schema['pattern']} no match")
+    if "pattern" in schema and isinstance(node, str) and not re.search(
+        str(schema["pattern"]), node,
+    ):
+        errors.append(f"{path}: pattern {schema['pattern']} no match")
     if "minLength" in schema and isinstance(node, str) and len(node) < int(schema["minLength"]):  # type: ignore[arg-type]
         errors.append(f"{path}: minLength {schema['minLength']}, got {len(node)}")
     # `maxLength` is here because an identifier that crosses a product boundary can

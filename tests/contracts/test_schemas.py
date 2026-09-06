@@ -25,7 +25,10 @@ def test_every_schema_loads_and_declares_itself(name: str) -> None:
     schema = load(name)
     assert schema["$id"].endswith(f"{name}.schema.json")
     assert schema["$schema"].startswith("https://json-schema.org/")
-    assert schema.get("required"), "a schema with no required field constrains nothing"
+    # A schema that constrains nothing is a file, not a contract. `required` is
+    # how the object-shaped ones say it; `predicate` is a top-level `oneOf` over
+    # its own $defs and says it that way instead.
+    assert schema.get("required") or schema.get("oneOf"), f"{name} constrains nothing"
 
 
 def test_an_unknown_schema_name_is_refused_not_guessed() -> None:
@@ -105,3 +108,38 @@ def test_the_tool_manifest_schema_constrains_the_effect_class() -> None:
     assert validate("tool-manifest", ok) == []
     bad = {**ok, "effect": {"default_class": "TRANSMOGRIFY", "driving_args": []}}
     assert validate("tool-manifest", bad) != []
+
+
+def test_a_deploy_package_validates_its_manifests_as_manifests() -> None:
+    """`tool_manifests` is a `$ref`, not a re-statement.
+
+    The deploy schema first said only `{"type": "object"}` here and left the
+    manifest rules to whoever read it — which is the exact shape of the drift
+    this package exists to end. A broken manifest inside a structurally perfect
+    package must be reported by the deploy schema itself."""
+    broken = _package(tool_manifests=[{"schema_version": "tool-manifest/v1",
+                                       "id": "post", "args_schema": {},
+                                       "side_effecting": True,
+                                       "effect": {"default_class": "TRANSMOGRIFY",
+                                                  "driving_args": []}}])
+    errors = validate("cp-deploy", broken)
+    assert errors and any("tool_manifests[0]" in e for e in errors), errors
+
+
+def test_a_manifest_that_resolves_its_effect_from_args_is_not_rejected() -> None:
+    """`effect.resolve[].when` is a `predicate`, which is why `predicate` is
+    owned here too. While it was not, this manifest — entirely valid — failed
+    with `unknown schema ref predicate.schema.json`: the reference did not
+    resolve, so the strictest kind of manifest was the one that could not pass.
+    """
+    resolving = {
+        "schema_version": "tool-manifest/v1", "id": "send_email",
+        "args_schema": {"type": "object"}, "side_effecting": True,
+        "effect": {
+            "default_class": "WRITE", "driving_args": ["to", "body"],
+            "resolve": [{"when": {"to": {"not_in": ["$inputs.company_domains"]}},
+                         "class": "EXPORT"}],
+        },
+    }
+    assert validate("tool-manifest", resolving) == []
+    assert validate("cp-deploy", _package(tool_manifests=[resolving])) == []

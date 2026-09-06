@@ -9,6 +9,11 @@ stubs of files this package did not have. `cp-deploy` had no schema anywhere: it
 producer and consumer were written independently in two repositories, and had
 already drifted apart without anyone noticing.
 
+`predicate` is here for a narrower reason: a manifest's `effect.resolve[].when`
+is one, so a tool manifest is not a self-contained artifact without it, and a
+consumer validating a manifest that resolves its effect class from arguments
+would be told the reference is unknown and reject a valid manifest.
+
 They live here because this package is the one dependency every consumer already
 has. `axor_core.contracts` has always held the shared vocabulary as Python types;
 these are the same vocabulary in the serialization that crosses a process.
@@ -26,7 +31,7 @@ from typing import Any
 
 __all__ = ["SCHEMA_NAMES", "SchemaInvalid", "load", "validate"]
 
-SCHEMA_NAMES = ("trace", "tool-manifest", "cp-deploy")
+SCHEMA_NAMES = ("trace", "tool-manifest", "predicate", "cp-deploy")
 
 
 class SchemaInvalid(ValueError):
@@ -55,7 +60,7 @@ def load(name: str) -> dict[str, Any]:
     return json.loads(text)
 
 
-def validate(name: str, document: Any) -> list[str]:  # noqa: ANN401 - untrusted input
+def validate(name: str, document: Any) -> list[str]:
     """Every way `document` violates schema `name`, or an empty list.
 
     Returns rather than raises, so a caller can merge these into its own reason
@@ -63,6 +68,6 @@ def validate(name: str, document: Any) -> list[str]:  # noqa: ANN401 - untrusted
     schema cannot express (a storage key's width, a hash recomputed over the
     payload) and must report them together.
     """
-    from ._subset_validator import validate_against  # noqa: PLC0415
+    from ._subset_validator import validate_against
 
     return validate_against(document, name, {n: load(n) for n in SCHEMA_NAMES})
