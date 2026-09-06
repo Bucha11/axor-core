@@ -143,3 +143,23 @@ def test_a_manifest_that_resolves_its_effect_from_args_is_not_rejected() -> None
     }
     assert validate("tool-manifest", resolving) == []
     assert validate("cp-deploy", _package(tool_manifests=[resolving])) == []
+
+
+def test_a_consumer_can_validate_its_own_schemas_with_this_engine() -> None:
+    """`validate_against` and `kernel_schemas` are exported for the consumers
+    that have product-specific schemas of their own — axor-lab has six. They
+    merge these three over their own set and validate everything in one
+    dictionary, because the files reference each other: a Lab `condition` refs
+    `predicate`, and so does a `tool-manifest`. Without this they would keep
+    copies of these three, which is what they used to do."""
+    from axor_core.contracts.schemas import kernel_schemas, validate_against
+
+    downstream = {
+        "type": "object",
+        "required": ["when"],
+        "properties": {"when": {"$ref": "predicate.schema.json"}},
+    }
+    schemas = {**kernel_schemas(), "downstream": downstream}
+    assert validate_against({"when": {"event": "tool_call"}}, "downstream", schemas) == []
+    assert validate_against({}, "downstream", schemas) != []
+    assert validate_against({"when": "a sentence"}, "downstream", schemas) != []

@@ -29,7 +29,16 @@ import json
 from importlib import resources
 from typing import Any
 
-__all__ = ["SCHEMA_NAMES", "SchemaInvalid", "load", "validate"]
+from ._subset_validator import validate_against
+
+__all__ = [
+    "SCHEMA_NAMES",
+    "SchemaInvalid",
+    "kernel_schemas",
+    "load",
+    "validate",
+    "validate_against",
+]
 
 SCHEMA_NAMES = ("trace", "tool-manifest", "predicate", "cp-deploy")
 
@@ -68,6 +77,15 @@ def validate(name: str, document: Any) -> list[str]:
     schema cannot express (a storage key's width, a hash recomputed over the
     payload) and must report them together.
     """
-    from ._subset_validator import validate_against
+    return validate_against(document, name, kernel_schemas())
 
-    return validate_against(document, name, {n: load(n) for n in SCHEMA_NAMES})
+
+def kernel_schemas() -> dict[str, dict[str, Any]]:
+    """Every schema here, keyed by short name — the form `validate_against` takes.
+
+    A consumer with product-specific schemas of its own validates them all in
+    one dictionary, because they reference each other across files: a Lab
+    `condition` refs `predicate`, which a `tool-manifest` refs too. It merges
+    this over its own set rather than keeping copies of these three.
+    """
+    return {name: load(name) for name in SCHEMA_NAMES}
