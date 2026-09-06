@@ -1,0 +1,97 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://useaxor.net/schemas/cp-deploy.schema.json",
+  "title": "Axor CP Deploy Package",
+  "description": "The Lab → Control Plane handoff: a validated governance config plus the regression pins that earned it. Written by `axor-lab export-cp`, read by `POST /v1/lab/deploy`.\n\nThis schema exists because until now the format had none — the only two statements of it were a producer and a consumer written independently in different repositories, and they had already drifted apart once without anyone noticing: the consumer's whole trace-replay path keys on `regression_traces`, which the producer has never emitted, so every pin a real export carried landed `skipped` for want of a body. A format that crosses a product boundary needs one definition both sides read, not two implementations that happen to agree.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "verified",
+    "kernel",
+    "policy",
+    "config_hash",
+    "parametric_config_hash",
+    "tool_manifests",
+    "regressions",
+    "source"
+  ],
+  "properties": {
+    "schema_version": { "const": "axor-cp-deploy/v1" },
+    "verified": {
+      "type": "boolean",
+      "description": "True only for an evidence-backed export (`export_cp`). A template dump (`export_cp_template`) carries no evidence, sets this false, and the Control Plane refuses it — a config dump must never be mistaken for a proven handoff."
+    },
+    "kernel": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The kernel identity the evidence was measured under, e.g. `axor-core@0.11.0`. The CP replays a pin only when this matches its own installed build; it will not claim reproduction under a different one."
+    },
+    "policy": { "type": "object", "description": "The governance policy carried over verbatim. The Control Plane stores it for an operator to apply and never re-interprets it." },
+    "config_hash": {
+      "type": "string",
+      "minLength": 1,
+      "description": "RFC 8785 fingerprint of {kernel, policy}. The consumer RECOMPUTES it: a package whose recorded fingerprint does not match its own payload is not the measured config and is refused."
+    },
+    "parametric_config_hash": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The carry-over identity: kernel + policy + the manifest fields that change a verdict, with allowlist `$inputs` left symbolic. This is what transfers to production — not a byte-identical runtime config."
+    },
+    "resolved_kernel_fingerprint": { "type": "string", "description": "The resolved kernel BEHAVIOUR identity, including behaviour-changing flags. Emitted by the producer; the consumer does not yet read it." },
+    "runtime_config_hashes": { "type": "object", "description": "Per-scenario concrete config identity — what actually ran. Recorded so a reader can pin it; explicitly NOT the config that carries over." },
+    "tool_manifests": {
+      "type": "array",
+      "minItems": 1,
+      "description": "The tool manifests the evidence was produced against. Each is a `tool-manifest/v1` and is validated by that schema, which this kernel also owns — the consumer must not re-state its rules by hand.",
+      "items": { "type": "object" }
+    },
+    "regressions": {
+      "type": "array",
+      "description": "The regression pins the package asks the corpus to adopt. May be empty; a template export carries none.",
+      "items": {
+        "type": "object",
+        "required": ["trace_id", "expected_verdict", "trace_ref", "expected_sequence"],
+        "properties": {
+          "trace_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 60,
+            "description": "Identifies the pinned trace. Bounded at 60 because the Control Plane stores the pin as `lab:{trace_id}` in a 64-character corpus key: a longer id used to be TRUNCATED there, so two pins agreeing on their first 60 characters became one row and one side of the case was silently lost."
+          },
+          "expected_verdict": { "enum": ["ALLOW", "DENY"] },
+          "trace_ref": {
+            "type": "string",
+            "pattern": "^sha256:",
+            "description": "Content hash of the pinned trace body. When the body is carried in `regression_traces`, the consumer checks it against this before replaying."
+          },
+          "expected_sequence": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "enum": ["ALLOW", "DENY"] },
+            "description": "The whole ordered verdict sequence of the pinned trace, so a multi-call trace cannot match on its final verdict alone. Its last entry must equal `expected_verdict`."
+          }
+        }
+      }
+    },
+    "regression_traces": {
+      "type": "object",
+      "description": "trace_id → the trace body, so the Control Plane can REPLAY a pin rather than merely record its hash. Optional for backward compatibility, and today no producer emits it at all: `axor-lab export-cp` has never written this key, so every pin it exports lands `skipped: \"package carries no trace body for this pin\"` against a fully-built consumer. That gap is the reason this schema exists.",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["trace_id"],
+        "description": "A `trace/v1` body. Its `trace_id` must equal the key it is stored under."
+      }
+    },
+    "source": {
+      "type": "object",
+      "required": ["bundle_id", "condition_id"],
+      "description": "Where the evidence came from: the Lab bundle and the condition within it.",
+      "properties": {
+        "bundle_id": { "type": "string", "minLength": 1 },
+        "condition_id": { "type": "string", "minLength": 1 },
+        "bridge_analysis": { "type": "object", "description": "The recomputed earned-bridge receipt, when the bridge was earned." },
+        "bridge_analysis_ref": { "type": "string", "description": "Content hash of `bridge_analysis`." }
+      }
+    }
+  }
+}

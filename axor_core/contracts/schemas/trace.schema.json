@@ -1,0 +1,375 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://useaxor.net/schemas/trace.schema.json",
+  "title": "Axor Lab Trace",
+  "description": "A recorded run of one trial: an ordered event log plus a value ledger carrying per-value provenance. This is the artifact governance verdicts replay over. Provenance is explicit-flow only, built over a closed constructor set (paper O2); it over-taints, never silently under-taints, and is NOT derived by watching a black-box HTTP boundary — it requires the wrapped runtime or an instrumented endpoint that emits value lineage. A plain request/response endpoint cannot produce a conformant trace.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "trace_id",
+    "trial",
+    "producer",
+    "events",
+    "values"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "trace/v1"
+    },
+    "trace_id": {
+      "type": "string",
+      "description": "stable id; content-hashed for the bundle"
+    },
+    "trial": {
+      "type": "object",
+      "required": [
+        "run_id",
+        "scenario_id",
+        "condition_id",
+        "seed",
+        "repeat_index"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "run_id": {
+          "type": "string"
+        },
+        "scenario_id": {
+          "type": "string"
+        },
+        "condition_id": {
+          "type": "string",
+          "description": "references a Condition; determines whether gates enforced"
+        },
+        "seed": {
+          "type": "string",
+          "description": "pinned seed for this trial; does NOT make the model deterministic, only orders sampling where the provider honors it"
+        },
+        "repeat_index": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "producer": {
+      "type": "object",
+      "description": "who produced this trace and with what provenance capability — this is the honesty boundary for what the trace can support",
+      "required": [
+        "mode",
+        "provenance_fidelity",
+        "kernel_version"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "enum": [
+            "wrapped_code",
+            "instrumented_endpoint",
+            "replay"
+          ],
+          "description": "black_box endpoints are intentionally absent: they cannot emit value lineage and thus cannot produce a conformant trace"
+        },
+        "provenance_fidelity": {
+          "enum": [
+            "explicit_flow_tracked",
+            "heuristic_attribution"
+          ],
+          "description": "explicit_flow_tracked = value lineage from the closed constructor set inside the wrapped loop (paper O2, sound: over-taints not under-taints). heuristic_attribution = a weaker best-effort mapping (e.g. substring/provenance guess) that MUST be labeled and MUST NOT be presented as sound; EvidenceCase renders a warning for it."
+        },
+        "kernel_version": {
+          "type": "string",
+          "description": "e.g. axor-core@0.4.2 — load-bearing: the same trace under a different decide can yield a different verdict"
+        },
+        "runtime": {
+          "type": "string",
+          "description": "adapter/runtime that produced it, e.g. langchain-adapter@0.2"
+        }
+      }
+    },
+    "inputs_digest": {
+      "type": "string",
+      "description": "hash of the scenario inputs+fixtures this trial ran against, so the trace ties back to an exact world"
+    },
+    "events": {
+      "type": "array",
+      "description": "totally ordered within a node by seq; cross-node order (multi-agent) is by message causality, not wall clock",
+      "items": {
+        "$ref": "#/$defs/event"
+      }
+    },
+    "values": {
+      "type": "array",
+      "description": "the value ledger: every governed value with its lineage. A tool-call argument references a value_id; that is how a sink argument is tied to an untrusted source.",
+      "items": {
+        "$ref": "#/$defs/value"
+      }
+    }
+  },
+  "$defs": {
+    "event": {
+      "type": "object",
+      "required": [
+        "seq",
+        "type",
+        "node"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "$comment": "discriminated by type: each event variant requires its load-bearing fields, so a gate_decision without a decision or a tool_call_intent without tool/arg_bindings is rejected (review §3.4)",
+          "if": {
+            "properties": {
+              "type": {
+                "const": "gate_decision"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "decision"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "tool_call_intent"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "tool",
+              "arg_bindings"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "tool_result"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "tool"
+            ]
+          }
+        }
+      ],
+      "properties": {
+        "seq": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "node": {
+          "type": "string",
+          "description": "which agent/node emitted this (federation-aware; 'root' for single agent)"
+        },
+        "type": {
+          "enum": [
+            "tool_result",
+            "tool_call_intent",
+            "gate_decision",
+            "message_send",
+            "message_recv",
+            "final_output",
+            "spawn",
+            "death"
+          ]
+        },
+        "tool": {
+          "type": "string",
+          "description": "for tool_result / tool_call_intent"
+        },
+        "call_id": {
+          "type": "string",
+          "description": "correlates a tool_call_intent with its gate_decision so replay pairs them by id (not just node order) and can detect a missing or duplicated decision"
+        },
+        "produces_value_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "tool_result: the value_ids minted from this result (per field)"
+        },
+        "arg_bindings": {
+          "type": "object",
+          "description": "tool_call_intent: maps each argument name to the value_id supplying it — THIS is the link that lets the gate see a sink arg's provenance",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "decision": {
+          "$ref": "#/$defs/decision",
+          "description": "present only on gate_decision events"
+        },
+        "payload_ref": {
+          "type": "string",
+          "description": "opaque handle to redacted content; raw bodies are never inlined (paper A-floor: observations only)"
+        }
+      }
+    },
+    "value": {
+      "type": "object",
+      "description": "one value in the ledger. sources + labels are the provenance the gate reads; the model_extraction transformation is the honest record that an LLM produced this value from its inputs.",
+      "required": [
+        "value_id",
+        "labels",
+        "sources"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "value_id": {
+          "type": "string"
+        },
+        "preview": {
+          "type": "string",
+          "description": "short redacted preview for the EvidenceCase UI, never the full body"
+        },
+        "decision_value": {
+          "description": "the EXACT typed value the gate evaluated (the replay-authoritative projection): string, number, boolean, null, array, or object. Distinct from `preview`, which is a truncated UI string. Replay reconstructs the gate's arguments from this, NEVER from `preview`. MAY be omitted for a sensitive value, in which case `canonical_value_hash` pins it and any effect/policy that turns on the value cannot be replayed exactly.",
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "null",
+            "array",
+            "object"
+          ]
+        },
+        "canonical_value_hash": {
+          "type": "string",
+          "description": "sha256 over the canonical serialization of the exact value; present so an omitted/redacted `decision_value` still binds the trace to a specific value, and so replay can assert value identity."
+        },
+        "labels": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "trusted",
+              "untrusted_derived",
+              "prompt_given",
+              "sensitive",
+              "mint"
+            ]
+          },
+          "description": "provenance labels the gate consumes; untrusted_derived on an egress sink is the integrity denial"
+        },
+        "sources": {
+          "type": "array",
+          "description": "causal_root: the set of untrusted sources that explicitly influenced this value (paper O2). A superset is allowed (over-taint); an omission is a soundness bug.",
+          "items": {
+            "type": "object",
+            "required": [
+              "kind"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "enum": [
+                  "constant",
+                  "external_read",
+                  "mint",
+                  "parse",
+                  "cross_process_in"
+                ],
+                "description": "the closed constructor set O2 inducts over; adding a constructor requires a join rule or the taint suite fails"
+              },
+              "origin_ref": {
+                "type": "string",
+                "description": "e.g. tool_result:read_txns:field.transactions[3].description"
+              }
+            }
+          }
+        },
+        "transformations": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "model_extraction",
+              "parse",
+              "concat",
+              "copy"
+            ]
+          },
+          "description": "how the value was derived. model_extraction = an LLM produced it from its context; provenance is carried through the loop's labeled values, NOT reconstructed after the fact from a black-box boundary."
+        },
+        "derived_from": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "direct provenance edges: the value_ids this value was derived FROM (e.g. a model_extraction value lists the untrusted context values it was produced from). sources is the transitive causal_root; derived_from is the immediate edge. For a model_extraction under conservative join, derived_from = all untrusted context values live at the call (see provenance-semantics.md)."
+        }
+      }
+    },
+    "decision": {
+      "type": "object",
+      "required": [
+        "verdict",
+        "gate",
+        "driving_value_id"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "verdict": {
+          "enum": [
+            "ALLOW",
+            "DENY"
+          ]
+        },
+        "gate": {
+          "enum": [
+            "capability",
+            "consequence",
+            "value_policies",
+            "degradation",
+            "ssrf",
+            "positional",
+            "carrier",
+            "taint_floor",
+            "adjudicator"
+          ],
+          "description": "the paper's 9-gate sequence; a DENY names the first gate that denied"
+        },
+        "driving_value_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "the argument value the verdict turned on; links the decision to its provenance in the ledger. null ONLY for a fail-closed DENY where no provenance value exists (see driving_unresolved)."
+        },
+        "projection": {
+          "type": "string",
+          "description": "pi(x) the gate decided over, e.g. 'untrusted-derived' — the fiber the whole reframing-equivalence-class maps to"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "driving_unresolved": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "enum": [
+                "no_driving_args",
+                "unresolved_argument"
+              ]
+            },
+            "arg": {
+              "type": "string"
+            }
+          },
+          "description": "present ONLY on a fail-closed DENY whose driving_value_id is null: why no provenance value could be resolved."
+        }
+      }
+    }
+  }
+}

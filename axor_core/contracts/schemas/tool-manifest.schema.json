@@ -1,0 +1,154 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://useaxor.net/schemas/tool-manifest.schema.json",
+  "title": "Axor Lab Tool Manifest",
+  "description": "The runnable contract for one tool. A tool is more than {name, sink}: the runner needs arg/result schemas to bind and type-check, an effect model to gate on, field-level untrusted mapping for per-value provenance, and a simulation/reset strategy so an attack benchmark does not create a real side effect. The effect class is resolved from operation+resource+args, not from the tool name alone — one tool (send_email) can be internal, external, or a draft depending on arguments.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "id",
+    "args_schema",
+    "effect",
+    "side_effecting"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "tool-manifest/v1"
+    },
+    "id": {
+      "type": "string"
+    },
+    "args_schema": {
+      "type": "object",
+      "description": "JSON Schema for the call arguments; the authoring UI type-checks predicates and injections against this"
+    },
+    "result_schema": {
+      "type": "object",
+      "description": "JSON Schema for the return; addressable as result.<path> in predicates and untrusted_fields"
+    },
+    "effect": {
+      "type": "object",
+      "description": "the consequence model. Rather than a single sink label, effect can be resolved per call from arguments, because the same tool may cross different perimeters.",
+      "required": [
+        "default_class",
+        "driving_args"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "default_class": {
+          "enum": [
+            "READ",
+            "WRITE",
+            "EXPORT",
+            "EXEC"
+          ],
+          "description": "used when no rule matches"
+        },
+        "driving_args": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "the arguments whose provenance the gate checks (paper: A(s))"
+        },
+        "resolve": {
+          "type": "array",
+          "description": "ordered rules mapping (operation+resource+args) to an effect class; first match wins. Absent → default_class.",
+          "items": {
+            "type": "object",
+            "required": [
+              "when",
+              "class"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "when": {
+                "$ref": "predicate.schema.json#/$defs/matcher_map",
+                "description": "condition over args, e.g. recipient domain not in company domains → EXPORT"
+              },
+              "class": {
+                "enum": [
+                  "READ",
+                  "WRITE",
+                  "EXPORT",
+                  "EXEC"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "untrusted_fields": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "result fields (result.<path>) whose returned content is attacker-controllable. Field-level, not whole-tool: read_txns.result.transactions[].description may be untrusted while .amount is not. This is what per-value provenance consumes; whole-tool returns_untrusted is only the coarse fallback."
+    },
+    "sensitive_fields": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "result fields that arm the confidentiality floor when read (paper A-floor: sensitive-rooted read)"
+    },
+    "side_effecting": {
+      "type": "boolean",
+      "description": "true → must be simulated or explicitly opted into for real execution; a benchmark must never fire a real EXPORT/EXEC by default"
+    },
+    "simulation": {
+      "type": "object",
+      "description": "how the tool is safely run in Lab. Simulated by default; real side effects are explicit opt-in only.",
+      "additionalProperties": false,
+      "properties": {
+        "supported": {
+          "type": "boolean"
+        },
+        "adapter": {
+          "type": "string",
+          "description": "the simulator that stands in, e.g. 'email_outbox', 'fs_sandbox', 'ledger_stub'"
+        },
+        "real_execution": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "opt_in": {
+              "type": "boolean",
+              "default": false
+            },
+            "requires": {
+              "type": "array",
+              "items": {
+                "enum": [
+                  "isolated_test_account",
+                  "resource_allowlist",
+                  "dry_run_confirmed"
+                ]
+              }
+            }
+          },
+          "description": "guardrails that must all hold before a side-effecting tool runs for real"
+        }
+      }
+    },
+    "reset": {
+      "type": "object",
+      "description": "how tool state is restored between trials so trials are independent",
+      "additionalProperties": false,
+      "properties": {
+        "strategy": {
+          "enum": [
+            "stateless",
+            "fixture",
+            "snapshot_restore"
+          ]
+        },
+        "fixture_ref": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}
