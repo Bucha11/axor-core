@@ -48,7 +48,7 @@
     },
     "runtime_config_hashes": {
       "type": "object",
-      "description": "Per-scenario concrete config identity — what actually ran. Recorded so a reader can pin it; explicitly NOT the config that carries over."
+      "description": "scenario_id → the CONCRETE governor-config hash that scenario's trials ran under. Recorded so a reader can pin it; explicitly NOT the config that carries over to production. Each entry is the hash of the corresponding `runtime_configs` body."
     },
     "tool_manifests": {
       "type": "array",
@@ -136,6 +136,17 @@
           "type": "string",
           "description": "Content hash of `bridge_analysis`."
         }
+      }
+    },
+    "runtime_configs": {
+      "type": "object",
+      "description": "scenario_id → the compiled governor config itself, so a consumer can REPLAY a pin under the control that actually produced its verdict.\n\nOptional for backward compatibility, and today no producer emits it. Without it a consumer has only the tool manifests, from which it must compile a config of its own — and the Control Plane's hand-written compiler and the Lab's disagreed completely: on the same three manifests the Lab produced egress sinks ['send_email'] and the CP produced ['write_file'], because the CP read `side_effecting` as egress and never looked at `effect.resolve`, and dropped the allowlist value-policies entirely (it was never even passed the policy). Every pin whose verdict turned on any of that failed to reproduce and was recorded as `skipped`, blaming the trace.\n\nA compiled config is not something a second implementation should derive. It is carried, and checked against `runtime_config_hashes`.",
+      "additionalProperties": {
+        "type": "object",
+        "description": "The compiled governor config for one scenario, as the Lab's `compiled_governor_config` emits it with `$inputs` EXPANDED — what actually ran. Its `content_hash` must equal this scenario's entry in `runtime_config_hashes`, or it is not that config.",
+        "required": [
+          "egress_sinks"
+        ]
       }
     }
   }

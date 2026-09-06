@@ -163,3 +163,20 @@ def test_a_consumer_can_validate_its_own_schemas_with_this_engine() -> None:
     assert validate_against({"when": {"event": "tool_call"}}, "downstream", schemas) == []
     assert validate_against({}, "downstream", schemas) != []
     assert validate_against({"when": "a sentence"}, "downstream", schemas) != []
+
+
+def test_a_package_may_carry_the_configs_its_pins_ran_under() -> None:
+    """`runtime_configs` exists so a consumer replays a pin under the control
+    that produced its verdict, instead of compiling a second one from the
+    manifests. Two such compilers already disagreed completely in production."""
+    with_configs = _package(
+        runtime_config_hashes={"banking-exfil-01": "sha256:aa"},
+        runtime_configs={"banking-exfil-01": {
+            "kernel": "axor-core@0.11.0", "egress_sinks": ["send_money"],
+            "driving_args": {"send_money": ["recipient"]},
+        }},
+    )
+    assert validate("cp-deploy", with_configs) == []
+    # a body that is not a config at all, and one with no sinks declared
+    assert validate("cp-deploy", _package(runtime_configs={"s": "a string"})) != []
+    assert validate("cp-deploy", _package(runtime_configs={"s": {}})) != []
