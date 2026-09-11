@@ -62,11 +62,19 @@ def _check(
     if "enum" in schema and node not in schema["enum"]:  # type: ignore[operator]
         errors.append(f"{path}: not in enum {schema['enum']}: {node!r}")
     if "oneOf" in schema:
-        matched = sum(
-            1 for sub in schema["oneOf"] if _matches(node, sub, root, schemas)  # type: ignore[union-attr]
-        )
+        branches = list(schema["oneOf"])  # type: ignore[arg-type]
+        matched = sum(1 for sub in branches if _matches(node, sub, root, schemas))
         if matched != 1:
-            errors.append(f"{path}: oneOf matched {matched} branches (must be exactly 1)")
+            # a bare "matched 0 branches" is useless on a discriminated union
+            # (regression.rule keys on `kind`): find the branch the node MEANT —
+            # the one whose discriminator const agrees — and report ITS specific
+            # errors, so the message names the field that is actually wrong.
+            intended = _intended_branch(node, branches, root, schemas)
+            if intended is not None:
+                target, target_root = intended
+                _check(node, target, path, target_root, schemas, errors)
+            else:
+                errors.append(f"{path}: oneOf matched {matched} branches (must be exactly 1)")
     if "anyOf" in schema and not any(
         _matches(node, sub, root, schemas) for sub in schema["anyOf"]  # type: ignore[union-attr]
     ):
@@ -137,6 +145,37 @@ def _check(
         if "items" in schema:
             for i, item in enumerate(node):
                 _check(item, schema["items"], f"{path}[{i}]", root, schemas, errors)  # type: ignore[arg-type]
+
+
+
+def _intended_branch(
+    node: object,
+    branches: list[dict[str, object]],
+    root: dict[str, object],
+    schemas: dict[str, dict[str, object]],
+) -> tuple[dict[str, object], dict[str, object]] | None:
+    """The oneOf branch a node was clearly aiming at, by its discriminator.
+
+    A branch discriminates on a `const` property (e.g. rule.kind = "predicate").
+    If exactly ONE branch's const properties all agree with the node, that is the
+    branch the author meant — report its errors rather than the useless "matched
+    0 branches". Returns the resolved (branch, root) or None when no single
+    branch is discriminable (then the generic message is honest).
+    """
+    if not isinstance(node, dict):
+        return None
+    candidates: list[tuple[dict[str, object], dict[str, object]]] = []
+    for branch in branches:
+        # branches are usually $refs into $defs; resolve so the discriminator
+        # const is visible (and its root, for cross-schema refs)
+        resolved = _resolve_ref(branch, root, schemas, "", [])
+        target, target_root = resolved if resolved is not None else (branch, root)
+        props: dict[str, object] = target.get("properties") or {}  # type: ignore[assignment]
+        consts = {k: v["const"] for k, v in props.items()  # type: ignore[union-attr]
+                  if isinstance(v, dict) and "const" in v}
+        if consts and all(node.get(k) == want for k, want in consts.items()):
+            candidates.append((target, target_root))
+    return candidates[0] if len(candidates) == 1 else None
 
 
 def _resolve_ref(
