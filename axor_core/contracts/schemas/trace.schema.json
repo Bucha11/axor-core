@@ -57,8 +57,7 @@
       "description": "who produced this trace and with what provenance capability — this is the honesty boundary for what the trace can support",
       "required": [
         "mode",
-        "provenance_fidelity",
-        "kernel_version"
+        "provenance_fidelity"
       ],
       "additionalProperties": false,
       "properties": {
@@ -79,7 +78,7 @@
         },
         "kernel_version": {
           "type": "string",
-          "description": "e.g. axor-core@0.4.2 — load-bearing: the same trace under a different decide can yield a different verdict"
+          "description": "e.g. axor-core@0.4.2 — load-bearing: the same trace under a different decide can yield a different verdict Absent when the run declared no governance capability: there was no kernel, so naming one would be a claim about a gate that never ran."
         },
         "runtime": {
           "type": "string",
@@ -332,7 +331,9 @@
             "positional",
             "carrier",
             "taint_floor",
-            "adjudicator"
+            "adjudicator",
+            "message",
+            "budget"
           ],
           "description": "the paper's 9-gate sequence; a DENY names the first gate that denied"
         },
@@ -368,6 +369,10 @@
             }
           },
           "description": "present ONLY on a fail-closed DENY whose driving_value_id is null: why no provenance value could be resolved."
+        },
+        "enforced": {
+          "type": "boolean",
+          "description": "whether this verdict was OBEYED. Absent means true (every legacy trace recorded an enforced decision). An observe-only arm records the verdict the kernel reached AND executes the call, so a reader that conflates the two counts containments that never happened."
         }
       }
     }
