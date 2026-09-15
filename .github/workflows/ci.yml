@@ -112,10 +112,20 @@ jobs:
           VERSION="${{ github.ref_name }}"
           VERSION="${VERSION#v}"   # strip leading "v" so pip can use it directly
           PAYLOAD="{\"event_type\":\"axor-core-published\",\"client_payload\":{\"version\":\"${VERSION}\"}}"
+          # Every repository that declares a dependency on this package, so a
+          # release rebuilds them against it. axor-eval was MISSING: its CI
+          # listens for `axor-core-published` and nothing ever dispatched to it,
+          # so the one downstream with its own MIN/MAX compatibility gate — the
+          # gate whose whole job is to go red when a kernel release moves past
+          # it — was the one that never got woken by a kernel release.
+          #
+          # axor-probe is deliberately absent: invariant P-34, it depends on no
+          # axor package and has nothing to rebuild against.
           for REPO in \
             Bucha11/axor-lab \
             Bucha11/axor-control-plane \
             Bucha11/axor-wrap \
+            Bucha11/axor-eval \
             Bucha11/axor-sentinel \
             Bucha11/axor-claude \
             Bucha11/axor-cli \
