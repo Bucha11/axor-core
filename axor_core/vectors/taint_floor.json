@@ -1,0 +1,124 @@
+{
+  "schema": "axor-taint-floor-vectors/v1",
+  "gate": "taint_gate",
+  "note": [
+    "The shared statement of what the taint floor decides, shipped INSIDE the",
+    "kernel package so every consumer reads the same file without depending on",
+    "another product's checkout. axor-core proves its gate produces these; the",
+    "Control Plane and the Lab prove their record-driven path reproduces them.",
+    "A reimplementation that disagrees here does not ship — that is the whole",
+    "point of the file."
+  ],
+  "vectors": [
+    {
+      "name": "clean value to a plain read is allowed",
+      "tool": "search",
+      "normalized": {"destination_kind": "none", "writes_outside_workdir": false,
+                     "executes_generated_code": false},
+      "root": {"sources": [], "sensitive": false},
+      "egress_sinks": [], "floor_active": false,
+      "expect": "allow"
+    },
+    {
+      "name": "tainted value to a plain read is allowed (no risky consequence)",
+      "tool": "search",
+      "normalized": {"destination_kind": "none", "writes_outside_workdir": false,
+                     "executes_generated_code": false},
+      "root": {"sources": ["web"], "sensitive": false},
+      "egress_sinks": [], "floor_active": false,
+      "expect": "allow"
+    },
+    {
+      "name": "tainted value into an operator-declared egress sink is denied",
+      "tool": "send_email",
+      "normalized": {"destination_kind": "none", "writes_outside_workdir": false,
+                     "executes_generated_code": false},
+      "root": {"sources": ["web"], "sensitive": false},
+      "egress_sinks": ["send_email"], "floor_active": false,
+      "expect": "deny", "category": "taint_enforcement", "axis": "integrity"
+    },
+    {
+      "name": "tainted value to a structurally external destination is denied",
+      "tool": "slack_post",
+      "normalized": {"destination_kind": "external_domain", "writes_outside_workdir": false,
+                     "executes_generated_code": false},
+      "root": {"sources": ["web"], "sensitive": false},
+      "egress_sinks": [], "floor_active": false,
+      "expect": "deny", "category": "taint_enforcement", "axis": "integrity"
+    },
+    {
+      "name": "clean value to the same external destination is allowed",
+      "tool": "slack_post",
+      "normalized": {"destination_kind": "external_domain", "writes_outside_workdir": false,
+                     "executes_generated_code": false},
+      "root": {"sources": [], "sensitive": false},
+      "egress_sinks": [], "floor_active": false,
+      "expect": "allow"
+    },
+    {
+      "name": "tainted value written outside the workdir is denied",
+      "tool": "write_file",
+      "normalized": {"destination_kind": "none", "writes_outside_workdir": true,
+                     "executes_generated_code": false},
+      "root": {"sources": ["file"], "sensitive": false},
+      "egress_sinks": [], "floor_active": false,
+      "expect": "deny", "category": "taint_enforcement", "axis": "integrity"
+    },
+    {
+      "name": "tainted value executed as generated code is denied",
+      "tool": "bash",
+      "normalized": {"destination_kind": "none", "writes_outside_workdir": false,
+                     "executes_generated_code": true},
+      "root": {"sources": ["mcp"], "sensitive": false},
+      "egress_sinks": [], "floor_active": false,
+      "expect": "deny", "category": "taint_enforcement", "axis": "integrity"
+    },
+    {
+      "name": "CLEAN value to egress is denied while the confidentiality floor is up",
+      "tool": "send_email",
+      "normalized": {"destination_kind": "none", "writes_outside_workdir": false,
+                     "executes_generated_code": false},
+      "root": {"sources": [], "sensitive": false},
+      "egress_sinks": ["send_email"], "floor_active": true,
+      "expect": "deny", "category": "taint_enforcement", "axis": "confidentiality"
+    },
+    {
+      "name": "the floor does not gate a non-egress call",
+      "tool": "search",
+      "normalized": {"destination_kind": "none", "writes_outside_workdir": false,
+                     "executes_generated_code": false},
+      "root": {"sources": [], "sensitive": false},
+      "egress_sinks": [], "floor_active": true,
+      "expect": "allow"
+    },
+    {
+      "name": "an unknown source name still taints (over-taint is the safe direction)",
+      "tool": "send_email",
+      "normalized": {"destination_kind": "none", "writes_outside_workdir": false,
+                     "executes_generated_code": false},
+      "root": {"sources": ["something-we-do-not-know"], "sensitive": false},
+      "egress_sinks": ["send_email"], "floor_active": false,
+      "expect": "deny", "category": "taint_enforcement", "axis": "integrity"
+    },
+    {
+      "name": "integrity superseded by a satisfied enum allowlist; the floor is down",
+      "tool": "send_email",
+      "normalized": {"destination_kind": "none", "writes_outside_workdir": false,
+                     "executes_generated_code": false},
+      "root": {"sources": ["web"], "sensitive": false},
+      "egress_sinks": ["send_email"], "floor_active": false,
+      "integrity_superseded": true,
+      "expect": "allow"
+    },
+    {
+      "name": "supersession does NOT lift the confidentiality floor",
+      "tool": "send_email",
+      "normalized": {"destination_kind": "none", "writes_outside_workdir": false,
+                     "executes_generated_code": false},
+      "root": {"sources": ["web"], "sensitive": true},
+      "egress_sinks": ["send_email"], "floor_active": true,
+      "integrity_superseded": true,
+      "expect": "deny", "category": "taint_enforcement", "axis": "confidentiality"
+    }
+  ]
+}

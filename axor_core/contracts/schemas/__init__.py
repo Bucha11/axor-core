@@ -1,0 +1,91 @@
+"""The contract schemas, owned by the kernel and shipped inside it.
+
+Three artifacts cross product boundaries in this ecosystem: a recorded trace, a
+tool manifest, and the Lab → Control Plane deploy package. Until now none of them
+had a single owner. `trace` and `tool-manifest` were documented as
+"axor-core-owned" while the only real definitions lived downstream in the Lab —
+which kept a directory literally named `_shared_from_axor_core` holding narrower
+stubs of files this package did not have. `cp-deploy` had no schema anywhere: its
+producer and consumer were written independently in two repositories, and had
+already drifted apart without anyone noticing.
+
+`predicate` is here for a narrower reason: a manifest's `effect.resolve[].when`
+is one, so a tool manifest is not a self-contained artifact without it, and a
+consumer validating a manifest that resolves its effect class from arguments
+would be told the reference is unknown and reject a valid manifest.
+
+They live here because this package is the one dependency every consumer already
+has. `axor_core.contracts` has always held the shared vocabulary as Python types;
+these are the same vocabulary in the serialization that crosses a process.
+
+Validation uses the subset validator next door — not the `jsonschema` package.
+The schemas are written to the subset it implements, and this package stays
+dependency-free.
+"""
+
+from __future__ import annotations
+
+import json
+from importlib import resources
+from typing import Any
+
+from ._subset_validator import validate_against
+
+__all__ = [
+    "SCHEMA_NAMES",
+    "SchemaInvalid",
+    "kernel_schemas",
+    "load",
+    "validate",
+    "validate_against",
+]
+
+SCHEMA_NAMES = ("trace", "tool-manifest", "predicate", "cp-deploy")
+
+
+class SchemaInvalid(ValueError):
+    """An artifact failed validation. `errors` lists every problem, not the first.
+
+    A validator that stops at the first error makes a caller fix one field, run
+    again, and find the next — the contract these schemas describe is that a
+    rejection is complete.
+    """
+
+    def __init__(self, schema_name: str, errors: list[str]) -> None:
+        self.schema_name = schema_name
+        self.errors = list(errors)
+        super().__init__(f"{schema_name}: " + "; ".join(errors))
+
+
+def load(name: str) -> dict[str, Any]:
+    """One schema by name, e.g. ``load("cp-deploy")``."""
+    if name not in SCHEMA_NAMES:
+        raise KeyError(f"unknown schema {name!r}; have {list(SCHEMA_NAMES)}")
+    text = (
+        resources.files(__package__)
+        .joinpath(f"{name}.schema.json")
+        .read_text("utf-8")
+    )
+    return json.loads(text)
+
+
+def validate(name: str, document: Any) -> list[str]:
+    """Every way `document` violates schema `name`, or an empty list.
+
+    Returns rather than raises, so a caller can merge these into its own reason
+    list — a consumer of one of these artifacts almost always has checks the
+    schema cannot express (a storage key's width, a hash recomputed over the
+    payload) and must report them together.
+    """
+    return validate_against(document, name, kernel_schemas())
+
+
+def kernel_schemas() -> dict[str, dict[str, Any]]:
+    """Every schema here, keyed by short name — the form `validate_against` takes.
+
+    A consumer with product-specific schemas of its own validates them all in
+    one dictionary, because they reference each other across files: a Lab
+    `condition` refs `predicate`, which a `tool-manifest` refs too. It merges
+    this over its own set rather than keeping copies of these three.
+    """
+    return {name: load(name) for name in SCHEMA_NAMES}
