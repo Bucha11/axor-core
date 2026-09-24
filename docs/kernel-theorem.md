@@ -94,7 +94,7 @@ causal_root(v)  ⊇  the untrusted sources that explicitly influenced v
 
 Proved by induction over the closed constructor set (`constant`, `external_read`,
 `mint` = join over inputs, `parse` = passthrough, `cross_process_in` = re-mint).
-The failure direction is deliberate over-taint (`⊇`, never silent).
+Within that set the failure direction is deliberate over-taint (`⊇`, never silent).
 
 - Constructors and the join live in `axor_core/taint/causal_root.py`; the
   refcounted, fail-closed ledger is `axor_core/taint/ledger.py`; per-value
@@ -107,6 +107,23 @@ on content that influences an output with `causal_root = ∅` — is **not** cov
 This is shared with FIDES by design; CaMeL's STRICT-mode dependency augmentation is
 the known partial technique and is not yet adopted. See §6 and
 [governance-model §7](governance-model.md).
+
+**The model edge is not a constructor (current gap, not a scope choice).** A value
+the model writes into a tool call is produced by none of the constructors above. The
+kernel reconstructs that edge by content derivation: `ValueTaintLedger.derive`
+labels the value with the sources whose registered fragments it *contains*, and
+returns `constant()` when it contains none. So O2 holds for a model-generated value
+only when the value carries a verbatim (normalised) fragment of what the model read.
+A re-encoded copy of an untrusted identifier — compacted, re-cased, re-separated,
+split across fields, base64'd — derives clean, and so does a verbatim copy of an
+identifier too short in every block to be segmented (a space-grouped IBAN). That is
+an **explicit** flow under-tainted silently, i.e. O2 does not hold on this edge today.
+It is pinned by `tests/adversarial/test_context_default_integrity.py` (sound
+behaviour asserted `xfail(strict=True)`), bounded where an `enum` allowlist guards
+the driving arg (T4, content-blind), and does not touch confidentiality (the floor is
+content-blind). The fix — model-generated values carry the context root unless they
+provably originate from a trusted source — is
+[rfc-integrity-context-default](rfc-integrity-context-default.md).
 
 ### O3 — complete mediation (A-3)
 
@@ -136,22 +153,25 @@ structural function — there is no model in the decision loop:
 - carrier classification — `axor_core/security/carrier.py`
 - consequence (action-class) classification — `axor_core/policy/consequence.py`
 - structural normalization — `axor_core/policy/normalizer.py`
+- raw-stripped canonical intent — `axor_core/node/canonicalizer.py`
+- provenance label (`driving_root`) — `axor_core/taint/ledger.py` over the lattice
+  in `axor_core/taint/causal_root.py`
 
 **Assurance status.** T0 is pinned by a dedicated gate in two halves:
 
 - **Structural half** — the `t0-producers-non-interpreting` contract in
-  `.importlinter` forbids the four producer modules from importing the in-core
+  `.importlinter` forbids the six producer modules from importing the in-core
   advisory/model surface (`axor_core/kernel/adjudicator.py`). Run by `lint-imports`
   in CI; a violating import fails the build.
 - **External half** — `tests/invariants/test_t0_producers_non_interpreting.py`
   statically scans each producer's imports for a model SDK / network / subprocess
   surface (which import-linter cannot see, as it graphs only the root package) and
-  asserts the two pure classifiers (`classify_carrier`, `consequence_class`) are
-  deterministic.
+  asserts the pure classifiers (`classify_carrier`, `consequence_class`) and ledger
+  derivation are deterministic.
 
 The adjudicator is a *consumer* of the projection (advisory, projection-only,
 tightening-only) and may itself be a model — T0 constrains the producer, not the
-consumer, which is why the rule is scoped to the four producer modules.
+consumer, which is why the rule is scoped to the producer modules.
 
 ---
 
@@ -214,6 +234,7 @@ fails if the premise is violated. Test paths are relative to the repo root.
 | **O1** factorization | decision factors through `π`; no hidden raw channel; equal projection → equal decision | `tests/invariants/test_pure_allow.py` (`test_gate_decision_is_stable`, `test_no_probabilistic_component_in_the_loop`); adjudicator memoized by `projection_hash` (`axor_core/kernel/adjudicator.py`); `tests/invariants/test_security_invariants.py` inv13 (no raw content in normalized intent); `tests/adversarial/test_schema_injection.py` |
 | **O1** kernel/trust-model factorization | kernel does not depend on runtime/platform — the decision survives platform replacement | `lint-imports` (`.importlinter` `kernel-purity` contract), run in CI; `tests/test_kernel_only_import.py` |
 | **O2** label soundness | `causal_root ⊇` explicit untrusted influence; over-taint; worker cannot clear | `tests/taint/test_value_ledger.py`; `tests/adversarial/test_ledger_soundness.py` (saturation fails closed, endorse does not under-taint a shared fragment); `tests/invariants/test_security_invariants.py` inv04/inv05 |
+| **O2** model edge (gap) | a re-encoded / unsegmented untrusted identifier the model emits is *not* labelled — recorded, not silently missed | `tests/adversarial/test_context_default_integrity.py` (controls pass; the attacker encodings assert the sound behaviour `xfail(strict=True)`); fix in [rfc-integrity-context-default](rfc-integrity-context-default.md) |
 | **O2** scope boundary | implicit/control-flow leaks are *out of scope* — claimed, not silently missed | `tests/adversarial/test_implicit_flow_gap.py` (sound behaviour asserted `xfail(strict=True)`: the suite trips the moment a sound backend closes the gap) |
 | **O3** complete mediation | no effect bypasses `allow`; unknown sink fails closed; ceilings cannot be widened | `axor_core/capability/locked.py` (`GovernanceBypassError`); `tests/invariants/test_security_invariants.py` inv15 (denied tool never reaches executor); `tests/adversarial/test_unknown_sink_posture.py`; `tests/adversarial/test_critical_bypasses.py`; `tests/adversarial/test_e2e_gate.py` (lethal-trifecta egress denied) |
 | **T0** non-interpreting producer | no model / network / subprocess produces a trusted-path projection | `.importlinter` `t0-producers-non-interpreting` contract (run by `lint-imports`); `tests/invariants/test_t0_producers_non_interpreting.py` (import scan + determinism); `tests/invariants/test_pure_allow.py` (`test_no_probabilistic_component_in_the_loop`) |
@@ -236,12 +257,15 @@ Stated as boundaries of the claim, not as incidental gaps:
   control-flow side channel with `causal_root = ∅` is not covered. Bounded by
   `tests/adversarial/test_implicit_flow_gap.py`; the standard partial fix
   (CaMeL STRICT-mode dependency augmentation) is not yet adopted.
-- **The integrity paraphrase residual** — on the non-liftable partition (a generic
-  write/exec that cannot be made positional), an in-process model that paraphrases an
-  untrusted value before a sink is not caught by content derivation. The
-  confidentiality floor and the positional/carrier gates are paraphrase-proof on
-  *their* partition; this residual is integrity-only. See
-  [governance-model §7](governance-model.md).
+- **The integrity model-edge gap** — a value the model generates that contains no
+  registered fragment derives `constant()` (trusted). This covers paraphrase, and
+  also re-encoded or unsegmented *copies* of an untrusted identifier, so it is not a
+  paraphrase-only residual: it is an O2 gap on the LLM edge (§2). It is closed where
+  an `enum` allowlist guards the driving arg (Strict obliges one on egress sinks,
+  not on outside-workdir writes or generated-code execution). The confidentiality
+  floor and the positional/carrier gates are unaffected on *their* partition; the gap
+  is integrity-only. See [governance-model §7](governance-model.md) and
+  [rfc-integrity-context-default](rfc-integrity-context-default.md).
 - **A-3 is a premise, not a theorem** — O3 holds *iff* the finite sink ring is the
   only path to an effect. In-process this is a soft boundary; the hard boundary is the
   daemon.
@@ -261,7 +285,10 @@ Stated as boundaries of the claim, not as incidental gaps:
 
 ## 7. Status
 
-- **Stated and pinned:** O1, O2 (explicit-flow scope), O3, T0 (import contract +
+- **Open gap, pinned:** O2 on the model edge (§2) — tracked by a strict-xfail
+  regression, fix specified in
+  [rfc-integrity-context-default](rfc-integrity-context-default.md).
+- **Stated and pinned:** O1, O2 (explicit-flow scope, kernel constructors), O3, T0 (import contract +
   scan/determinism test, §3), T4 (both branches), the non-interference invariant and
   its caveats — each with a named regression in §5.
 - **Demonstrated on two instances:** the trust-model-agnostic claim — a substitution

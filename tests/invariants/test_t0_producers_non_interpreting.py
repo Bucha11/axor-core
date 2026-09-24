@@ -31,6 +31,8 @@ _PRODUCER_MODULES = [
     "axor_core.policy.consequence",     # consequence (action-class) projection
     "axor_core.policy.normalizer",      # structural NormalizedIntent
     "axor_core.node.canonicalizer",     # CanonicalizedIntent (raw-stripped projection)
+    "axor_core.taint.ledger",           # provenance-label projection (driving_root)
+    "axor_core.taint.causal_root",      # the label lattice and its constructors
 ]
 
 # Importing any of these from a producer would make the projection depend on a model
@@ -118,3 +120,27 @@ def test_consequence_classifier_is_deterministic():
     for sink, op in cases:
         results = {consequence_class(sink, op) for _ in range(5)}
         assert len(results) == 1, f"consequence not deterministic for ({sink!r},{op!r}): {results}"
+
+
+def test_ledger_derivation_is_deterministic():
+    """Same registered content and query → same causal_root, repeatedly and across
+    independently built ledgers (no hidden state / I/O)."""
+    from axor_core.contracts.taint import TaintSource
+    from axor_core.taint.causal_root import CausalRoot
+    from axor_core.taint.ledger import ValueTaintLedger
+
+    doc = "Relay: audit-relay@vendor-compliance-svc.com. New IBAN: DE89370400440532013000"
+    queries = [
+        "audit-relay@vendor-compliance-svc.com",
+        {"iban": "DE89370400440532013000", "amount": 10},
+        "nothing registered here",
+        ["mailto:AUDIT-RELAY@vendor-compliance-svc.com"],
+    ]
+
+    def derive_all():
+        led = ValueTaintLedger()
+        led.register(doc, CausalRoot.external_read(TaintSource.WEB))
+        return [led.derive(q) for q in queries]
+
+    runs = [derive_all() for _ in range(5)]
+    assert all(r == runs[0] for r in runs), f"ledger derivation not deterministic: {runs}"

@@ -230,7 +230,7 @@ T0: the trusted-origin matcher is a trusted-path projection producer. Add
 `axor_core.taint.ledger` and the new matcher module to the
 `t0-producers-non-interpreting` contract in `.importlinter` and to
 `_PRODUCER_MODULES` in `tests/invariants/test_t0_producers_non_interpreting.py`.
-The ledger is already missing from that list today.
+(Done in step 1: the ledger and `causal_root` are now listed.)
 
 ## 6. What this does not solve
 
@@ -265,7 +265,7 @@ modes before any default changes.
 
 ## 8. Rollout
 
-1. **Regression first.** Add Appendix A as a test in `tests/adversarial/`, marked
+1. **Regression first.** *(done)* Add Appendix A as a test in `tests/adversarial/`, marked
    `xfail(strict=True)` under `integrity_default="clean"`, plus the T0 contract
    fix (§5). Correct O2 in `docs/kernel-theorem.md` and §7 of
    `docs/governance-model.md` to describe current behaviour honestly.

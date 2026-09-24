@@ -198,19 +198,30 @@ Three hard guarantees, enforced in the kernel regardless of what you plug in:
 
 ## 7. The acknowledged gaps
 
-**Integrity paraphrase (the main one).** The integrity per-value gate is
-content-derivation: it matches the registered untrusted content inside a sink
-argument. It is sound in the deny direction but **incomplete** against an
-in-process model that paraphrases an untrusted value before passing it to a sink
-that *cannot* be made positional (a generic write or exec). On that partition, a
-paraphrased untrusted influence is not caught. Segmentation normalises case,
-edge-punctuation, structural delimiters, and Unicode (NFKC + zero-width strip), so
-formatting tricks are closed; cross-script homoglyphs, base64/encoding, and
-sub-fragment shredding remain in the residual. This is recorded honestly — there
-are tests that assert the *sound* behaviour and are marked expected-to-fail, so the
-suite trips the moment a sound per-value interpreter backend closes the gap. The
-confidentiality floor (§5) and the positional gate (§3) already close their share;
-this residual is the integrity, non-liftable partition only.
+**Integrity: model-generated values (the main one).** The integrity per-value gate
+is content-derivation: it matches registered untrusted content inside a sink
+argument, and an argument that contains none is treated as clean. It is sound in
+the deny direction but **incomplete**, and the incompleteness is wider than
+paraphrase. Any value the model generates that contains no registered fragment
+passes as trusted, including *copies* of an untrusted identifier the model
+re-encoded (compacted, re-cased, re-separated, split across fields, base64'd) and
+verbatim copies the ledger never segmented (a space-grouped IBAN: every block is
+below the 12-character minimum). Equivalent path spellings (`/etc/./x` for
+`/etc/x`) pass the same way. Segmentation normalises case, edge-punctuation,
+structural delimiters, and Unicode (NFKC + zero-width strip), which closes
+formatting tricks on the *same* spelling and nothing more.
+
+Where it is closed today: an `enum` allowlist on the driving arg (content-blind; in
+Strict mandatory on every egress sink), the positional gate (§3) for sinks that can
+be made positional, and the confidentiality floor (§5) for secrets. Where it is
+open: egress without an allowlist outside Strict, and writes outside the workspace
+and generated-code execution in every mode. This is recorded honestly — the tests
+assert the *sound* behaviour and are marked expected-to-fail
+(`tests/adversarial/test_context_default_integrity.py`,
+`tests/test_tokenizer_evasion.py`), so the suite trips when the gap closes. The
+planned fix inverts the default: a model-generated value carries the taint of the
+model's context unless it provably originates from a trusted source
+([rfc-integrity-context-default](rfc-integrity-context-default.md)).
 
 **SSRF host classification.** The internal-destination gate (§2, step 5) classifies
 hosts by *literal IP*, decoding the obfuscated forms (dotted/octal/hex/integer,
@@ -290,8 +301,8 @@ Strict removes content-derived policy decisions entirely and fails closed. It ad
 one more obligation: **every declared egress sink must carry a destination
 allowlist** (an `enum` value policy on its destination argument). The per-value
 taint gate on an egress sink is content-derivation — sound in the deny direction
-but with the §7 paraphrase residual; an `enum` allowlist is content-blind and
-provenance-independent (membership, not derivation), so it closes that residual.
+but with the §7 model-generated-value gap; an `enum` allowlist is content-blind and
+provenance-independent (membership, not derivation), so it closes that gap there.
 Strict refuses to construct a session whose egress sink relies on the leaky gate
 alone — the misconfiguration fails closed at construction, not at run time. In
 Library/Production the allowlist stays optional (the content-derivation gate still
@@ -329,7 +340,9 @@ and `escalate_policy` are kernel-internal intents and are exempt.)
   content to make an enforcement decision.
 - The adjudicator and detection see only a content-free projection.
 - The confidentiality floor is sound against paraphrase; the integrity per-value gate
-  has a documented paraphrase residual (§7) on the non-liftable partition.
+  has a documented gap (§7): a model-generated value with no registered fragment
+  derives clean, so it holds only where an `enum` allowlist or the positional gate
+  covers the sink.
 - A child cannot exceed its parent or launder a value across the spawn boundary;
   cross-agent trust is only ever raised by a verified signed receipt.
 - Unknown sinks fail closed under the high-assurance (strict) ceiling.

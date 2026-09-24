@@ -2,7 +2,21 @@
 
 ## Unreleased
 
-(nothing yet)
+### Security
+
+- **Documented an integrity gap on model-generated values.** The per-value
+  integrity gate treats a value the model writes as clean when it contains no
+  registered fragment of an untrusted read. Re-encoded copies of an untrusted
+  identifier (compacted, re-cased, re-separated, split across fields, base64'd),
+  verbatim copies the ledger never segmented (a space-grouped IBAN) and equivalent
+  path spellings (`/etc/./x`) therefore pass. Closed today only where an `enum`
+  allowlist or the positional gate covers the sink; confidentiality is unaffected.
+  Pinned by `tests/adversarial/test_context_default_integrity.py` (strict-xfail);
+  O2 in `docs/kernel-theorem.md` and §7 of `docs/governance-model.md` corrected.
+  Fix specified in `docs/rfc-integrity-context-default.md`.
+- **T0 now covers the provenance-label producers.** `axor_core.taint.ledger` and
+  `axor_core.taint.causal_root` are added to the `t0-producers-non-interpreting`
+  import contract and to the T0 scan test, with a ledger determinism check.
 
 ## 0.9.2 — 2026-07-13
 
