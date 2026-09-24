@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Changed
+
+- **Strict defaults to context-default integrity.** Unset, `integrity_default`
+  now follows the mode: `context` under Strict (`GovernedSession(mode=STRICT)`,
+  `GovernanceConfig` `mode: strict`, or `ToolCallGovernor` with either Strict
+  obligation), `clean` otherwise. `integrity_default: clean` under Strict is the
+  legacy opt-out and is logged.
+- **Breaking (Strict only): egress sinks must declare `driving_args`.** Under
+  Strict with `context`, construction fails for an egress sink without
+  `driving_args` — the whole-args fallback would refuse every call after an
+  untrusted read. Declare the allowlisted destination field, e.g.
+  `driving_args: {send_email: [to]}`.
+
 ### Added
 
 - **Context-default integrity (opt-in, `integrity_default: context`).** Once a node
@@ -15,7 +28,7 @@
   `TaintEngine(integrity_default=...)`, `ToolCallGovernor.register_task()` /
   `register_trusted()`, and the `integrity_default` key on `GovernanceConfig` /
   `GovernedSession`. Children inherit the context root; a child's task is trusted
-  only if its parent's context was clean. Default stays `clean`. A free-text `spawn_child`
+  only if its parent's context was clean. Default: `context` under Strict, `clean` otherwise (see Changed). A free-text `spawn_child`
   after untrusted data is admitted on the in-process spawn path
   (`IntentLoop(spawn_inherits_context=True)`, set by `GovernedNode`): it is judged
   on what the task visibly carries, and the child stays gated by the inherited

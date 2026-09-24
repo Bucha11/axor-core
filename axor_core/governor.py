@@ -27,7 +27,7 @@ from typing import Any
 from axor_core.contracts.anomaly import NormalizedIntent
 from axor_core.contracts.canonical import ConsequenceClass
 from axor_core.contracts.intent import Intent, IntentKind
-from axor_core.contracts.taint import TrustedOrigin
+from axor_core.contracts.taint import TrustedOrigin, resolve_integrity_default
 from axor_core.policy.normalizer import IntentNormalizer
 from axor_core.contracts.trace import (
     IntentDeniedEvent,
@@ -60,6 +60,7 @@ from axor_core.policy.provenance import (
 from axor_core.kernel.registration import (
     validate_driving_arg_allowlists,
     validate_egress_allowlists,
+    validate_egress_driving_args,
     tool_is_classified,
 )
 from axor_core.taint.engine import TaintEngine
@@ -156,7 +157,7 @@ class ToolCallGovernor:
         driving_args: "dict[str, list[str]] | None" = None,
         require_egress_allowlist: bool = False,
         require_tool_roles: bool = False,
-        integrity_default: str = "clean",
+        integrity_default: "str | None" = None,
         node_id: str = "",
     ) -> None:
         self._positional_sinks = frozenset(positional_sinks or ())
@@ -201,15 +202,22 @@ class ToolCallGovernor:
         # STRICT obligation: every egress sink must carry a destination allowlist
         # (an enum value_policy) — the sound, paraphrase-proof control. Fail closed
         # at construction rather than ship an egress sink on content-derivation alone.
+        # None = the STRICT default: the governor has no mode knob, so STRICT is
+        # its fail-closed obligations (either one) — "context" then, else "clean".
+        resolved_integrity = resolve_integrity_default(
+            integrity_default, strict=require_egress_allowlist or require_tool_roles,
+        )
         if require_egress_allowlist:
             errors = validate_egress_allowlists(self._egress_sinks, self._value_policies)
             errors += validate_driving_arg_allowlists(
                 self._egress_sinks, self._driving_args, self._value_policies
             )
+            if resolved_integrity == "context":
+                errors += validate_egress_driving_args(self._egress_sinks, self._driving_args)
             if errors:
                 raise ValueError("strict egress allowlist: " + "; ".join(errors))
         self._normalizer = IntentNormalizer()
-        self._taint = TaintEngine(node_id=node_id, integrity_default=integrity_default)
+        self._taint = TaintEngine(node_id=node_id, integrity_default=resolved_integrity)
         # Context-default integrity: operator allowlist members are values the
         # attacker cannot author. Seeding them keeps the trusted-origin proof
         # consistent with the enum supersession (T4) those members already carry.

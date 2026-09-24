@@ -47,6 +47,7 @@ from axor_core.extensions.registry import ExtensionRegistry
 from axor_core.extensions.sanitizer import ExtensionSanitizer
 from axor_core.worker.commands import SlashCommandRouter
 from axor_core.taint.engine import TaintEngine
+from axor_core.contracts.taint import resolve_integrity_default
 from axor_core.tokens import estimate_tokens
 
 _log = logging.getLogger("axor.session")
@@ -158,7 +159,7 @@ class GovernedSession:
         session_sink: "SessionSink | None" = None,
         context_taps: "list[ContextTap] | None" = None,
         per_node_degradation: bool = False,
-        integrity_default: str = "clean",
+        integrity_default: "str | None" = None,
     ) -> None:
         # Wall-clock the session was constructed — handed to sentinel in the
         # closed-session record (slow-and-low staging compares session start times).
@@ -219,17 +220,26 @@ class GovernedSession:
         # construction below (it knows the registered-tool universe); the flag also
         # rides into the loop so the lazy per-call check is consistent across paths.
         self._require_tool_roles = (mode == ExecutionMode.STRICT)
+        # None = the mode's default: "context" under STRICT, "clean" otherwise.
+        self._integrity_default = resolve_integrity_default(
+            integrity_default, strict=(mode == ExecutionMode.STRICT)
+        )
         self._benign_tools = frozenset(benign_tools or ())
         if self._require_egress_allowlist:
             from axor_core.kernel.registration import (
                 validate_egress_allowlists,
                 validate_driving_arg_allowlists,
+                validate_egress_driving_args,
                 validate_role_completeness,
             )
             _eg_errors = validate_egress_allowlists(self._egress_sinks, self._value_policies)
             _eg_errors += validate_driving_arg_allowlists(
                 self._egress_sinks, self._driving_args, self._value_policies
             )
+            if self._integrity_default == "context":
+                _eg_errors += validate_egress_driving_args(
+                    self._egress_sinks, self._driving_args
+                )
             if _eg_errors:
                 raise ValueError("strict egress allowlist: " + "; ".join(_eg_errors))
             # STRICT role completeness: every registered tool needs an explicit
@@ -376,9 +386,9 @@ class GovernedSession:
         # taint engine — persists across turns so taint is sticky within a session
         # integrity_default="context": a model-generated value carries the node's
         # context root unless it is a trusted value (docs/rfc-integrity-context-
-        # default.md). Children inherit the mode through inherit_value_ledger.
+        # default.md). Resolved above; children inherit it via inherit_value_ledger.
         self._taint_engine = TaintEngine(
-            node_id=self._session_id, integrity_default=integrity_default
+            node_id=self._session_id, integrity_default=self._integrity_default
         )
 
         # degradation engine — persists across turns; level is monotonically increasing

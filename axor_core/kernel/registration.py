@@ -109,6 +109,35 @@ def validate_egress_allowlists(
     return errors
 
 
+def validate_egress_driving_args(
+    egress_sinks: "frozenset[str] | set[str] | None",
+    driving_args: "dict[str, list[str] | frozenset[str] | set[str]] | None",
+) -> list[str]:
+    """STRICT obligation under ``integrity_default == "context"``: every declared
+    egress sink must declare its driving args.
+
+    In context mode a value the model writes is tainted once the node has read
+    untrusted data, unless it is a trusted value. Without driving args the whole
+    argument blob drives the decision, and the blob always contains model-written
+    content (a message body, a summary) — so after the first untrusted read the
+    sink refuses every call, even to an allowlisted destination. That is a
+    misconfiguration, and STRICT fails it at construction rather than at run time:
+    declare the destination field(s), which the enum allowlist already constrains
+    (docs/rfc-integrity-context-default.md §7). Returns one error per offending
+    sink (empty == valid).
+    """
+    da = driving_args or {}
+    return [
+        f"egress sink {sink!r} declares no driving_args: under STRICT with "
+        f"integrity_default='context' the whole argument blob would drive the "
+        f"integrity check, and it holds model-written content, so every call after "
+        f"an untrusted read would be refused — declare the destination field(s) "
+        f"(e.g. driving_args: {{{sink}: [to]}})"
+        for sink in sorted(frozenset(egress_sinks or ()))
+        if not (da.get(sink) or ())
+    ]
+
+
 def validate_driving_arg_allowlists(
     egress_sinks: "frozenset[str] | set[str] | None",
     driving_args: "dict[str, list[str] | frozenset[str] | set[str]] | None",

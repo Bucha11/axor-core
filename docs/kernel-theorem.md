@@ -123,9 +123,9 @@ behaviour asserted `xfail(strict=True)`), bounded where an `enum` allowlist guar
 the driving arg (T4, content-blind), and does not touch confidentiality (the floor is
 content-blind). The fix — model-generated values carry the context root unless they
 provably originate from a trusted source — is
-[rfc-integrity-context-default](rfc-integrity-context-default.md), available opt-in
-as `integrity_default="context"` (`axor_core/taint/engine.py`,
-`axor_core/taint/trusted.py`). Under it the same regressions pass and O2 holds on
+[rfc-integrity-context-default](rfc-integrity-context-default.md):
+`integrity_default="context"` (`axor_core/taint/engine.py`,
+`axor_core/taint/trusted.py`), the default under Strict and opt-in otherwise. Under it the same regressions pass and O2 holds on
 this edge with a new constructor, `generate(ctx) = mint(root(c) for c in ctx)`,
 and one declassification rule, whole-value equality with a trusted value
 (`tests/adversarial/test_context_default_property.py`: the mode never loosens the

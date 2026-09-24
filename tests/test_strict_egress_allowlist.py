@@ -49,6 +49,7 @@ def test_governor_strict_passes_with_allowlist_and_enforces_both():
     gov = ToolCallGovernor(
         egress_sinks={"send_email"},
         value_policies={"send_email": [enum("to", {"alice@corp.com"})]},
+        driving_args={"send_email": ["to"]},
         require_egress_allowlist=True,
     )
     # allowlist (sound): a recipient outside the set is denied regardless of taint
@@ -89,6 +90,7 @@ def test_strict_session_constructs_with_allowlist():
     s = _session(
         egress_sinks={"send_email"},
         value_policies={"send_email": [enum("to", {"alice@corp.com"})]},
+        driving_args={"send_email": ["to"]},
     )
     assert s is not None
 
@@ -168,6 +170,7 @@ def test_strict_session_fails_on_unclassified_tool():
             ["search_docs", "send_email", "get_time"],
             untrusted_sources={"search_docs"}, egress_sinks={"send_email"},
             value_policies={"send_email": [enum("to", {"a@b.com"})]},
+            driving_args={"send_email": ["to"]},
         )  # get_time unclassified
 
 
@@ -176,6 +179,48 @@ def test_strict_session_constructs_with_full_classification():
         ["search_docs", "send_email", "get_time"],
         untrusted_sources={"search_docs"}, egress_sinks={"send_email"},
         value_policies={"send_email": [enum("to", {"a@b.com"})]},
+        driving_args={"send_email": ["to"]},
         benign_tools={"get_time"},
     )
     assert s is not None
+
+
+# ── STRICT + context-default integrity: egress sinks must declare driving args ──
+
+from axor_core.kernel.registration import validate_egress_driving_args  # noqa: E402
+
+
+def test_validate_egress_driving_args_flags_a_sink_without_them():
+    errs = validate_egress_driving_args({"send_email", "post"}, {"post": ["url"]})
+    assert len(errs) == 1 and "send_email" in errs[0]
+
+
+def test_strict_governor_requires_driving_args_under_context():
+    """Without them the whole blob — which holds the model-written body — drives
+    the check, so every send after an untrusted read would be refused."""
+    pols = {"send_email": [enum("to", {"alice@corp.com"})]}
+    with pytest.raises(ValueError, match="declares no driving_args"):
+        ToolCallGovernor(egress_sinks={"send_email"}, value_policies=pols,
+                         require_egress_allowlist=True)
+    # the explicit legacy opt-out does not carry the obligation
+    ToolCallGovernor(egress_sinks={"send_email"}, value_policies=pols,
+                     require_egress_allowlist=True, integrity_default="clean")
+
+
+def test_strict_session_requires_driving_args_under_context():
+    with pytest.raises(ValueError, match="declares no driving_args"):
+        _session(egress_sinks={"send_email"},
+                 value_policies={"send_email": [enum("to", {"alice@corp.com"})]})
+
+
+def test_strict_with_driving_args_admits_a_summary_to_the_allowlisted_address():
+    gov = ToolCallGovernor(
+        untrusted_sources={"read_inbox"}, egress_sinks={"send_email"},
+        value_policies={"send_email": [enum("to", {"boss@corp.example"})]},
+        driving_args={"send_email": ["to"]},
+        require_egress_allowlist=True, require_tool_roles=True,
+    )
+    d = gov.evaluate("read_inbox", {})
+    gov.register_output(d, "Quarterly numbers: revenue up 4%.")
+    assert gov.evaluate("send_email", {"to": "boss@corp.example",
+                                       "body": "Summary: revenue up four percent"}).allowed

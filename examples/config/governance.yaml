@@ -174,17 +174,20 @@ driving_args:
   share_file: [to]
 
 
-# ── Integrity default for model-generated values (opt-in) ────────────────────────
+# ── Integrity default for model-generated values ─────────────────────────────────
 #
-# clean (default): a value the model writes is tainted only if it visibly contains
+# Unset, the mode decides: `context` under strict (this file), `clean` otherwise.
+#
+# clean: a value the model writes is tainted only if it visibly contains
 #   a registered fragment of an untrusted read — a re-encoded attacker IBAN / URL /
 #   path passes.
 # context: once a node has read untrusted data, a value the model writes into a
 #   driving arg is tainted unless it equals a trusted value (the user's task, an
 #   enum allowlist member, a benign tool's output, an endorsed value). Re-encoding
-#   no longer helps an attacker. Declare driving_args for every integrity sink.
+#   no longer helps an attacker. Under strict every egress sink must declare
+#   driving_args (above), or construction fails.
 #   See docs/rfc-integrity-context-default.md.
-# integrity_default: context
+# integrity_default: clean     # legacy opt-out under strict (logged)
 
 
 # ── Consequence overrides: raise/lower how irreversible a custom tool is ─────────

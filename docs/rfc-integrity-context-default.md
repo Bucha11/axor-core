@@ -1,6 +1,6 @@
 # RFC: Context-default integrity — prove trusted origin, not untrusted origin
 
-Status: **accepted; steps 1–4 implemented** (A2A deferred) · Scope: integrity axis of the per-value taint gate · Confidentiality: unchanged
+Status: **accepted; steps 1–4 and 6 (Strict) implemented** (A2A deferred; step 5 and the Production flip pending) · Scope: integrity axis of the per-value taint gate · Confidentiality: unchanged
 
 ---
 
@@ -280,7 +280,7 @@ modes before any default changes.
 5. **Measure** utility on AgentDojo / `axor-eval` in both modes.
 6. **Default flip**: `context` in the Strict profile first, then in Production if
    the measured cost is acceptable. `clean` stays as an explicit legacy opt-out
-   with a warning.
+   with a warning. *(Strict done — see §12; Production not flipped)*
 
 Ledger work (Aho-Corasick, a single-index `ValueRefLedger`, attribution accuracy)
 continues independently. After step 2 it affects attribution quality and
@@ -395,6 +395,32 @@ containment, bounds), `tests/adversarial/test_context_default_integrity.py`
   whole, so the new keys reach kernel events without a bridge change.
 
 Tests: `tests/kernel/test_replay_context_default.py`.
+
+## 12. Implementation notes (step 6, Strict)
+
+- **Resolution.** `integrity_default` defaults to `None`, meaning "the mode's
+  default" (`contracts.taint.resolve_integrity_default`): `context` under Strict,
+  `clean` otherwise. `GovernedSession` resolves it from `mode` (after a profile has
+  set it); `ToolCallGovernor`, which has no mode knob, treats either Strict
+  obligation (`require_egress_allowlist`, `require_tool_roles`) as Strict;
+  `GovernanceConfig` passes `None` through so the constructor decides. An explicit
+  value always wins; an explicit `clean` under Strict logs a warning.
+- **New Strict obligation (breaking for Strict configs).** Under Strict with
+  `context`, every declared egress sink must declare `driving_args`
+  (`kernel.registration.validate_egress_driving_args`), checked in all three
+  places the other Strict egress obligations are. Without it the whole argument
+  blob drives the check; it always holds model-written content (a body, a
+  summary), so after the first untrusted read the sink refused every call — found
+  when flipping the default: a summary to the allowlisted address was denied. This
+  is the §7 recommendation made mandatory. With `driving_args` on the allowlisted
+  field, egress behaves as before (the enum supersedes the integrity axis), and
+  the default flip closes the gap on outside-workspace writes and generated-code
+  execution, which Strict never constrained.
+- **Not flipped: Production.** Pending the utility measurement (step 5).
+- **Blast radius checked.** No other connected repository constructs a Strict
+  governor or session; `examples/config/governance.yaml` (Strict) already declares
+  `driving_args` for every egress sink and builds in `context` mode. Existing
+  Strict tests that omitted `driving_args` now declare them.
 
 ---
 

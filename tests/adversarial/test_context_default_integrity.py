@@ -129,19 +129,40 @@ def test_equivalent_attacker_path_write_is_denied(path):
     assert d.allowed is False
 
 
-@pytest.mark.xfail(reason=GAP, strict=True)
-def test_strict_does_not_cover_outside_workdir_writes():
-    """STRICT obliges an allowlist on egress sinks only. A write tool with a
-    legitimate declared role (a value policy on ``mode``) still admits an
-    equivalent spelling of the attacker path."""
+def _strict_write(**kw) -> bool:
+    """A STRICT governor (both obligations) with a write tool that has a legitimate
+    declared role — a value policy on ``mode`` — writing an equivalent spelling of
+    the attacker path. Returns whether it was allowed."""
     g = _write_governor(
         require_egress_allowlist=True,
         require_tool_roles=True,
         value_policies={"write": [numeric_range("mode", 0, 0o777)]},
+        **kw,
     )
     d = g.evaluate("write", {"path": "/etc/./cron.d/axor-helper-job",
                              "content": "x", "mode": 0o644})
-    assert d.allowed is False
+    return d.allowed
+
+
+def test_strict_defaults_to_context_and_denies_the_equivalent_path():
+    """STRICT obliges an allowlist on egress sinks only, so outside-workdir writes
+    had no sound control. STRICT now defaults to integrity_default="context"."""
+    assert _strict_write() is False
+
+
+@pytest.mark.xfail(reason=GAP + " — explicit legacy opt-out under STRICT", strict=True)
+def test_strict_with_explicit_clean_opt_out_keeps_the_gap():
+    assert _strict_write(integrity_default="clean") is False
+
+
+def test_strict_clean_opt_out_is_logged(caplog):
+    with caplog.at_level("WARNING", logger="axor.taint"):
+        _strict_write(integrity_default="clean")
+    assert "legacy opt-out" in caplog.text
+    caplog.clear()
+    with caplog.at_level("WARNING", logger="axor.taint"):
+        _strict_write()
+    assert "legacy opt-out" not in caplog.text
 
 
 # ══ integrity_default="context" — the RFC's fix ═══════════════════════════════

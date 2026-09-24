@@ -220,9 +220,10 @@ assert the *sound* behaviour and are marked expected-to-fail
 (`tests/adversarial/test_context_default_integrity.py`,
 `tests/test_tokenizer_evasion.py`), so the suite trips when the gap closes. The
 fix inverts the default: a model-generated value carries the taint of the model's
-context unless it provably originates from a trusted source. It is available
-opt-in as `integrity_default: context` (§12) and closes every case above; the
-default stays `clean` until its utility cost is measured
+context unless it provably originates from a trusted source. It is
+`integrity_default: context` (§12): the default under Strict (§10), opt-in in
+Library/Production until its utility cost there is measured. It closes every case
+above
 ([rfc-integrity-context-default](rfc-integrity-context-default.md)).
 
 **SSRF host classification.** The internal-destination gate (§2, step 5) classifies
@@ -293,13 +294,21 @@ It is within-session, distinct from the cross-session reputation graph (`axor-se
 
 ## 10. Modes
 
-| Mode | Isolation | Policy from task text | On ambiguity | Egress allowlist |
-|---|---|---|---|---|
-| Library | none (same process) | yes (classifier on) | escalate | optional |
-| Production | bypass attempts raise an error | yes | escalate | optional |
-| Strict | production + audit-required trace | no — operator sets policy | deny | **required** |
+| Mode | Isolation | Policy from task text | On ambiguity | Egress allowlist | Integrity default |
+|---|---|---|---|---|---|
+| Library | none (same process) | yes (classifier on) | escalate | optional | `clean` |
+| Production | bypass attempts raise an error | yes | escalate | optional | `clean` |
+| Strict | production + audit-required trace | no — operator sets policy | deny | **required** | `context` |
 
-Strict removes content-derived policy decisions entirely and fails closed. It adds
+Strict removes content-derived policy decisions entirely and fails closed. It runs
+`integrity_default: context` (§12): after an untrusted read, a model-written value
+drives a sink only if it is a trusted value, which closes the §7 gap on every sink
+— including outside-workspace writes and generated-code execution, which carry no
+allowlist obligation. Consequently **every declared egress sink must also declare
+its `driving_args`**: otherwise the whole argument blob, which always holds
+model-written content, drives the check and every call after an untrusted read is
+refused; Strict fails that at construction. `integrity_default: clean` restores
+the legacy behaviour under Strict and is logged as an opt-out. It adds
 one more obligation: **every declared egress sink must carry a destination
 allowlist** (an `enum` value policy on its destination argument). The per-value
 taint gate on an egress sink is content-derivation — sound in the deny direction
@@ -380,7 +389,8 @@ its tools. The operator declares their roles so the kernel can govern them:
   integrity axis — the confidentiality floor stays whole-call, so a secret in any
   field still cannot leave. Fail-safe: if a declared driving arg is absent from a
   call, the check falls back to the whole blob (never a bypass).
-- **`integrity_default`** — `clean` (default) or `context`. Under `context`, once a
+- **`integrity_default`** — `clean` or `context`; unset, the mode decides
+  (`context` under Strict, `clean` otherwise). Under `context`, once a
   node has read untrusted data, a value the model writes into a driving argument
   is tainted unless it equals a **trusted value**: the user's task, an `enum`
   allowlist member, the output of a trusted tool, or a governance-endorsed value.

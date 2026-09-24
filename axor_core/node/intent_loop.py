@@ -26,6 +26,7 @@ from axor_core.kernel.registration import (
     validate_value_policies,
     validate_egress_allowlists,
     validate_driving_arg_allowlists,
+    validate_egress_driving_args,
     tool_is_classified,
 )
 from axor_core.taint.engine import TaintEngine
@@ -290,6 +291,10 @@ class IntentLoop:
             _eg_errors += validate_driving_arg_allowlists(
                 self._egress_sinks, self._driving_args, self._value_policies
             )
+            if getattr(self._taint_engine, "integrity_default", "clean") == "context":
+                _eg_errors += validate_egress_driving_args(
+                    self._egress_sinks, self._driving_args
+                )
             if _eg_errors:
                 raise ValueError("strict egress allowlist: " + "; ".join(_eg_errors))
         _illegal = {s for s in self._positional_sinks if s.lower() in INSTRUCTION_COMPLETE_SINKS}

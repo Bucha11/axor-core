@@ -133,6 +133,7 @@ def test_from_config_builds_session():
         "value_policies": {
             "send_email": [{"arg": "to", "kind": "enum", "allowed": ["a@b.com"]}]
         },
+        "driving_args": {"send_email": ["to"]},
     })
     # empty capability executor → STRICT role-completeness check is skipped
     session = GovernedSession.from_config(
@@ -220,11 +221,28 @@ def test_federation_unknown_algorithm_fails_closed():
 
 # ── integrity_default (context-default integrity, RFC step 2) ─────────────────
 
-def test_integrity_default_defaults_to_clean():
-    cfg = GovernanceConfig.from_dict({})
-    assert cfg.integrity_default == "clean"
-    assert cfg.as_session_kwargs()["integrity_default"] == "clean"
-    assert cfg.as_governor_kwargs()["integrity_default"] == "clean"
+@pytest.mark.parametrize("mode, expected", [
+    ("library", "clean"), ("production", "clean"), ("strict", "context"),
+])
+def test_integrity_default_follows_the_mode(mode, expected):
+    """Unset, the mode decides: STRICT runs context-default integrity (RFC step 6),
+    library/production keep the legacy default."""
+    from axor_core import ToolCallGovernor
+    cfg = GovernanceConfig.from_dict({"mode": mode})
+    assert cfg.integrity_default is None
+    gov = ToolCallGovernor(**cfg.as_governor_kwargs())
+    assert gov._taint.integrity_default == expected
+    sess = GovernedSession.from_config(
+        EchoExecutor(), CapabilityExecutor(), cfg,
+        trace_config=TraceConfig(local_only=True, persist_inputs=False),
+    )
+    assert sess._taint_engine.integrity_default == expected
+
+
+def test_explicit_integrity_default_wins_over_the_mode():
+    from axor_core import ToolCallGovernor
+    cfg = GovernanceConfig.from_dict({"mode": "strict", "integrity_default": "clean"})
+    assert ToolCallGovernor(**cfg.as_governor_kwargs())._taint.integrity_default == "clean"
 
 
 def test_integrity_default_context_reaches_session_and_governor():

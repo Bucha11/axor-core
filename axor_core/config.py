@@ -70,7 +70,9 @@ class GovernanceConfig:
     # "clean" (legacy) or "context": whether a model-generated value that carries
     # no registered untrusted fragment is trusted, or carries the node's context
     # root unless it is a trusted value (docs/rfc-integrity-context-default.md).
-    integrity_default: str = "clean"
+    # None = the mode's default ("context" under strict, "clean" otherwise),
+    # resolved by the session / governor it is splatted into.
+    integrity_default: "str | None" = None
     # Built opt-in A2A objects (None when no `federation:` section). The gateway is
     # the receive side (which peer values to trust); the identity is the send side
     # (used by a transport adapter to mint our outgoing receipts).
@@ -101,8 +103,8 @@ class GovernanceConfig:
                 f"{[m.value for m in ExecutionMode]}"
             )
 
-        integrity_default = data.get("integrity_default", "clean")
-        if integrity_default not in INTEGRITY_DEFAULTS:
+        integrity_default = data.get("integrity_default")
+        if integrity_default is not None and integrity_default not in INTEGRITY_DEFAULTS:
             raise ValueError(
                 f"unknown integrity_default {integrity_default!r}; expected one of "
                 f"{sorted(INTEGRITY_DEFAULTS)}"

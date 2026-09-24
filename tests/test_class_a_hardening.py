@@ -23,6 +23,7 @@ def test_unclassified_tool_denied_when_require_tool_roles():
         value_policies={"send_money": [
             __import__("axor_core.policy.value_policy", fromlist=["enum"]).enum("recipient", ["GB-ALLOWED"])
         ]},
+        driving_args={"send_money": ["recipient"]},
         require_egress_allowlist=True,
         require_tool_roles=True,
     )
