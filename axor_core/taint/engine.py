@@ -3,9 +3,11 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
+from axor_core.contracts.taint import INTEGRITY_DEFAULTS, TrustedOrigin
 from axor_core.taint.causal_root import CausalRoot
 from axor_core.taint.fingerprint import content_fingerprint
 from axor_core.taint.ledger import ValueTaintLedger
+from axor_core.taint.trusted import TrustedValueIndex
 from axor_core.contracts.degradation import GovernanceAuthority
 from axor_core.contracts.trace import (
     TaintClearanceAttemptedEvent,
@@ -59,13 +61,39 @@ class TaintEngine:
     session-taint state — provenance lives on values, released by governance
     endorsement (per value) or cleared wholesale.
 
+    Integrity default for a model-generated value that carries no registered
+    untrusted fragment (``integrity_default``):
+
+    - ``"clean"`` (legacy): it derives ``constant()`` — trusted. A re-encoded copy
+      of an untrusted identifier therefore passes the integrity gate.
+    - ``"context"``: it carries this node's context root (every untrusted source
+      registered so far) unless the trusted-origin index proves it equals a value
+      the attacker cannot author (docs/rfc-integrity-context-default.md). Re-encoding
+      no longer helps an attacker: any spelling that is not literally a trusted
+      value is tainted. Confidentiality is unchanged in both modes.
+
     Thread-safety: not thread-safe. Each session has its own instance.
     """
 
-    def __init__(self, node_id: str = "") -> None:
+    def __init__(self, node_id: str = "", integrity_default: str = "clean") -> None:
+        if integrity_default not in INTEGRITY_DEFAULTS:
+            raise ValueError(
+                f"unknown integrity_default {integrity_default!r}; expected one of "
+                f"{sorted(INTEGRITY_DEFAULTS)}"
+            )
         self._node_id = node_id
+        self._integrity_default = integrity_default
         self._pending_events: list[TraceEvent] = []
         self._ledger = ValueTaintLedger()
+        # Context-default integrity. The context root is the join of every
+        # untrusted source this node's model has been shown (every tainted value
+        # registered here is a tool output / memory / child output / message the
+        # model reads). Integrity sources only: confidentiality stays on the floor.
+        # Per NODE, not per session — a session-wide root would taint every node
+        # once any one of them read untrusted data. The trusted index is the
+        # positive proof that lets a value escape the context root.
+        self._context_root = CausalRoot.constant()
+        self._trusted = TrustedValueIndex()
         # Session-wide SHADOW (observe-only, for the density comparison):
         # "has any tainted / any sensitive value ever been registered this session?"
         # This is what a coarse session-scoped model would gate on; it never feeds
@@ -93,11 +121,19 @@ class TaintEngine:
 
     # ── Per-value provenance (ValueProvenance) ────────────────────────────────
 
+    @property
+    def integrity_default(self) -> str:
+        """``"clean"`` (legacy) or ``"context"`` — see the class docstring."""
+        return self._integrity_default
+
     def register_value(self, content: object, root: CausalRoot) -> None:
         """Record that a value with the given causal_root produced this content."""
         self._ledger.register(content, root)
         if root.is_tainted:
             self._session_any_tainted = True
+            self._context_root = CausalRoot.mint(
+                self._context_root, CausalRoot(sources=root.sources)
+            )
         if root.sensitive:
             self._session_any_sensitive = True
             # Arm the floor on the READ fact, keyed by the secret's fingerprint —
@@ -132,15 +168,54 @@ class TaintEngine:
         return (self._session_any_tainted, self._session_any_sensitive)
 
     def derive_value(self, value: object) -> CausalRoot:
-        """Per-value causal root of `value` by content derivation. Clean (constant)
-        if it carries no registered tainted/sensitive content — the per-value win.
+        """Per-value causal root of `value`.
+
+        The ledger match attributes the untrusted/sensitive sources the value
+        visibly carries. In ``"clean"`` mode that is the whole answer — a value with
+        no match is trusted. In ``"context"`` mode, once this node's context holds
+        untrusted data, a value is additionally joined with the context root unless
+        every string leaf of it is a registered trusted value.
         """
-        return self._ledger.derive(value)
+        matched = self._ledger.derive(value)
+        if self._integrity_default != "context" or not self._context_root.is_tainted:
+            return matched
+        if self._trusted.covers(value):
+            return matched
+        return CausalRoot.mint(matched, self._context_root)
+
+    # ── Context-default integrity (ContextProvenance) ─────────────────────────
+
+    def register_trusted(self, content: object, origin: TrustedOrigin) -> None:
+        """Record values of ``content`` as having an origin the attacker cannot
+        author. Only the kernel's own wiring and the host call this — a worker has
+        no path to it (it is not a tool, and tool args never reach it)."""
+        self._trusted.register(content, TrustedOrigin(origin))
+
+    def context_root(self) -> CausalRoot:
+        """Join of the untrusted sources this node's model has been shown."""
+        return self._context_root
+
+    def trusted_origin(self, value: object) -> TrustedOrigin | None:
+        """The origin that makes ``value`` trusted, or None."""
+        return self._trusted.origin_of(value)
 
     def inherit_value_ledger(self, parent: "TaintEngine") -> None:
         """Inherit the parent's per-value provenance into this (child) engine so
         the child's per-value gate sees values the parent marked tainted/sensitive."""
         self._ledger.merge(parent._ledger)
+        # Context-default integrity: the child's model is launched from the
+        # parent's context (its task is written by the parent's model), so it
+        # starts with the parent's context root and never in a weaker mode. The
+        # parent's trusted values (its user task, operator config, trusted tool
+        # outputs) are still attacker-independent in the child.
+        parent_root = getattr(parent, "_context_root", None)
+        if parent_root is not None:
+            self._context_root = CausalRoot.mint(self._context_root, parent_root)
+        parent_trusted = getattr(parent, "_trusted", None)
+        if parent_trusted is not None:
+            self._trusted.merge(parent_trusted)
+        if getattr(parent, "_integrity_default", "clean") == "context":
+            self._integrity_default = "context"
         # Inherit the session-wide shadow too, so child density measurement is
         # comparable to the parent's (observe-only).
         self._session_any_tainted = self._session_any_tainted or parent._session_any_tainted
@@ -198,6 +273,9 @@ class TaintEngine:
         self._ledger = ValueTaintLedger()
         self._session_any_tainted = False
         self._session_any_sensitive = False
+        # Governance attests the context is released; the trusted index is kept —
+        # its values were attacker-independent before the clearance and still are.
+        self._context_root = CausalRoot.constant()
         self._outstanding = {}
         self._floor_saturated = False
         self._pending_events.append(TaintClearedEvent(
@@ -233,6 +311,11 @@ class TaintEngine:
         # desynchronising — the floor is released by identity, not by derive().
         self._outstanding.pop(content_fingerprint(content), None)
         removed = self._ledger.unregister(content)
+        # Context mode: endorsement is positive declassification — the endorsed
+        # value becomes a trusted value, so a later sink carrying it is not tainted
+        # by the context root either. (In "clean" mode unregistering already
+        # suffices; registering is harmless there and keeps the modes consistent.)
+        self._trusted.register(content, TrustedOrigin.ENDORSED)
         self._pending_events.append(TaintClearedEvent(
             kind=TraceEventKind.TAINT_CLEARED,
             node_id=self._node_id,

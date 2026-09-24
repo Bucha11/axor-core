@@ -28,6 +28,7 @@ from typing import Any
 
 from axor_core.contracts.canonical import ConsequenceClass
 from axor_core.contracts.mode import ExecutionMode
+from axor_core.contracts.taint import INTEGRITY_DEFAULTS
 from axor_core.policy.value_policy import ValuePredicate, enum, numeric_range
 
 # Recognised top-level keys. Anything else is a config error (fail closed).
@@ -37,6 +38,7 @@ _KNOWN_KEYS = frozenset({
     "positional_sinks", "imperative_sinks", "benign_tools",
     "value_policies", "consequence_overrides",
     "driving_args",
+    "integrity_default",
     "federation",
 })
 _CONSEQUENCE_BY_NAME = {c.name.lower(): c for c in ConsequenceClass}
@@ -65,6 +67,10 @@ class GovernanceConfig:
     driving_args: dict[str, list[str]] = field(default_factory=dict)
     # tool name -> action-class override (raise/lower how irreversible it is)
     consequence_overrides: dict[str, ConsequenceClass] = field(default_factory=dict)
+    # "clean" (legacy) or "context": whether a model-generated value that carries
+    # no registered untrusted fragment is trusted, or carries the node's context
+    # root unless it is a trusted value (docs/rfc-integrity-context-default.md).
+    integrity_default: str = "clean"
     # Built opt-in A2A objects (None when no `federation:` section). The gateway is
     # the receive side (which peer values to trust); the identity is the send side
     # (used by a transport adapter to mint our outgoing receipts).
@@ -95,8 +101,16 @@ class GovernanceConfig:
                 f"{[m.value for m in ExecutionMode]}"
             )
 
+        integrity_default = data.get("integrity_default", "clean")
+        if integrity_default not in INTEGRITY_DEFAULTS:
+            raise ValueError(
+                f"unknown integrity_default {integrity_default!r}; expected one of "
+                f"{sorted(INTEGRITY_DEFAULTS)}"
+            )
+
         return cls(
             mode=mode,
+            integrity_default=integrity_default,
             workspace=data.get("workspace"),
             profile=data.get("profile"),
             untrusted_sources=_as_set(data.get("untrusted_sources"), "untrusted_sources"),
@@ -143,6 +157,7 @@ class GovernanceConfig:
             "driving_args": dict(self.driving_args),
             # GovernedSession names the consequence-override table `danger`.
             "danger": dict(self.consequence_overrides),
+            "integrity_default": self.integrity_default,
         }
         if self.workspace is not None:
             kwargs["workspace"] = self.workspace
@@ -171,6 +186,7 @@ class GovernanceConfig:
             "consequence_overrides": dict(self.consequence_overrides),
             "require_egress_allowlist": self.mode is ExecutionMode.STRICT,
             "require_tool_roles": self.mode is ExecutionMode.STRICT,
+            "integrity_default": self.integrity_default,
         }
 
 

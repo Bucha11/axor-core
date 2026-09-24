@@ -15,7 +15,7 @@ the caller registers the returned root.
 from __future__ import annotations
 
 from axor_core.contracts.anomaly import NormalizedIntent
-from axor_core.contracts.taint import TaintSource
+from axor_core.contracts.taint import TaintSource, TrustedOrigin
 from axor_core.taint.causal_root import CausalRoot
 
 
@@ -56,6 +56,40 @@ def output_root(
         )
         return CausalRoot.external_read(TaintSource.FILE, sensitive=sensitive)
     return None
+
+
+def is_trusted_tool(
+    tool_name: str,
+    benign_tools: "frozenset[str] | set[str]",
+    *,
+    require_tool_roles: bool,
+) -> bool:
+    """Whether a clean read's output seeds the trusted-origin index (context-default
+    integrity). Called only for a tool whose ``output_root`` is ``None``.
+
+    Under STRICT roles only an explicitly declared ``benign_tools`` read is trusted.
+    Outside STRICT a read the normalizer classifies clean is trusted too — parity
+    with today, where such a read registers nothing and its values are clean
+    (docs/rfc-integrity-context-default.md §9, decision 1).
+    """
+    return tool_name in benign_tools or not require_tool_roles
+
+
+def seed_operator_trusted(taint: object, value_policies: "dict | None") -> None:
+    """Register every ``enum`` allowlist member as an operator-trusted value.
+
+    No-op for a backend without ``register_trusted`` (a custom trust model that
+    does not implement the context-default contract) and harmless in ``"clean"``
+    mode, where the index is never consulted.
+    """
+    register = getattr(taint, "register_trusted", None)
+    if register is None:
+        return
+    for preds in (value_policies or {}).values():
+        for p in preds or ():
+            if getattr(p, "kind", None) == "enum":
+                allowed = getattr(p, "allowed", None) or ()
+                register(sorted(allowed, key=repr), TrustedOrigin.OPERATOR)
 
 
 def source_tokens(sources: object) -> list[str]:

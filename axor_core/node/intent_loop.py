@@ -35,10 +35,13 @@ from axor_core.policy.provenance import (
     call_payload,
     declared_roles,
     output_root,
+    is_trusted_tool,
     result_payload,
+    seed_operator_trusted,
     source_tokens,
 )
 from axor_core.contracts.result import ExecutorEvent, ExecutorEventKind
+from axor_core.contracts.taint import TrustedOrigin
 from axor_core.contracts.trace import (
     CancelledEvent,
     IntentDeniedEvent,
@@ -254,6 +257,10 @@ class IntentLoop:
         # Explicitly-benign reads, kept for the lazy STRICT role check below.
         self._benign_tools = frozenset(benign_tools or ())
         self._require_tool_roles = require_tool_roles
+        # Context-default integrity: operator allowlist members are trusted values
+        # (the same seeding the synchronous governor does). No-op for a backend
+        # that does not implement the context-default contract.
+        seed_operator_trusted(self._taint_engine, self._value_policies)
         # Per-sink driving arguments — the fields the taint decision keys on
         # (whole-args by default). Narrows over-blocking of untrusted content sent
         # to a trusted destination.
@@ -1207,7 +1214,16 @@ class IntentLoop:
             sensitive_sources=self._sensitive_sources,
         )
         if root is None:
-            return  # clean read — nothing to register
+            # Clean read — no provenance to register. In context mode a trusted
+            # tool's output seeds the trusted-origin index, exactly as the
+            # synchronous governor's register_output does.
+            register_trusted = getattr(self._taint_engine, "register_trusted", None)
+            if register_trusted is not None and tool_name and is_trusted_tool(
+                str(tool_name), self._benign_tools,
+                require_tool_roles=self._require_tool_roles,
+            ):
+                register_trusted(result, TrustedOrigin.TOOL)
+            return
         self._taint_engine.register_value(result, root)
         self._record_taint_propagated(
             effective_intent.node_id, str(tool_name), result, root,

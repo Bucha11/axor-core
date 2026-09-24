@@ -27,6 +27,7 @@ from typing import Any
 from axor_core.contracts.anomaly import NormalizedIntent
 from axor_core.contracts.canonical import ConsequenceClass
 from axor_core.contracts.intent import Intent, IntentKind
+from axor_core.contracts.taint import TrustedOrigin
 from axor_core.policy.normalizer import IntentNormalizer
 from axor_core.contracts.trace import (
     IntentDeniedEvent,
@@ -51,6 +52,8 @@ from axor_core.policy.provenance import (
     call_payload,
     declared_roles,
     output_root,
+    is_trusted_tool,
+    seed_operator_trusted,
     result_payload,
     source_tokens,
 )
@@ -153,6 +156,7 @@ class ToolCallGovernor:
         driving_args: "dict[str, list[str]] | None" = None,
         require_egress_allowlist: bool = False,
         require_tool_roles: bool = False,
+        integrity_default: str = "clean",
         node_id: str = "",
     ) -> None:
         self._positional_sinks = frozenset(positional_sinks or ())
@@ -205,7 +209,11 @@ class ToolCallGovernor:
             if errors:
                 raise ValueError("strict egress allowlist: " + "; ".join(errors))
         self._normalizer = IntentNormalizer()
-        self._taint = TaintEngine(node_id=node_id)
+        self._taint = TaintEngine(node_id=node_id, integrity_default=integrity_default)
+        # Context-default integrity: operator allowlist members are values the
+        # attacker cannot author. Seeding them keeps the trusted-origin proof
+        # consistent with the enum supersession (T4) those members already carry.
+        seed_operator_trusted(self._taint, self._value_policies)
         # The value-ref vocabulary the kernel event schema is written in. The
         # gates decide on content derivation and need no ids; the RECORD does —
         # `arg_refs` and `value_ref` are what let a consumer bind a denied sink
@@ -403,7 +411,15 @@ class ToolCallGovernor:
             sensitive_sources=self._sensitive_sources,
         )
         if root is None:
-            return  # clean read — nothing to register
+            # Clean read — no provenance to register. In context mode a trusted
+            # tool's output seeds the trusted-origin index (a value copied from it
+            # is not tainted by the context root).
+            # A decision with no normalized intent names no tool: never trusted.
+            if tool_name and is_trusted_tool(
+                tool_name, self._benign_tools, require_tool_roles=self._require_tool_roles
+            ):
+                self._taint.register_trusted(output, TrustedOrigin.TOOL)
+            return
         self._taint.register_value(output, root)
         self._trace_events.append(
             TaintPropagatedEvent(
@@ -417,6 +433,21 @@ class ToolCallGovernor:
         )
 
     # ── introspection ────────────────────────────────────────────────────────
+
+    def register_task(self, task: object) -> None:
+        """Record the user's task as trusted (context-default integrity).
+
+        The synchronous governor never sees the prompt; the host framework does.
+        Call this with the user's own task text (each turn) so a destination the
+        user named is not tainted by the context root. Only the user's text belongs
+        here — a task written by a model is not trusted."""
+        self._taint.register_trusted(task, TrustedOrigin.TASK)
+
+    def register_trusted(
+        self, value: object, origin: TrustedOrigin = TrustedOrigin.OPERATOR
+    ) -> None:
+        """Record an operator-vouched value as trusted (context-default integrity)."""
+        self._taint.register_trusted(value, origin)
 
     def confidentiality_floor_active(self) -> bool:
         """True once a secret read has armed the egress floor this session."""

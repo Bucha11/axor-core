@@ -1,6 +1,6 @@
 # RFC: Context-default integrity — prove trusted origin, not untrusted origin
 
-Status: **accepted for implementation** (A2A deferred) · Scope: integrity axis of the per-value taint gate · Confidentiality: unchanged
+Status: **accepted; steps 1–2 implemented** (A2A deferred) · Scope: integrity axis of the per-value taint gate · Confidentiality: unchanged
 
 ---
 
@@ -258,6 +258,7 @@ trusted-origin is tainted. Expected over-blocks and their remedies:
 | Write a report to a path the model made up, outside the workdir | denied | inside-workdir writes are not integrity sinks; an outside path must come from task or config |
 | "Find the vendor's support address on their site and write to them" | denied | inherently attacker-shaped; needs escalation / lease / `endorse_value` |
 | Sink without `driving_args` after an untrusted read | denied (whole blob tainted) | declare `driving_args`. Strict should require them for every integrity sink in `context` mode |
+| `spawn_child` with a free-text task after an untrusted read | denied (`spawn_denied`: the task is model-generated FREE_TEXT under a tainted context, so the carrier gate refuses it) | none yet — see §10, open item |
 
 The utility impact must be measured, not guessed: the AgentDojo adapter
 (`examples/agentdojo/agentdojo_adapter.py`) and `axor-eval` suites run in both
@@ -269,7 +270,7 @@ modes before any default changes.
    `xfail(strict=True)` under `integrity_default="clean"`, plus the T0 contract
    fix (§5). Correct O2 in `docs/kernel-theorem.md` and §7 of
    `docs/governance-model.md` to describe current behaviour honestly.
-2. **Engine + contract** behind `integrity_default="context"` (off by default).
+2. **Engine + contract** behind `integrity_default="context"` (off by default). *(done — see §10)*
    The PoC test runs green in `context` mode. Add a property test: for random
    encodings `f` of an untrusted identifier, `derive(f(x))` is tainted unless
    `f(x) ∈ Trusted`.
@@ -299,6 +300,47 @@ performance only, not the integrity verdict.
 4. **A2A deferred.** No `sender_context_root` on the wire; intra-process edges
    are covered by `derive_value` on the sender, peer / federation keeps today's
    semantics (§3.4).
+
+## 10. Implementation notes (step 2)
+
+Where the implementation differs from, or goes beyond, the text above:
+
+- **The mode is a property of the trust-model backend**, not of the session
+  wiring: `TaintEngine(integrity_default=...)`, set through `GovernedSession`,
+  `ToolCallGovernor` and `GovernanceConfig`. A custom `ValueProvenance` backend that
+  does not implement `ContextProvenance` simply keeps its own semantics; the kernel
+  wiring (`register_trusted`, task registration) is a no-op for it. There is
+  therefore no "refused at construction" case.
+- **`TrustedOrigin.PEER`** is not added (A2A deferred).
+- **Trusted free text registers whole tokens**, not only identifier-shaped ones:
+  whole lines, whole whitespace / structural-delimiter tokens (≥ 2 chars), and typed
+  entities. The invariant that matters is unchanged: never a partial token or a
+  multi-token span, so `rm -rf /` from a trusted README line is not trusted.
+- **IBAN separators may sit anywhere**, including inside the check digits
+  (`GB3 3BUKB…`): found by the property test; stripping separators can only merge
+  spellings of the same IBAN.
+- **Spawn and endorsement are already wired** (planned for step 3): a root node's
+  task is trusted every turn; a child's task only if its inherited context is
+  clean; the child inherits the parent's context root and trusted index and never
+  runs in a weaker mode; `endorse_value` registers the value as `ENDORSED`;
+  `clear_by_governance` resets the context root and keeps the trusted index. Step 3
+  has no remaining work; the trace fields are step 4.
+- **Memory read-back taints the context.** Memory fragments are already registered
+  untrusted on load (`axor_core/worker/session.py`), so with a memory provider a
+  `context`-mode session starts with a tainted context root. Intended: memory can
+  be poisoned across sessions.
+- **Open item — spawn after untrusted data.** A free-text `spawn_child` task after
+  an untrusted read is refused by the carrier gate (§7). The child already inherits
+  the parent's context root, so its own sinks are gated by it; one option is to let
+  the spawn carrier gate read the ledger-only root in `context` mode, admitting the
+  spawn while the child stays context-tainted. Not done: it changes what the carrier
+  gate means and needs its own argument. Measure first (step 5).
+
+Tests: `tests/taint/test_trusted_index.py` (whole-value equality, never
+containment, bounds), `tests/adversarial/test_context_default_integrity.py`
+(legacy gaps as strict-xfail; the same attacks denied in `context` mode through
+`ToolCallGovernor` and `GovernedSession`, including spawn; utility flows allowed),
+`tests/adversarial/test_context_default_property.py` (hypothesis properties).
 
 ---
 

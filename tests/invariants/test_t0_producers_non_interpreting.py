@@ -33,6 +33,7 @@ _PRODUCER_MODULES = [
     "axor_core.node.canonicalizer",     # CanonicalizedIntent (raw-stripped projection)
     "axor_core.taint.ledger",           # provenance-label projection (driving_root)
     "axor_core.taint.causal_root",      # the label lattice and its constructors
+    "axor_core.taint.trusted",          # trusted-origin proof (context-default integrity)
 ]
 
 # Importing any of these from a producer would make the projection depend on a model

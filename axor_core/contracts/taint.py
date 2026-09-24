@@ -27,6 +27,25 @@ def carrier_join(a: Carrier, b: Carrier) -> Carrier:
     return _CARRIER_ORDER[max(_CARRIER_ORDER.index(a), _CARRIER_ORDER.index(b))]
 
 
+class TrustedOrigin(str, Enum):
+    """Where a value the attacker cannot author came from.
+
+    Used by the context-default integrity mode: once a node's context holds
+    untrusted data, a model-generated value is clean only if it provably equals a
+    value of one of these origins (docs/rfc-integrity-context-default.md).
+    """
+    TASK = "task"            # the user's task for this node
+    OPERATOR = "operator"    # operator configuration (enum allowlist members)
+    TOOL = "tool"            # output of a trusted tool
+    ENDORSED = "endorsed"    # released by governance endorsement
+
+
+# The two integrity defaults for a model-generated value that carries no
+# registered untrusted fragment. "clean": trusted (legacy). "context": carries the
+# node's context root unless it has a TrustedOrigin.
+INTEGRITY_DEFAULTS = frozenset({"clean", "context"})
+
+
 class TaintSource(str, Enum):
     """Origin of an external input that triggered a taint propagation."""
     WEB = "web"

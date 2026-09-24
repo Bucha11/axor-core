@@ -158,6 +158,7 @@ class GovernedSession:
         session_sink: "SessionSink | None" = None,
         context_taps: "list[ContextTap] | None" = None,
         per_node_degradation: bool = False,
+        integrity_default: str = "clean",
     ) -> None:
         # Wall-clock the session was constructed — handed to sentinel in the
         # closed-session record (slow-and-low staging compares session start times).
@@ -373,7 +374,12 @@ class GovernedSession:
         self._active_policy: ExecutionPolicy | None = None
 
         # taint engine — persists across turns so taint is sticky within a session
-        self._taint_engine = TaintEngine(node_id=self._session_id)
+        # integrity_default="context": a model-generated value carries the node's
+        # context root unless it is a trusted value (docs/rfc-integrity-context-
+        # default.md). Children inherit the mode through inherit_value_ledger.
+        self._taint_engine = TaintEngine(
+            node_id=self._session_id, integrity_default=integrity_default
+        )
 
         # degradation engine — persists across turns; level is monotonically increasing
         from axor_core.degradation.engine import DegradationEngine

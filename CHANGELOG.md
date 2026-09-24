@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+### Added
+
+- **Context-default integrity (opt-in, `integrity_default: context`).** Once a node
+  has read untrusted data, a value the model writes into a driving argument is
+  tainted unless it equals a trusted value — the user's task, an `enum` allowlist
+  member, a trusted tool's output, or a governance-endorsed value. Whole-value
+  equality after canonicalisation (IBAN separators/case, e-mail case, phone
+  separators), never containment. Closes the re-encoding gap below on every sink;
+  confidentiality is unchanged. New `axor_core/taint/trusted.py`
+  (`TrustedValueIndex`), `ContextProvenance` contract, `TrustedOrigin`,
+  `TaintEngine(integrity_default=...)`, `ToolCallGovernor.register_task()` /
+  `register_trusted()`, and the `integrity_default` key on `GovernanceConfig` /
+  `GovernedSession`. Children inherit the context root; a child's task is trusted
+  only if its parent's context was clean. Default stays `clean`. Known cost: a
+  free-text `spawn_child` after untrusted data is refused. See
+  `docs/rfc-integrity-context-default.md`.
+
 ### Security
 
 - **Documented an integrity gap on model-generated values.** The per-value

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
+from axor_core.contracts.taint import TrustedOrigin
 from axor_core.taint.causal_root import CausalRoot
 
 
@@ -47,4 +48,32 @@ class ValueProvenance(Protocol):
         silently downgrade the kernel's headline confidentiality guarantee, so the
         enforcement paths call it directly and a non-conforming backend fails loudly
         rather than degrading in silence."""
+        ...
+
+
+@runtime_checkable
+class ContextProvenance(ValueProvenance, Protocol):
+    """A trust model that supports the context-default integrity mode.
+
+    Under ``integrity_default == "context"`` a value the model generates carries
+    the node's :meth:`context_root` — every untrusted source registered so far —
+    unless it provably originates from a trusted source registered with
+    :meth:`register_trusted`. Proving trusted origin instead of untrusted origin
+    is what makes re-encoding an attacker value useless: any spelling that is not
+    literally a trusted value is tainted (docs/rfc-integrity-context-default.md).
+    """
+
+    integrity_default: str
+
+    def register_trusted(self, content: object, origin: "TrustedOrigin") -> None:
+        """Record values of ``content`` as having an origin the attacker cannot
+        author (the user's task, operator config, a trusted tool, an endorsement)."""
+        ...
+
+    def context_root(self) -> CausalRoot:
+        """Join of the untrusted sources this node's model has been shown."""
+        ...
+
+    def trusted_origin(self, value: object) -> "TrustedOrigin | None":
+        """The origin that makes ``value`` trusted, or None if it has none."""
         ...

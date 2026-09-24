@@ -53,7 +53,8 @@ forbidden_modules =
 # model — T0 constrains the producer, not the consumer, which is why the rule is
 # scoped to these producer modules, not to the whole kernel. The taint ledger and
 # causal_root produce the provenance-label projection the taint gate reads
-# (``driving_root``), so they are producers too.
+# (``driving_root``), and the trusted-origin index decides whether a value escapes
+# the context root (context-default integrity), so they are producers too.
 [importlinter:contract:t0-producers-non-interpreting]
 name = T0 — projection producers must not import the advisory/model surface
 type = forbidden
@@ -64,6 +65,7 @@ source_modules =
     axor_core.node.canonicalizer
     axor_core.taint.ledger
     axor_core.taint.causal_root
+    axor_core.taint.trusted
 forbidden_modules =
     axor_core.kernel.adjudicator
 

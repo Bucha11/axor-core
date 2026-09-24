@@ -219,8 +219,10 @@ and generated-code execution in every mode. This is recorded honestly — the te
 assert the *sound* behaviour and are marked expected-to-fail
 (`tests/adversarial/test_context_default_integrity.py`,
 `tests/test_tokenizer_evasion.py`), so the suite trips when the gap closes. The
-planned fix inverts the default: a model-generated value carries the taint of the
-model's context unless it provably originates from a trusted source
+fix inverts the default: a model-generated value carries the taint of the model's
+context unless it provably originates from a trusted source. It is available
+opt-in as `integrity_default: context` (§12) and closes every case above; the
+default stays `clean` until its utility cost is measured
 ([rfc-integrity-context-default](rfc-integrity-context-default.md)).
 
 **SSRF host classification.** The internal-destination gate (§2, step 5) classifies
@@ -378,6 +380,19 @@ its tools. The operator declares their roles so the kernel can govern them:
   integrity axis — the confidentiality floor stays whole-call, so a secret in any
   field still cannot leave. Fail-safe: if a declared driving arg is absent from a
   call, the check falls back to the whole blob (never a bypass).
+- **`integrity_default`** — `clean` (default) or `context`. Under `context`, once a
+  node has read untrusted data, a value the model writes into a driving argument
+  is tainted unless it equals a **trusted value**: the user's task, an `enum`
+  allowlist member, the output of a trusted tool, or a governance-endorsed value.
+  Equality is on whole values after canonicalisation (IBAN separators and case,
+  e-mail case, phone separators), never containment, so re-encoding an attacker
+  value no longer gets it past the gate (§7). Trusted tools are `benign_tools`, and
+  outside Strict also reads the normalizer classifies clean. The mode is per node;
+  a child inherits its parent's context, and a child's task counts as trusted only
+  if the parent's context was clean. `ToolCallGovernor` never sees the prompt: call
+  `register_task(text)` with the user's task each turn. Cost: after an untrusted
+  read, a sink whose driving value is not a trusted value is refused — including a
+  free-text `spawn_child` task — so declare `driving_args` for every integrity sink.
 
 A declared role takes precedence over the built-in heuristic; undeclared tools still
 get the heuristic. The same declaration is accepted by `GovernedSession` and

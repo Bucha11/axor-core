@@ -216,3 +216,29 @@ def test_federation_unknown_algorithm_fails_closed():
             {"peer_id": "x", "domain": "d", "kernel_version": "0.8.0",
              "algorithm": "rsa-9000", "shared_key_env": "X"}
         ]}})
+
+
+# ── integrity_default (context-default integrity, RFC step 2) ─────────────────
+
+def test_integrity_default_defaults_to_clean():
+    cfg = GovernanceConfig.from_dict({})
+    assert cfg.integrity_default == "clean"
+    assert cfg.as_session_kwargs()["integrity_default"] == "clean"
+    assert cfg.as_governor_kwargs()["integrity_default"] == "clean"
+
+
+def test_integrity_default_context_reaches_session_and_governor():
+    from axor_core import ToolCallGovernor
+    cfg = GovernanceConfig.from_dict({"integrity_default": "context"})
+    gov = ToolCallGovernor(**cfg.as_governor_kwargs())
+    assert gov._taint.integrity_default == "context"
+    sess = GovernedSession.from_config(
+        EchoExecutor(), CapabilityExecutor(), cfg,
+        trace_config=TraceConfig(local_only=True, persist_inputs=False),
+    )
+    assert sess._taint_engine.integrity_default == "context"
+
+
+def test_unknown_integrity_default_fails_closed():
+    with pytest.raises(ValueError, match="integrity_default"):
+        GovernanceConfig.from_dict({"integrity_default": "strict"})

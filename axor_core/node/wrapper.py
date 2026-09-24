@@ -22,6 +22,7 @@ from axor_core.contracts.envelope import ExecutionEnvelope
 from axor_core.contracts.extension import ExtensionBundle
 from axor_core.contracts.intent import Intent, IntentKind
 from axor_core.contracts.invokable import Invokable
+from axor_core.contracts.taint import TrustedOrigin
 from axor_core.contracts.policy import ExecutionPolicy, ExportMode
 
 # Export restrictiveness ordering (least → most leakage-restrictive). Used to narrow
@@ -229,6 +230,19 @@ class GovernedNode:
 
         # ── 2. Lineage ─────────────────────────────────────────────────────────
         lineage = self._build_lineage(raw_state)
+
+        # Context-default integrity: the task is a trusted value when the user
+        # wrote it. A root node's task is the user's (every turn). A child's task
+        # is written by the parent's model, so it is trusted only if the context
+        # it inherited is clean — otherwise it is model-generated under untrusted
+        # influence and must not become a trusted value in the child.
+        register_trusted = getattr(self._taint_engine, "register_trusted", None)
+        context_root = getattr(self._taint_engine, "context_root", None)
+        if register_trusted is not None and (
+            self._depth == 0
+            or (context_root is not None and not context_root().is_tainted)
+        ):
+            register_trusted(raw_state.task, TrustedOrigin.TASK)
 
         # register with trace collector
         if self._trace_collector:
