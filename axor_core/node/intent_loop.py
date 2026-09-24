@@ -167,8 +167,14 @@ class IntentLoop:
         trajectory_observers: "list | None" = None,
         invocation_recorder: "Callable[[str, dict, bool], None] | None" = None,
         admission: "AdmissionController | None" = None,
+        spawn_inherits_context: bool = False,
     ) -> None:
         self._executor = capability_executor
+        # True only when the spawn callback is the kernel's own GovernedNode spawn,
+        # which builds the child's engine by inheriting THIS engine (context root,
+        # trusted index, mode). A host that wires its own spawn_callback gets no
+        # such guarantee, so the default keeps the full spawn carrier gate.
+        self._spawn_inherits_context = spawn_inherits_context
         self._trace_events = trace_events
         self._depth = current_depth
         self._tool_result_callback = tool_result_callback
@@ -1116,7 +1122,24 @@ class IntentLoop:
         this engine's per-value ledger)."""
         if self._taint_engine is None:
             return None
-        driving_root = self._taint_engine.derive_value(spawn_args)
+        # Context-default integrity: the task a model writes after reading
+        # untrusted data is context-tainted, so the full carrier gate would refuse
+        # every free-text spawn. When the child provably inherits this node's
+        # context root, that adds nothing: every sink the child reaches is gated
+        # on the same context, and its capabilities cannot exceed this node's. So
+        # the spawn is judged on what the task visibly carries (the legacy label):
+        # a task that copies a registered untrusted fragment is still refused.
+        # Not applied to other imperative sinks — a message recipient, a shell or
+        # an interpreter does not run under this engine.
+        derive_carried = getattr(self._taint_engine, "derive_carried", None)
+        if (
+            self._spawn_inherits_context
+            and derive_carried is not None
+            and getattr(self._taint_engine, "integrity_default", "clean") == "context"
+        ):
+            driving_root = derive_carried(spawn_args)
+        else:
+            driving_root = self._taint_engine.derive_value(spawn_args)
         gd = carrier_gate(
             "spawn_child", spawn_args, None, driving_root, self._imperative_sinks
         )

@@ -374,6 +374,10 @@ class GovernedNode:
             current_depth=self._depth,
             tool_result_callback=tool_result_callback,
             spawn_callback=_spawn_child_callback,
+            # _handle_spawn builds the child's engine by inheriting this one
+            # (context root, trusted index, integrity mode), so the loop may judge
+            # a spawn on what the task visibly carries — see _spawn_taint_reason.
+            spawn_inherits_context=True,
             escalation_callback=self._escalation_callback,
             taint_engine=self._taint_engine,
             degradation_engine=self._degradation_engine,

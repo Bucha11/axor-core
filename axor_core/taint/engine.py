@@ -185,6 +185,13 @@ class TaintEngine:
 
     # ── Context-default integrity (ContextProvenance) ─────────────────────────
 
+    def derive_carried(self, value: object) -> CausalRoot:
+        """Only what ``value`` visibly carries (the ledger match), without the
+        context root — the legacy label, in either mode. For a decision whose
+        recipient provably inherits this node's context root, where joining it
+        again would only duplicate a gate the recipient already runs."""
+        return self._ledger.derive(value)
+
     def register_trusted(self, content: object, origin: TrustedOrigin) -> None:
         """Record values of ``content`` as having an origin the attacker cannot
         author. Only the kernel's own wiring and the host call this — a worker has

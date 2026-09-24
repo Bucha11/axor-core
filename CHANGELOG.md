@@ -15,9 +15,11 @@
   `TaintEngine(integrity_default=...)`, `ToolCallGovernor.register_task()` /
   `register_trusted()`, and the `integrity_default` key on `GovernanceConfig` /
   `GovernedSession`. Children inherit the context root; a child's task is trusted
-  only if its parent's context was clean. Default stays `clean`. Known cost: a
-  free-text `spawn_child` after untrusted data is refused. See
-  `docs/rfc-integrity-context-default.md`.
+  only if its parent's context was clean. Default stays `clean`. A free-text `spawn_child`
+  after untrusted data is admitted on the in-process spawn path
+  (`IntentLoop(spawn_inherits_context=True)`, set by `GovernedNode`): it is judged
+  on what the task visibly carries, and the child stays gated by the inherited
+  context. See `docs/rfc-integrity-context-default.md`.
 
 ### Security
 

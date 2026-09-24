@@ -391,8 +391,10 @@ its tools. The operator declares their roles so the kernel can govern them:
   a child inherits its parent's context, and a child's task counts as trusted only
   if the parent's context was clean. `ToolCallGovernor` never sees the prompt: call
   `register_task(text)` with the user's task each turn. Cost: after an untrusted
-  read, a sink whose driving value is not a trusted value is refused — including a
-  free-text `spawn_child` task — so declare `driving_args` for every integrity sink.
+  read, a sink whose driving value is not a trusted value is refused, so declare
+  `driving_args` for every integrity sink. A free-text `spawn_child` is still
+  admitted on the in-process path (judged on what the task visibly carries), because
+  the child inherits the context and its sinks stay gated.
 
 A declared role takes precedence over the built-in heuristic; undeclared tools still
 get the heuristic. The same declaration is accepted by `GovernedSession` and

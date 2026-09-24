@@ -258,7 +258,7 @@ trusted-origin is tainted. Expected over-blocks and their remedies:
 | Write a report to a path the model made up, outside the workdir | denied | inside-workdir writes are not integrity sinks; an outside path must come from task or config |
 | "Find the vendor's support address on their site and write to them" | denied | inherently attacker-shaped; needs escalation / lease / `endorse_value` |
 | Sink without `driving_args` after an untrusted read | denied (whole blob tainted) | declare `driving_args`. Strict should require them for every integrity sink in `context` mode |
-| `spawn_child` with a free-text task after an untrusted read | denied (`spawn_denied`: the task is model-generated FREE_TEXT under a tainted context, so the carrier gate refuses it) | none yet — see §10, open item |
+| `spawn_child` with a free-text task after an untrusted read | allowed on the in-process spawn path; the child inherits the context root, so its sinks stay gated (§10) | a task that copies a registered untrusted fragment is still refused at the spawn |
 
 The utility impact must be measured, not guessed: the AgentDojo adapter
 (`examples/agentdojo/agentdojo_adapter.py`) and `axor-eval` suites run in both
@@ -329,12 +329,33 @@ Where the implementation differs from, or goes beyond, the text above:
   untrusted on load (`axor_core/worker/session.py`), so with a memory provider a
   `context`-mode session starts with a tainted context root. Intended: memory can
   be poisoned across sessions.
-- **Open item — spawn after untrusted data.** A free-text `spawn_child` task after
-  an untrusted read is refused by the carrier gate (§7). The child already inherits
-  the parent's context root, so its own sinks are gated by it; one option is to let
-  the spawn carrier gate read the ledger-only root in `context` mode, admitting the
-  spawn while the child stays context-tainted. Not done: it changes what the carrier
-  gate means and needs its own argument. Measure first (step 5).
+- **Spawn after untrusted data (decided: admitted, child stays gated).** With the
+  full context label, every free-text `spawn_child` after an untrusted read would be
+  refused by the carrier gate. On the in-process spawn path the spawn is instead
+  judged on what the task visibly carries (`derive_carried`, the legacy label), so a
+  task that copies a registered untrusted fragment is still refused. The argument:
+  the child inherits the parent's context root, trusted index and mode; its task is
+  not a trusted value; its capabilities cannot exceed the parent's; and its output
+  returns re-minted (or, under federation, derived under the child's tainted
+  context). Every effect the child can reach is therefore gated exactly as it would
+  be for the parent, and whatever parent and child pass to each other does not
+  change that — the parent could have made the same calls itself.
+  Scope of the argument, and so of the relaxation:
+  - only `IntentLoop(spawn_inherits_context=True)`, which only `GovernedNode` sets,
+    because its `_handle_spawn` builds the child's engine by inheriting the
+    parent's. A loop with a host-supplied `spawn_callback`, and `ToolCallGovernor`
+    (the framework owns the sub-agent), keep the full label;
+  - only `spawn_child`. Other imperative sinks keep the full label: a message
+    recipient in another process, a shell or an interpreter does not run under
+    this engine.
+  What does change is not reachability but likelihood: an injection moved from a
+  tool result into the child's task is more likely to be followed. That matters
+  only for actions no integrity gate covers (reads, writes inside the workspace,
+  asking a human to escalate), which the parent could equally be steered into;
+  the kernel assumes the model may be fully compromised either way. With
+  `per_node_degradation`, a child's denials tighten only the child, so an attacker
+  can probe gates across children without degrading the parent; this is bounded by
+  `max_total_spawns` and is the same as before this RFC.
 
 Tests: `tests/taint/test_trusted_index.py` (whole-value equality, never
 containment, bounds), `tests/adversarial/test_context_default_integrity.py`

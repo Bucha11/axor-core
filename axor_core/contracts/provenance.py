@@ -74,6 +74,10 @@ class ContextProvenance(ValueProvenance, Protocol):
         """Join of the untrusted sources this node's model has been shown."""
         ...
 
+    def derive_carried(self, value: object) -> CausalRoot:
+        """What ``value`` visibly carries, without the context root."""
+        ...
+
     def trusted_origin(self, value: object) -> "TrustedOrigin | None":
         """The origin that makes ``value`` trusted, or None if it has none."""
         ...
