@@ -24,7 +24,13 @@ replay agree on these keys):
   data-flow roles for this tool, which is what the taint gate keys on and what
   ``normalized`` cannot tell you: the normalizer classifies structurally from the
   tool's name, so a deployment's ``send_email`` normalises to
-  ``destination_kind: none`` and looks like a local no-op}`` — ``verdict`` on the
+  ``destination_kind: none`` and looks like a local no-op; and, only for a call
+  decided under ``integrity_default == "context"``: "integrity_default":
+  "context", "context_root" and "driving_carried" (roots as above), and per
+  argument in ``arg_provenance`` "trusted": bool and "trusted_origin": origin
+  name or null — ``driving_root`` is ``driving_carried`` joined with
+  ``context_root`` unless every driving arg is trusted, and replay re-derives it
+  from these parts (``policy.from_record.context_record``)}`` — ``verdict`` on the
   event is the recorded overall gate verdict for this call; ``gate`` is the
   denying gate's category if denied. A REFUSED tool call is a TOOL_CALL with
   ``verdict: deny``, not a DENIAL: this branch is the only one replay re-gates,

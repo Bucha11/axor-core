@@ -78,6 +78,10 @@ class ContextProvenance(ValueProvenance, Protocol):
         """What ``value`` visibly carries, without the context root."""
         ...
 
+    def is_trusted(self, value: object) -> bool:
+        """Whether ``value`` escapes the context root (every string leaf trusted)."""
+        ...
+
     def trusted_origin(self, value: object) -> "TrustedOrigin | None":
         """The origin that makes ``value`` trusted, or None if it has none."""
         ...

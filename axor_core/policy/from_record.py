@@ -30,6 +30,7 @@ of a trace that cannot support one.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
 from axor_core.contracts.anomaly import NormalizedIntent
@@ -38,8 +39,11 @@ from axor_core.taint.causal_root import CausalRoot
 
 __all__ = [
     "DECISIVE_NORMALIZED_FIELDS",
+    "ContextRecord",
     "IncompleteRecord",
     "causal_root_from_record",
+    "context_driving_root",
+    "context_record",
     "normalized_from_record",
 ]
 
@@ -122,3 +126,82 @@ def causal_root_from_record(root: dict[str, Any] | None) -> CausalRoot:
         except ValueError:
             sources.add(TaintSource.UNKNOWN_EXTERNAL)
     return CausalRoot(sources=frozenset(sources), sensitive=bool(record.get("sensitive")))
+
+
+# ── context-default integrity (docs/rfc-integrity-context-default.md) ─────────
+
+
+@dataclass(frozen=True)
+class ContextRecord:
+    """What a ``integrity_default == "context"`` verdict turned on, from the record.
+
+    The recorded ``driving_root`` is ``driving_carried ⊔ (context_root if any
+    driving arg is not a trusted value)``. Keeping the parts lets a consumer
+    re-derive it for a different set of driving args, or a different context.
+    """
+
+    context_root: CausalRoot
+    driving_carried: CausalRoot
+    trusted_args: frozenset[str]
+
+
+def context_record(payload: dict[str, Any], *, where: str = "") -> ContextRecord | None:
+    """The context-mode parts of a recorded TOOL_CALL, or ``None`` for a legacy
+    (``"clean"``) record.
+
+    Fails closed: a record that says it was decided in context mode but lacks a
+    part raises :class:`IncompleteRecord`. Every argument must state whether it
+    was a trusted value — absent is not True, since True would drop the context
+    root and could turn a recorded DENY into an ALLOW.
+    """
+    if payload.get("integrity_default") != "context":
+        return None
+    missing = [k for k in ("context_root", "driving_carried") if k not in payload]
+    provenance = payload.get("arg_provenance")
+    if not isinstance(provenance, dict):
+        missing.append("arg_provenance")
+        provenance = {}
+    for name in payload.get("args") or {}:
+        if "trusted" not in (provenance.get(name) or {}):
+            missing.append(f"arg_provenance.{name}.trusted")
+    if missing:
+        raise IncompleteRecord(missing, where)
+    return ContextRecord(
+        context_root=causal_root_from_record(payload["context_root"]),
+        driving_carried=causal_root_from_record(payload["driving_carried"]),
+        trusted_args=frozenset(
+            name for name, entry in provenance.items()
+            if isinstance(entry, dict) and entry.get("trusted") is True
+        ),
+    )
+
+
+def context_driving_root(
+    record: ContextRecord,
+    args: dict[str, Any],
+    drivers: "frozenset[str] | set[str] | list[str] | None",
+    *,
+    carried: CausalRoot | None = None,
+    extra_context: CausalRoot | None = None,
+) -> CausalRoot:
+    """Re-derive a context-mode driving root, the way ``TaintEngine`` does.
+
+    ``drivers`` selects the driving args exactly as the gate does
+    (:func:`~axor_core.policy.gates.driving_subset`). ``carried`` replaces the
+    recorded ``driving_carried`` when the caller re-derived it (from value refs,
+    under synthetic taint or excision). ``extra_context`` joins more untrusted
+    sources into the recorded context root — a counterfactual can only add to
+    what the model was shown, never remove it.
+    """
+    from axor_core.policy.gates import driving_subset
+
+    base = record.driving_carried if carried is None else carried
+    context = record.context_root
+    if extra_context is not None:
+        context = CausalRoot.mint(context, extra_context)
+    if not context.is_tainted:
+        return base
+    names = driving_subset(dict(args or {}), drivers).keys()
+    if all(name in record.trusted_args for name in names):
+        return base
+    return CausalRoot.mint(base, CausalRoot(sources=context.sources))

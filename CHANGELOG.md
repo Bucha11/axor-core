@@ -20,6 +20,12 @@
   (`IntentLoop(spawn_inherits_context=True)`, set by `GovernedNode`): it is judged
   on what the task visibly carries, and the child stays gated by the inherited
   context. See `docs/rfc-integrity-context-default.md`.
+- **Context-mode verdicts are replayable.** A `TOOL_CALL` decided under
+  `integrity_default: context` records `context_root`, `driving_carried` and, per
+  argument, `trusted` / `trusted_origin` (legacy records unchanged). Replay folds
+  a per-node `context_root` and re-derives the driving root from these parts, so
+  counterfactual driving args and synthetic taint re-decide the call;
+  `policy.from_record.context_record` fails closed on an incomplete record.
 
 ### Security
 

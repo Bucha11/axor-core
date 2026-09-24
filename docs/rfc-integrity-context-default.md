@@ -1,6 +1,6 @@
 # RFC: Context-default integrity — prove trusted origin, not untrusted origin
 
-Status: **accepted; steps 1–2 implemented** (A2A deferred) · Scope: integrity axis of the per-value taint gate · Confidentiality: unchanged
+Status: **accepted; steps 1–4 implemented** (A2A deferred) · Scope: integrity axis of the per-value taint gate · Confidentiality: unchanged
 
 ---
 
@@ -276,8 +276,7 @@ modes before any default changes.
    `f(x) ∈ Trusted`.
 3. **Boundaries**: spawn and endorsement (§3.4). Messaging and federation are
    deferred to a follow-up RFC.
-4. **Trace / replay / from_record** fields, and a Control Plane consumer update in
-   `axor-control-plane`.
+4. **Trace / replay / from_record** fields. *(done — see §11)*
 5. **Measure** utility on AgentDojo / `axor-eval` in both modes.
 6. **Default flip**: `context` in the Strict profile first, then in Production if
    the measured cost is acceptable. `clean` stays as an explicit legacy opt-out
@@ -362,6 +361,40 @@ containment, bounds), `tests/adversarial/test_context_default_integrity.py`
 (legacy gaps as strict-xfail; the same attacks denied in `context` mode through
 `ToolCallGovernor` and `GovernedSession`, including spawn; utility flows allowed),
 `tests/adversarial/test_context_default_property.py` (hypothesis properties).
+
+## 11. Implementation notes (step 4)
+
+- **What a context-mode `TOOL_CALL` records** (`policy/provenance.py`,
+  `call_payload`): `integrity_default: "context"`, `context_root`,
+  `driving_carried` (the ledger-only root of the driving subset), and per argument
+  in `arg_provenance` `trusted` (the argument is a trusted value, judged as
+  `{name: value}` so nested keys count as data, exactly as inside the driving
+  subset) and `trusted_origin`. Labels and booleans only, no content. Legacy
+  records are byte-identical. Both paths record it through the one builder.
+- **Replay** (`kernel/replay.py`) folds `GovernanceState.context_root` from every
+  tainted `TOOL_RESULT` and `MESSAGE_RECEIVED` root, synthetic taint included, and
+  re-derives a context-mode driving root as `carried ⊔ (context if any driving arg
+  is not trusted)`: carried from `arg_refs` when they resolve (so excision and
+  synthetic taint on refs still flow), else the recorded `driving_carried`;
+  context is the recorded root joined with the fold's (a counterfactual can add to
+  what the model saw, never remove); driving args come from the config when it
+  declares the tool, else from the record. A counterfactual on driving args, or
+  synthetic taint on a read, therefore re-decides instead of echoing the recorded
+  answer. A record missing a part falls back to the recorded `driving_root`.
+- **`from_record`** gains `context_record` (fails closed with `IncompleteRecord`
+  when a context-mode record lacks a part — an argument with no `trusted` is not
+  trusted) and `context_driving_root`, the same derivation for other consumers.
+- **Differences from §4.** No `trusted`-labelled `TOOL_RESULT` refs: trust is
+  recorded per argument at the call, which is all a re-derivation needs, and it
+  needs no new event kind in the axor-wrap bridge. The cost is that "what if this
+  trusted tool were untrusted" is not an expressible counterfactual. No Control
+  Plane change: its converter (`lab_export.py`) decides on the recorded
+  `driving_root` and mints model-composed values from `arg_provenance` sources
+  joined over the live untrusted values — which is already the context-mode
+  semantics. The axor-wrap bridge copies `TOOL_CALL` / `TOOL_RESULT` payloads
+  whole, so the new keys reach kernel events without a bridge change.
+
+Tests: `tests/kernel/test_replay_context_default.py`.
 
 ---
 

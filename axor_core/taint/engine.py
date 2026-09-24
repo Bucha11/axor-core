@@ -206,6 +206,11 @@ class TaintEngine:
         """The origin that makes ``value`` trusted, or None."""
         return self._trusted.origin_of(value)
 
+    def is_trusted(self, value: object) -> bool:
+        """Whether ``value`` escapes the context root: every string leaf is a
+        trusted value (vacuously true for a value with no string leaf)."""
+        return self._trusted.covers(value)
+
     def inherit_value_ledger(self, parent: "TaintEngine") -> None:
         """Inherit the parent's per-value provenance into this (child) engine so
         the child's per-value gate sees values the parent marked tainted/sensitive."""

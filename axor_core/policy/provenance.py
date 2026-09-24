@@ -291,11 +291,48 @@ def call_payload(
     }
     if arg_refs:
         payload["arg_refs"] = arg_refs
+    if getattr(taint, "integrity_default", "clean") == "context":
+        _add_context_fields(payload, taint, args or {}, driving_subset(args or {}, driving))
     if normalized is not None:
         payload["normalized"] = normalized_payload(normalized)
     if roles is not None:
         payload["roles"] = dict(roles)
     return payload
+
+
+def _root_payload(root: object) -> "dict[str, object]":
+    return {
+        "sources": source_tokens(root.sources),  # type: ignore[attr-defined]
+        "sensitive": bool(root.sensitive),  # type: ignore[attr-defined]
+    }
+
+
+def _add_context_fields(
+    payload: "dict[str, object]", taint: object, args: dict, driving: dict,
+) -> None:
+    """Record what a context-mode verdict turned on, so it can be re-derived.
+
+    Under ``integrity_default == "context"`` the driving root is
+    ``driving_carried ⊔ (context_root if any driving arg is not a trusted value)``.
+    Recording the three parts — and, per argument, whether it is a trusted value —
+    lets replay re-derive the root under a counterfactual (different driving args,
+    synthetic taint, an excised ref) instead of echoing the recorded answer. No
+    content is recorded: roots are labels, trust is a boolean and an origin name.
+    Legacy (``"clean"``) payloads are left byte-identical.
+    """
+    payload["integrity_default"] = "context"
+    payload["context_root"] = _root_payload(taint.context_root())  # type: ignore[attr-defined]
+    payload["driving_carried"] = _root_payload(taint.derive_carried(driving))  # type: ignore[attr-defined]
+    provenance = payload.get("arg_provenance")
+    if not isinstance(provenance, dict):
+        return
+    for name, value in args.items():
+        entry = provenance.setdefault(name, {})
+        # Wrapped as {name: value}: the same leaves the gate's check sees for this
+        # argument inside the driving subset (a nested dict's keys are data).
+        entry["trusted"] = bool(taint.is_trusted({name: value}))  # type: ignore[attr-defined]
+        origin = taint.trusted_origin(value)  # type: ignore[attr-defined]
+        entry["trusted_origin"] = getattr(origin, "value", None)
 
 
 def result_payload(

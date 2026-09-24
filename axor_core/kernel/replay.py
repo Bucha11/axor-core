@@ -50,6 +50,11 @@ from axor_core.kernel.events import (
 from axor_core.kernel.errors import SchemaVersionError
 from axor_core.kernel.messaging import fold_carried_root
 from axor_core.kernel.state import GovernanceState
+from axor_core.policy.from_record import (
+    IncompleteRecord,
+    context_driving_root,
+    context_record,
+)
 from axor_core.policy.gates import (
     GateDecision,
     carrier_gate,
@@ -161,9 +166,46 @@ def root_from_payload(d: dict | None) -> CausalRoot:
 def _derive_driving_root(
     payload: dict, state: GovernanceState, config: KernelConfig
 ) -> CausalRoot:
+    """The driving root to re-gate a recorded TOOL_CALL on.
+
+    Legacy records: re-derived from ``arg_refs`` when they resolve, else the
+    recorded ``driving_root``. Context-default records
+    (``integrity_default == "context"``): the carried part comes from the same
+    refs (else the recorded ``driving_carried``), and the context root is joined
+    in unless every driving arg — chosen by the config's ``driving_args`` for
+    this tool when it declares them, else by the recorded ones — was a trusted
+    value. The context root is the recorded one joined with the fold's, so
+    synthetic taint reaches it; a record missing a context part falls back to
+    the recorded ``driving_root``.
+    """
+    try:
+        record = context_record(payload)
+    except IncompleteRecord:
+        return root_from_payload(payload.get("driving_root"))
+    refs_root = _refs_root(payload, state, config)
+    if record is None:
+        if refs_root is None:
+            return root_from_payload(payload.get("driving_root"))
+        return refs_root
+    tool = str(payload.get("tool", ""))
+    if tool in config.driving_args:
+        drivers = config.driving_args.get(tool)
+    else:
+        drivers = payload.get("driving_args") or None
+    return context_driving_root(
+        record, payload.get("args") or {}, drivers,
+        carried=refs_root, extra_context=state.context_root,
+    )
+
+
+def _refs_root(
+    payload: dict, state: GovernanceState, config: KernelConfig
+) -> CausalRoot | None:
+    """The root re-derived from ``arg_refs``, or ``None`` to fall back to what
+    the producer recorded."""
     arg_refs = payload.get("arg_refs") or {}
     if not arg_refs:
-        return root_from_payload(payload.get("driving_root"))
+        return None
     roots = []
     excised = False
     unresolved = False
@@ -194,8 +236,14 @@ def _derive_driving_root(
         # exact direction that hides a breach. The producer recorded the root it
         # actually gated on; fall back to it, the same as for a payload with no
         # refs at all.
-        return root_from_payload(payload.get("driving_root"))
+        return None
     return CausalRoot.constant()
+
+
+def _join_context(context: CausalRoot, root: CausalRoot) -> CausalRoot:
+    """Fold a value the model was shown into the context root — integrity
+    sources only, as ``TaintEngine.register_value`` does."""
+    return CausalRoot.mint(context, CausalRoot(sources=root.sources))
 
 
 def evaluate_call(
@@ -348,6 +396,8 @@ def replay(
                     root = CausalRoot.mint(root, CausalRoot.cross_process_in())
                 if root.is_tainted or root.sensitive:
                     state.tainted_refs[str(ref)] = root
+                if root.is_tainted:
+                    state.context_root = _join_context(state.context_root, root)
                 if root.sensitive:
                     state.floor_active = True
         elif event.kind is EventKind.MESSAGE_RECEIVED:
@@ -367,6 +417,8 @@ def replay(
                     root = CausalRoot.mint(prior, root)
                 if root.is_tainted or root.sensitive:
                     state.tainted_refs[str(ref)] = root
+                if root.is_tainted:
+                    state.context_root = _join_context(state.context_root, root)
                 if root.sensitive:
                     state.floor_active = True
         elif event.kind is EventKind.FACT:
