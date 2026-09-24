@@ -230,6 +230,7 @@ class GovernedSession:
                 validate_egress_allowlists,
                 validate_driving_arg_allowlists,
                 validate_egress_driving_args,
+                validate_consequence_completeness,
                 validate_role_completeness,
             )
             _eg_errors = validate_egress_allowlists(self._egress_sinks, self._value_policies)
@@ -259,6 +260,13 @@ class GovernedSession:
                 )
                 if _role_errors:
                     raise ValueError("strict role completeness: " + "; ".join(_role_errors))
+                _cons_errors = validate_consequence_completeness(
+                    _tools, self._consequence_overrides
+                )
+                if _cons_errors:
+                    raise ValueError(
+                        "strict consequence completeness: " + "; ".join(_cons_errors)
+                    )
         self._behavioral_drift_observer = behavioral_drift_observer
         self._overlay_ceiling = _overlay_ceiling
         self._overlay_escalation = _overlay_escalation

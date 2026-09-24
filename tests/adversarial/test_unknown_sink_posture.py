@@ -1,10 +1,12 @@
 """Posture for unknown (unclassified) sinks.
 
-Treating every unknown sink as catastrophic would be both disruptive and wrong:
-fetch/curl-class custom sinks are not catastrophic. Instead, unknown sinks default
-to a consequential class, which fails closed under a tight unattended ceiling
-(strict mode lowers the ceiling further) and is operator-tunable via the `danger`
-table. These tests pin the fail-closed path so it cannot silently regress.
+Outside STRICT, treating every unknown sink as catastrophic would be both
+disruptive and wrong: fetch/curl-class custom sinks are not catastrophic. There,
+unknown sinks default to a consequential class (raised to catastrophic when the
+name says so — tests/adversarial/test_consequence_hardening.py), which fails
+closed under a tight unattended ceiling and is operator-tunable via the `danger`
+table. Under STRICT the operator must declare every tool's class, and an
+undeclared one is catastrophic. These tests pin the non-STRICT posture.
 """
 
 from __future__ import annotations

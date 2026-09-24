@@ -51,7 +51,14 @@ In order. Any denial is final.
    reads the kind of call, never the argument text. It catches the destructive
    trusted-provenance action that the provenance axes cannot see (there is nothing to
    taint). Sinks above the policy's "unattended ceiling" require a human/operator
-   gate (escalation or a capability lease).
+   gate (escalation or a capability lease). The class is looked up by the tool's
+   name: an operator override (`consequence_overrides` / `danger`), else the
+   built-in table, else — for a name the table does not know — `consequential`,
+   raised to `catastrophic` when the name's tokens say so (`shutdown_server`,
+   `drop_table`, `wipe_disk`, `restart_gateway`; tightening only, never over an
+   explicit class). The name heuristic is a heuristic: a rename that avoids the
+   vocabulary still passes, which is why Strict does not rely on it — under Strict
+   a tool with no explicit class is `catastrophic` (§10).
 3. **Value policies** — operator-registered predicates on *decidable* arguments: an
    `amount` must be a number in a range; a `target` must be in an allowed set. These
    are checked by a decision procedure, not a guess.
@@ -337,6 +344,13 @@ source (`untrusted` / `sensitive`), a sink (`egress` / `positional`), guarded by
 value policy, or explicitly declared `benign_tools` (a trusted read whose output
 need not be tainted). The misconfiguration fails closed at construction. (`spawn_child`
 and `escalate_policy` are kernel-internal intents and are exempt.)
+
+Strict closes the same gap on the consequence axis: **every tool needs an explicit
+consequence class** — a built-in table key or a `consequence_overrides` entry. An
+exact-name table cannot see a renamed destructive tool (`shutdown_server` is not
+`shutdown`), so under Strict an unclassified tool is `catastrophic` on every path
+(streaming, `ToolCallGovernor`, replay with `KernelConfig(strict_consequence=True)`),
+and a Strict session with such a registered tool fails to construct.
 
 ---
 

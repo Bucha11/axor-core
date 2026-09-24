@@ -108,6 +108,9 @@ class KernelConfig:
     default_tool_weight: float = 1.0
     # Counterfactual: these value refs arrive tainted at registration.
     synthetic_taint_refs: frozenset[str] = frozenset()
+    # STRICT consequence axis: a sink with no explicit class is CATASTROPHIC,
+    # exactly as the runtime gate treats it under STRICT.
+    strict_consequence: bool = False
 
     def weight_of(self, tool: str) -> float:
         """The operator-declared cost weight of one call to `tool`."""
@@ -302,6 +305,7 @@ def evaluate_call(
         normalized.operation,
         config.max_unattended_consequence,
         overrides=config.consequence_overrides,
+        strict=config.strict_consequence,
     )
     if deny:
         return deny

@@ -194,6 +194,9 @@ class ToolCallGovernor:
         # fail-open default where a renamed, undeclared tool normalises to a benign
         # no-op and slips past every gate.
         self._require_tool_roles = require_tool_roles
+        # STRICT (either obligation): a tool with no explicit consequence class is
+        # CATASTROPHIC — the governor has no human gate, so it is refused.
+        self._strict = require_egress_allowlist or require_tool_roles
         # Per-sink driving arguments — the fields the taint decision keys on. Empty
         # = whole-args (safe, coarse). Declaring them narrows to the destination /
         # instruction field so untrusted content to a trusted destination is not
@@ -319,7 +322,8 @@ class ToolCallGovernor:
         # 1. consequence — content-blind action-class gate. (No lease/escalation
         #    in the governor, so no governance-gate exception.)
         gd = consequence_gate(
-            tool_name, normalized.operation, self._ceiling, self._consequence_overrides
+            tool_name, normalized.operation, self._ceiling, self._consequence_overrides,
+            strict=self._strict,
         )
         if gd is not None:
             return _deny(gd)

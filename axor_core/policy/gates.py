@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from axor_core.contracts.anomaly import NormalizedIntent
 from axor_core.contracts.canonical import ConsequenceClass
 from axor_core.contracts.taint import Carrier
-from axor_core.policy.consequence import consequence_class
+from axor_core.policy.consequence import consequence_class, is_consequence_classified
 from axor_core.policy.sinks import is_imperative_sink
 from axor_core.policy.value_policy import check_value_policies
 from axor_core.security.carrier import classify_carrier
@@ -87,19 +87,29 @@ def consequence_gate(
     ceiling: ConsequenceClass,
     overrides: dict | None = None,
     has_governance_gate: bool = False,
+    strict: bool = False,
 ) -> GateDecision | None:
     """Content-blind action-class gate. Deny if the sink's irreversibility exceeds
     the unattended ceiling and no governance/human gate (escalation or lease)
-    covers it."""
-    cls = consequence_class(tool_name, operation=operation, overrides=overrides)
+    covers it. Under ``strict`` a sink with no explicit class is CATASTROPHIC."""
+    cls = consequence_class(
+        tool_name, operation=operation, overrides=overrides, strict=strict
+    )
     if cls <= ceiling:
         return None
     if has_governance_gate:
         return None
+    unclassified = strict and not is_consequence_classified(tool_name, overrides)
     return GateDecision(
         reason=(
             f"consequence gate: sink '{tool_name}' is {cls.name}, exceeding the "
             f"unattended ceiling {ceiling.name}; a governance/human gate is required"
+            + (
+                " (it has no declared consequence class — under STRICT an "
+                "unclassified sink is CATASTROPHIC; declare it in "
+                "consequence_overrides)"
+                if unclassified else ""
+            )
         ),
         category="consequence_gate",
     )

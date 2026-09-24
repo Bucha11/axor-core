@@ -230,6 +230,32 @@ def tool_is_classified(
     )
 
 
+def validate_consequence_completeness(
+    allowed_tools: "frozenset[str] | set[str]",
+    overrides: "dict | None" = None,
+) -> list[str]:
+    """STRICT-mode obligation: every callable tool has an explicit consequence
+    class — a built-in table key or an operator ``consequence_overrides`` entry.
+
+    The consequence axis looks a class up by the tool's exact name, and an unknown
+    name fell to CONSEQUENTIAL, i.e. unattended: renaming ``shutdown`` to
+    ``shutdown_server`` took it off the axis. Under STRICT an unclassified sink is
+    CATASTROPHIC at run time; this refuses the session at construction instead, so
+    the operator states the class rather than having every call to the tool
+    escalate. Returns one error per unclassified tool (empty == valid).
+    """
+    from axor_core.policy.consequence import is_consequence_classified
+
+    return [
+        f"tool {tool!r} has no declared consequence class: STRICT mode requires "
+        f"every tool to be in the built-in action table or in consequence_overrides "
+        f"(benign / reversible / consequential / catastrophic) — an unclassified "
+        f"tool is treated as catastrophic"
+        for tool in sorted(frozenset(allowed_tools))
+        if not is_consequence_classified(tool, overrides)
+    ]
+
+
 def validate_role_completeness(
     allowed_tools: "frozenset[str] | set[str]",
     *,

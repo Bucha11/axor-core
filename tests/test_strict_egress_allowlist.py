@@ -11,6 +11,7 @@ from __future__ import annotations
 import pytest
 
 from axor_core.governor import ToolCallGovernor
+from axor_core.contracts.canonical import ConsequenceClass
 from axor_core.policy.value_policy import enum
 from axor_core.kernel.registration import validate_egress_allowlists
 
@@ -50,6 +51,7 @@ def test_governor_strict_passes_with_allowlist_and_enforces_both():
         egress_sinks={"send_email"},
         value_policies={"send_email": [enum("to", {"alice@corp.com"})]},
         driving_args={"send_email": ["to"]},
+        consequence_overrides={"send_email": ConsequenceClass.CONSEQUENTIAL},
         require_egress_allowlist=True,
     )
     # allowlist (sound): a recipient outside the set is denied regardless of taint
@@ -181,6 +183,9 @@ def test_strict_session_constructs_with_full_classification():
         value_policies={"send_email": [enum("to", {"a@b.com"})]},
         driving_args={"send_email": ["to"]},
         benign_tools={"get_time"},
+        danger={"search_docs": ConsequenceClass.BENIGN,
+                "send_email": ConsequenceClass.CONSEQUENTIAL,
+                "get_time": ConsequenceClass.BENIGN},
     )
     assert s is not None
 
@@ -218,6 +223,8 @@ def test_strict_with_driving_args_admits_a_summary_to_the_allowlisted_address():
         untrusted_sources={"read_inbox"}, egress_sinks={"send_email"},
         value_policies={"send_email": [enum("to", {"boss@corp.example"})]},
         driving_args={"send_email": ["to"]},
+        consequence_overrides={"read_inbox": ConsequenceClass.BENIGN,
+                               "send_email": ConsequenceClass.CONSEQUENTIAL},
         require_egress_allowlist=True, require_tool_roles=True,
     )
     d = gov.evaluate("read_inbox", {})

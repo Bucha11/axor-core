@@ -197,10 +197,35 @@ driving_args:
 # unattended ceiling requires a human/operator gate (escalation or a capability
 # lease) — it cannot run unattended. Classes: benign | reversible | consequential |
 # catastrophic.
+#
+# Under strict EVERY tool needs a class: a tool in neither the built-in table nor
+# this list is treated as catastrophic (a human gate on every call), and a session
+# with such a registered tool fails to construct. Outside strict an unknown name
+# defaults to consequential, raised to catastrophic when its name says so
+# (shutdown_server, drop_table, wipe_disk, ...).
 consequence_overrides:
   drop_database: catastrophic       # irreversible — force a human gate
   delete_workspace: catastrophic
   send_invoice: consequential       # real-world side effect, hard to undo
+  # reads — observation only
+  read_inbox: benign
+  get_webpage: benign
+  search_documents: benign
+  read_channel_messages: benign
+  list_my_calendars: benign
+  get_current_time: benign
+  read_credentials: benign
+  get_api_key: benign
+  # local, undoable
+  rate_item: reversible
+  set_thermostat: reversible
+  # leave the trust boundary / act in the world
+  send_email: consequential
+  send_chat_message: consequential
+  post_webhook: consequential
+  share_file: consequential
+  transfer_money: consequential
+  dispatch_agent: consequential
 
 
 # ── Federation (agent-to-agent trust) — OPTIONAL ─────────────────────────────────

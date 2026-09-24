@@ -23,6 +23,7 @@ import base64
 import pytest
 
 from axor_core import ToolCallGovernor
+from axor_core.contracts.canonical import ConsequenceClass
 from axor_core.policy.value_policy import enum, numeric_range
 
 # Must hold under any hash seed — run it in the adversarial / determinism gate.
@@ -129,25 +130,35 @@ def test_equivalent_attacker_path_write_is_denied(path):
     assert d.allowed is False
 
 
-def _strict_write(**kw) -> bool:
+# STRICT needs an explicit consequence class for every custom tool.
+_STRICT_CLASSES = {"fetch_page": ConsequenceClass.BENIGN}
+
+
+def _strict_write_decision(**kw):
     """A STRICT governor (both obligations) with a write tool that has a legitimate
     declared role — a value policy on ``mode`` — writing an equivalent spelling of
-    the attacker path. Returns whether it was allowed."""
+    the attacker path."""
     g = _write_governor(
         require_egress_allowlist=True,
         require_tool_roles=True,
         value_policies={"write": [numeric_range("mode", 0, 0o777)]},
+        consequence_overrides=_STRICT_CLASSES,
         **kw,
     )
-    d = g.evaluate("write", {"path": "/etc/./cron.d/axor-helper-job",
-                             "content": "x", "mode": 0o644})
-    return d.allowed
+    return g.evaluate("write", {"path": "/etc/./cron.d/axor-helper-job",
+                                "content": "x", "mode": 0o644})
+
+
+def _strict_write(**kw) -> bool:
+    return _strict_write_decision(**kw).allowed
 
 
 def test_strict_defaults_to_context_and_denies_the_equivalent_path():
     """STRICT obliges an allowlist on egress sinks only, so outside-workdir writes
     had no sound control. STRICT now defaults to integrity_default="context"."""
-    assert _strict_write() is False
+    d = _strict_write_decision()
+    assert d.allowed is False
+    assert d.category == "taint_enforcement"
 
 
 @pytest.mark.xfail(reason=GAP + " — explicit legacy opt-out under STRICT", strict=True)
@@ -232,6 +243,10 @@ def test_context_mode_strict_trusts_only_declared_benign_tools():
             # STRICT needs a role for every tool: a value policy classifies both
             value_policies={"transfer_money": [numeric_range("amount", 0, 10**6)],
                             "crm_lookup": [numeric_range("limit", 0, 10)]},
+            # ... and an explicit consequence class
+            consequence_overrides={"read_inbox": ConsequenceClass.BENIGN,
+                                   "crm_lookup": ConsequenceClass.BENIGN,
+                                   "transfer_money": ConsequenceClass.CONSEQUENTIAL},
         )
         d = g.evaluate("read_inbox", {})
         g.register_output(d, MAIL)
@@ -287,10 +302,12 @@ def test_context_mode_closes_the_strict_write_gap():
         require_egress_allowlist=True,
         require_tool_roles=True,
         value_policies={"write": [numeric_range("mode", 0, 0o777)]},
+        consequence_overrides=_STRICT_CLASSES,
     )
     d = g.evaluate("write", {"path": "/etc/./cron.d/axor-helper-job",
                              "content": "x", "mode": 0o644})
     assert d.allowed is False
+    assert d.category == "taint_enforcement"
 
 
 def test_context_mode_endorsement_makes_the_value_trusted():

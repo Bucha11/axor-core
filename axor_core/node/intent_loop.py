@@ -264,6 +264,9 @@ class IntentLoop:
         # Explicitly-benign reads, kept for the lazy STRICT role check below.
         self._benign_tools = frozenset(benign_tools or ())
         self._require_tool_roles = require_tool_roles
+        # STRICT (either obligation): a tool with no explicit consequence class is
+        # CATASTROPHIC, admissible only through an escalation grant or lease.
+        self._strict = require_egress_allowlist or require_tool_roles
         # Context-default integrity: operator allowlist members are trusted values
         # (the same seeding the synchronous governor does). No-op for a backend
         # that does not implement the context-default contract.
@@ -770,7 +773,7 @@ class IntentLoop:
             # agree on which sinks count.
             sink_consequence = consequence_class(
                 tool_name, operation=normalized.operation,
-                overrides=self._consequence_overrides,
+                overrides=self._consequence_overrides, strict=self._strict,
             )
             if sink_consequence >= ConsequenceClass.REVERSIBLE:
                 session_tainted, session_sensitive = (
@@ -1304,7 +1307,7 @@ class IntentLoop:
         has_gate = self._escalation.covers(tool_name)
         gd = consequence_gate(
             tool_name, operation, ceiling, self._consequence_overrides,
-            has_governance_gate=has_gate,
+            has_governance_gate=has_gate, strict=self._strict,
         )
         return gd.reason if gd is not None else None
 

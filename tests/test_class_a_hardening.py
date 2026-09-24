@@ -35,8 +35,11 @@ def test_unclassified_tool_denied_when_require_tool_roles():
 
 def test_classified_tool_passes_role_check():
     """A tool with a declared role is not blocked by the role gate."""
+    from axor_core.contracts.canonical import ConsequenceClass
     gov = ToolCallGovernor(
         untrusted_sources={"read_inbox"},
+        # STRICT also needs an explicit consequence class for a custom tool
+        consequence_overrides={"read_inbox": ConsequenceClass.BENIGN},
         require_tool_roles=True,
     )
     d = gov.evaluate("read_inbox", {})

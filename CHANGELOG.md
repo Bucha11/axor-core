@@ -9,6 +9,20 @@
   `GovernanceConfig` `mode: strict`, or `ToolCallGovernor` with either Strict
   obligation), `clean` otherwise. `integrity_default: clean` under Strict is the
   legacy opt-out and is logged.
+- **Consequence axis sees renamed destructive tools.** A tool name the action
+  table does not know is split into tokens, and a catastrophic verb
+  (`shutdown`, `reboot`, `poweroff`, `wipe`) or a destructive verb with an
+  infrastructure object (`drop`/`delete`/`truncate`/... + `table`/`database`/
+  `disk`/..., `restart`/`reset` + `server`/`host`/`gateway`/...) raises it to
+  catastrophic in every mode. Tightening only; an operator's explicit class wins.
+  Previously `shutdown_server`, `drop_table` or `wipe_disk` ran unattended.
+- **Breaking (Strict only): every tool needs an explicit consequence class.**
+  Under Strict a tool in neither the built-in table nor `consequence_overrides`
+  is catastrophic at run time (governor, IntentLoop, and replay via
+  `KernelConfig(strict_consequence=True)`), and a Strict session with such a
+  registered tool fails construction
+  (`kernel.registration.validate_consequence_completeness`). The Strict example
+  config now classifies all of its tools.
 - **Breaking (Strict only): egress sinks must declare `driving_args`.** Under
   Strict with `context`, construction fails for an egress sink without
   `driving_args` — the whole-args fallback would refuse every call after an
