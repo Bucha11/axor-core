@@ -112,9 +112,10 @@ def validate_egress_allowlists(
 def validate_egress_driving_args(
     egress_sinks: "frozenset[str] | set[str] | None",
     driving_args: "dict[str, list[str] | frozenset[str] | set[str]] | None",
+    integrity_sinks: "frozenset[str] | set[str] | None" = None,
 ) -> list[str]:
     """STRICT obligation under ``integrity_default == "context"``: every declared
-    egress sink must declare its driving args.
+    egress sink and integrity sink must declare its driving args.
 
     In context mode a value the model writes is tainted once the node has read
     untrusted data, unless it is a trusted value. Without driving args the whole
@@ -127,13 +128,14 @@ def validate_egress_driving_args(
     sink (empty == valid).
     """
     da = driving_args or {}
+    sinks = frozenset(egress_sinks or ()) | frozenset(integrity_sinks or ())
     return [
-        f"egress sink {sink!r} declares no driving_args: under STRICT with "
+        f"sink {sink!r} declares no driving_args: under STRICT with "
         f"integrity_default='context' the whole argument blob would drive the "
         f"integrity check, and it holds model-written content, so every call after "
         f"an untrusted read would be refused — declare the destination field(s) "
         f"(e.g. driving_args: {{{sink}: [to]}})"
-        for sink in sorted(frozenset(egress_sinks or ()))
+        for sink in sorted(sinks)
         if not (da.get(sink) or ())
     ]
 
@@ -192,6 +194,7 @@ def _classified_tools(
     positional_sinks: "frozenset[str] | set[str] | None" = None,
     benign_tools: "frozenset[str] | set[str] | None" = None,
     value_policies: "dict[str, list[ValuePredicate]] | None" = None,
+    integrity_sinks: "frozenset[str] | set[str] | None" = None,
 ) -> frozenset[str]:
     """The set of tools that carry an explicit data-flow role (any taxonomy set, a
     value policy, explicitly benign, or kernel-exempt)."""
@@ -200,6 +203,7 @@ def _classified_tools(
         | frozenset(sensitive_sources or ())
         | frozenset(egress_sinks or ())
         | frozenset(positional_sinks or ())
+        | frozenset(integrity_sinks or ())
         | frozenset(benign_tools or ())
         | frozenset((value_policies or {}).keys())
         | _ROLE_EXEMPT
@@ -215,6 +219,7 @@ def tool_is_classified(
     positional_sinks: "frozenset[str] | set[str] | None" = None,
     benign_tools: "frozenset[str] | set[str] | None" = None,
     value_policies: "dict[str, list[ValuePredicate]] | None" = None,
+    integrity_sinks: "frozenset[str] | set[str] | None" = None,
 ) -> bool:
     """True iff ``tool`` has an explicit data-flow role. Used for the per-call
     STRICT obligation on the governor/loop paths, which (unlike GovernedSession) do
@@ -227,6 +232,7 @@ def tool_is_classified(
         positional_sinks=positional_sinks,
         benign_tools=benign_tools,
         value_policies=value_policies,
+        integrity_sinks=integrity_sinks,
     )
 
 
@@ -265,6 +271,7 @@ def validate_role_completeness(
     positional_sinks: "frozenset[str] | set[str] | None" = None,
     benign_tools: "frozenset[str] | set[str] | None" = None,
     value_policies: "dict[str, list[ValuePredicate]] | None" = None,
+    integrity_sinks: "frozenset[str] | set[str] | None" = None,
 ) -> list[str]:
     """STRICT-mode obligation: every callable tool has an explicit data-flow role.
 
@@ -288,6 +295,7 @@ def validate_role_completeness(
         positional_sinks=positional_sinks,
         benign_tools=benign_tools,
         value_policies=value_policies,
+        integrity_sinks=integrity_sinks,
     )
     unclassified = sorted(frozenset(allowed_tools) - classified)
     if not unclassified:
@@ -295,7 +303,7 @@ def validate_role_completeness(
     return [
         f"tool {tool!r} has no declared data-flow role: STRICT mode requires every "
         f"tool to be classified (untrusted_source / sensitive_source / egress_sink / "
-        f"positional_sink / value_policy) or explicitly benign_tools — an "
+        f"integrity_sink / positional_sink / value_policy) or explicitly benign_tools — an "
         f"unclassified read defaults to clean and silently arms no floor"
         for tool in unclassified
     ]

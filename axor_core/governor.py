@@ -39,7 +39,6 @@ from axor_core.policy.gates import (
     GateDecision,
     carrier_gate,
     consequence_gate,
-    driving_subset,
     integrity_superseded_by_decidable,
     positional_gate,
     ssrf_gate,
@@ -51,6 +50,7 @@ from axor_core.policy.provenance import (
     ValueRefLedger,
     call_payload,
     declared_roles,
+    derive_driving_root,
     output_root,
     is_trusted_tool,
     seed_operator_trusted,
@@ -153,6 +153,7 @@ class ToolCallGovernor:
         sensitive_sources: "set[str] | frozenset[str] | None" = None,
         egress_sinks: "set[str] | frozenset[str] | None" = None,
         imperative_sinks: "set[str] | frozenset[str] | None" = None,
+        integrity_sinks: "set[str] | frozenset[str] | None" = None,
         benign_tools: "set[str] | frozenset[str] | None" = None,
         driving_args: "dict[str, list[str]] | None" = None,
         require_egress_allowlist: bool = False,
@@ -183,6 +184,9 @@ class ToolCallGovernor:
         self._sensitive_sources = frozenset(sensitive_sources or ())
         self._egress_sinks = frozenset(egress_sinks or ())
         self._imperative_sinks = frozenset(imperative_sinks or ())
+        # State-changing sinks whose driving args the attacker must not choose
+        # (integrity check only — no confidentiality floor, no allowlist obligation).
+        self._integrity_sinks = frozenset(integrity_sinks or ())
         # Explicitly-benign reads (trusted output that need not be tainted). Kept so
         # the per-call STRICT role check can tell "declared benign" from "forgot to
         # classify" — without it, both would fail open to a clean read.
@@ -216,7 +220,9 @@ class ToolCallGovernor:
                 self._egress_sinks, self._driving_args, self._value_policies
             )
             if resolved_integrity == "context":
-                errors += validate_egress_driving_args(self._egress_sinks, self._driving_args)
+                errors += validate_egress_driving_args(
+                    self._egress_sinks, self._driving_args, self._integrity_sinks
+                )
             if errors:
                 raise ValueError("strict egress allowlist: " + "; ".join(errors))
         self._normalizer = IntentNormalizer()
@@ -261,6 +267,7 @@ class ToolCallGovernor:
                 egress_sinks=self._egress_sinks,
                 imperative_sinks=self._imperative_sinks,
                 positional_sinks=self._positional_sinks,
+                integrity_sinks=self._integrity_sinks,
             ),
         )
 
@@ -310,6 +317,7 @@ class ToolCallGovernor:
             positional_sinks=self._positional_sinks,
             benign_tools=self._benign_tools,
             value_policies=self._value_policies,
+            integrity_sinks=self._integrity_sinks,
         ):
             return _denied(
                 f"tool {tool_name!r} has no declared data-flow role; STRICT mode "
@@ -338,8 +346,9 @@ class ToolCallGovernor:
         if gd is not None:
             return _deny(gd)
 
-        driving_root = self._taint.derive_value(
-            driving_subset(args, self._driving_args.get(tool_name))
+        driving_root = derive_driving_root(
+            self._taint, args, self._driving_args.get(tool_name),
+            integrity_sink=tool_name in self._integrity_sinks,
         )
 
         # 4. positional admission — for declared instruction-incomplete sinks.
@@ -362,6 +371,7 @@ class ToolCallGovernor:
             integrity_superseded=integrity_superseded_by_decidable(
                 tool_name, args, self._driving_args, self._value_policies
             ),
+            integrity_sinks=self._integrity_sinks,
         )
         if gd is not None:
             return _deny(gd)

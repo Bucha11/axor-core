@@ -20,11 +20,12 @@ replay agree on these keys):
   the subgraph walks as edges, while this is a per-argument taint summary a
   producer with no ref vocabulary (the synchronous governor) can still record,
   "floor_active": bool, "roles": {"untrusted_source", "sensitive_source",
-  "egress_sink", "imperative_sink", "positional_sink"} — the OPERATOR's declared
-  data-flow roles for this tool, which is what the taint gate keys on and what
-  ``normalized`` cannot tell you: the normalizer classifies structurally from the
-  tool's name, so a deployment's ``send_email`` normalises to
-  ``destination_kind: none`` and looks like a local no-op; and, only for a call
+  "egress_sink", "imperative_sink", "positional_sink", "integrity_sink"} — the
+  OPERATOR's declared data-flow roles for this tool, which is what the taint
+  gate keys on and what ``normalized`` cannot tell you: the normalizer
+  classifies structurally from the tool's name, so a deployment's
+  ``send_email`` normalises to ``destination_kind: none`` and looks like a
+  local no-op; and, only for a call
   decided under ``integrity_default == "context"``: "integrity_default":
   "context", "context_root" and "driving_carried" (roots as above), and per
   argument in ``arg_provenance`` "trusted": bool and "trusted_origin": origin

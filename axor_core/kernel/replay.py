@@ -94,6 +94,7 @@ class KernelConfig:
     allowed_tools: frozenset[str] | None = None  # None = capability not evaluated
     egress_sinks: frozenset[str] = frozenset()
     imperative_sinks: frozenset[str] = frozenset()
+    integrity_sinks: frozenset[str] = frozenset()
     positional_sinks: frozenset[str] = frozenset()
     value_policies: dict = field(default_factory=dict)  # tool -> [ValuePredicate]
     driving_args: dict = field(default_factory=dict)  # tool -> frozenset[str]
@@ -333,6 +334,7 @@ def evaluate_call(
         floor_active,
         egress_sinks=config.egress_sinks,
         integrity_superseded=superseded,
+        integrity_sinks=config.integrity_sinks,
     )
 
 

@@ -125,6 +125,7 @@ class GovernedNode:
         untrusted_sources: "frozenset[str] | set[str] | None" = None,
         sensitive_sources: "frozenset[str] | set[str] | None" = None,
         imperative_sinks: "frozenset[str] | set[str] | None" = None,
+        integrity_sinks: "frozenset[str] | set[str] | None" = None,
         benign_tools: "frozenset[str] | set[str] | None" = None,
         driving_args: "dict[str, list[str]] | None" = None,
         require_egress_allowlist: bool = False,
@@ -176,6 +177,7 @@ class GovernedNode:
         self._untrusted_sources = frozenset(untrusted_sources or ())
         self._sensitive_sources = frozenset(sensitive_sources or ())
         self._imperative_sinks = frozenset(imperative_sinks or ())
+        self._integrity_sinks = frozenset(integrity_sinks or ())
         self._benign_tools = frozenset(benign_tools or ())
         self._driving_args = dict(driving_args or {})
         self._require_egress_allowlist = require_egress_allowlist
@@ -394,6 +396,7 @@ class GovernedNode:
             untrusted_sources=self._untrusted_sources,
             sensitive_sources=self._sensitive_sources,
             imperative_sinks=self._imperative_sinks,
+            integrity_sinks=self._integrity_sinks,
             benign_tools=self._benign_tools,
             driving_args=self._driving_args,
             require_egress_allowlist=self._require_egress_allowlist,
@@ -612,6 +615,7 @@ class GovernedNode:
             untrusted_sources=self._untrusted_sources,
             sensitive_sources=self._sensitive_sources,
             imperative_sinks=self._imperative_sinks,
+            integrity_sinks=self._integrity_sinks,
             benign_tools=self._benign_tools,
             driving_args=self._driving_args,
             require_egress_allowlist=self._require_egress_allowlist,

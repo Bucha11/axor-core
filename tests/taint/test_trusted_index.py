@@ -116,8 +116,20 @@ def test_saturation_stops_adding_and_does_not_trust_new_values(monkeypatch):
     idx = TrustedValueIndex()
     idx.register([f"value-{i}" for i in range(50)], TrustedOrigin.TOOL)
     assert idx.saturated and len(idx) == 5
-    idx.register("boss@corp.com", TrustedOrigin.TASK)
+    idx.register("boss@corp.com", TrustedOrigin.TOOL)
     assert not idx.covers("boss@corp.com")
+
+
+def test_task_text_is_bounded_separately(monkeypatch):
+    """The user's task text is kept for span matching under its own cap; past it,
+    no more task text is added and values from it are not proven trusted."""
+    monkeypatch.setattr(trusted_mod, "_MAX_TASK_CHARS", 20)
+    idx = TrustedValueIndex()
+    idx.register("first task text", TrustedOrigin.TASK)
+    idx.register("a much longer second task text", TrustedOrigin.TASK)
+    assert idx.saturated
+    assert idx.covers("first task")
+    assert not idx.covers("longer second")
 
 
 def test_merge_is_deterministic_near_the_cap(monkeypatch):

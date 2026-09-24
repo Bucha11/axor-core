@@ -35,7 +35,7 @@ from axor_core.policy.value_policy import ValuePredicate, enum, numeric_range
 _KNOWN_KEYS = frozenset({
     "mode", "workspace", "profile",
     "untrusted_sources", "sensitive_sources", "egress_sinks",
-    "positional_sinks", "imperative_sinks", "benign_tools",
+    "positional_sinks", "imperative_sinks", "integrity_sinks", "benign_tools",
     "value_policies", "consequence_overrides",
     "driving_args",
     "integrity_default",
@@ -60,6 +60,9 @@ class GovernanceConfig:
     egress_sinks: frozenset[str] = frozenset()
     positional_sinks: frozenset[str] = frozenset()
     imperative_sinks: frozenset[str] = frozenset()
+    # State-changing sinks whose driving args the attacker must not choose
+    # (a password / profile update, a role grant): integrity only, no floor.
+    integrity_sinks: frozenset[str] = frozenset()
     benign_tools: frozenset[str] = frozenset()
     # tool name -> list of decidable predicates over its arguments
     value_policies: dict[str, list[ValuePredicate]] = field(default_factory=dict)
@@ -120,6 +123,7 @@ class GovernanceConfig:
             egress_sinks=_as_set(data.get("egress_sinks"), "egress_sinks"),
             positional_sinks=_as_set(data.get("positional_sinks"), "positional_sinks"),
             imperative_sinks=_as_set(data.get("imperative_sinks"), "imperative_sinks"),
+            integrity_sinks=_as_set(data.get("integrity_sinks"), "integrity_sinks"),
             benign_tools=_as_set(data.get("benign_tools"), "benign_tools"),
             value_policies=_parse_value_policies(data.get("value_policies")),
             driving_args=_parse_driving_args(data.get("driving_args")),
@@ -154,6 +158,7 @@ class GovernanceConfig:
             "egress_sinks": set(self.egress_sinks),
             "positional_sinks": set(self.positional_sinks),
             "imperative_sinks": set(self.imperative_sinks),
+            "integrity_sinks": set(self.integrity_sinks),
             "benign_tools": set(self.benign_tools),
             "value_policies": dict(self.value_policies),
             "driving_args": dict(self.driving_args),
@@ -182,6 +187,7 @@ class GovernanceConfig:
             "egress_sinks": set(self.egress_sinks),
             "positional_sinks": set(self.positional_sinks),
             "imperative_sinks": set(self.imperative_sinks),
+            "integrity_sinks": set(self.integrity_sinks),
             "benign_tools": set(self.benign_tools),
             "value_policies": dict(self.value_policies),
             "driving_args": dict(self.driving_args),

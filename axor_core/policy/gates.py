@@ -236,6 +236,7 @@ def taint_gate(
     floor_active: bool,
     egress_sinks: frozenset[str] | set[str] = frozenset(),
     integrity_superseded: bool = False,
+    integrity_sinks: frozenset[str] | set[str] = frozenset(),
 ) -> GateDecision | None:
     """Per-value taint: integrity (untrusted-derived value into a high-risk
     operation) plus the confidentiality floor (egress while a secret read is
@@ -245,15 +246,22 @@ def taint_gate(
     ``integrity_superseded`` (see :func:`integrity_superseded_by_decidable`): when
     the sink's driving args are fully guarded by satisfied decidable predicates,
     the integrity axis is carried by those (stronger) predicates and is skipped
-    here; the confidentiality floor still applies."""
+    here; the confidentiality floor still applies.
+
+    ``integrity_sinks`` are operator-declared state-changing sinks (a password or
+    profile update, a role grant): integrity only, never the floor."""
     exfil = (
         tool_name in egress_sinks
         or normalized.destination_kind in EXFIL_DESTINATIONS
     )
+    # An integrity sink is operator-declared: a state-changing call whose driving
+    # args the attacker must not choose (a password, an address, a role). It gets
+    # the integrity check only — no confidentiality floor, nothing leaves.
     integrity_risk = (not integrity_superseded) and driving_root.is_tainted and (
         normalized.writes_outside_workdir
         or normalized.executes_generated_code
         or exfil
+        or tool_name in integrity_sinks
     )
     confidentiality_risk = exfil and floor_active
     if not (integrity_risk or confidentiality_risk):

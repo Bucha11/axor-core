@@ -92,6 +92,28 @@ def seed_operator_trusted(taint: object, value_policies: "dict | None") -> None:
                 register(sorted(allowed, key=repr), TrustedOrigin.OPERATOR)
 
 
+def derive_driving_root(
+    taint: object,
+    args: dict,
+    driving: "frozenset[str] | set[str] | list[str] | None",
+    *,
+    integrity_sink: bool = False,
+) -> object:
+    """The driving root the taint gate decides on — shared by both paths and by
+    the recorded payload, so decision and record cannot disagree.
+
+    For an integrity sink under context-default integrity, numbers in the driving
+    args must be trusted values too (``include_scalars``): an amount the attacker
+    names is as much a choice as a recipient.
+    """
+    from axor_core.policy.gates import driving_subset
+
+    subset = driving_subset(args or {}, driving)
+    if integrity_sink and getattr(taint, "integrity_default", None) == "context":
+        return taint.derive_value(subset, include_scalars=True)  # type: ignore[attr-defined]
+    return taint.derive_value(subset)  # type: ignore[attr-defined]
+
+
 def source_tokens(sources: object) -> list[str]:
     """Taint sources as their declared string values (`web`, `mcp`, …).
 
@@ -172,6 +194,7 @@ def declared_roles(
     egress_sinks: "frozenset[str] | set[str]" = frozenset(),
     imperative_sinks: "frozenset[str] | set[str]" = frozenset(),
     positional_sinks: "frozenset[str] | set[str]" = frozenset(),
+    integrity_sinks: "frozenset[str] | set[str]" = frozenset(),
 ) -> "dict[str, bool]":
     """The data-flow roles the OPERATOR declared for this tool.
 
@@ -195,6 +218,7 @@ def declared_roles(
         "egress_sink": tool_name in egress_sinks,
         "imperative_sink": tool_name in imperative_sinks,
         "positional_sink": tool_name in positional_sinks,
+        "integrity_sink": tool_name in integrity_sinks,
     }
 
 
@@ -274,7 +298,10 @@ def call_payload(
             ref = refs.ref_for(value)
             if ref is not None:
                 arg_refs[name] = ref
-    driving_root = taint.derive_value(driving_subset(args or {}, driving))  # type: ignore[attr-defined]
+    integrity_sink = bool((roles or {}).get("integrity_sink"))
+    driving_root = derive_driving_root(
+        taint, args or {}, driving, integrity_sink=integrity_sink,
+    )
     payload: dict[str, object] = {
         "tool": tool_name,
         # the raw arguments the call was made with. Replay re-gates on these —
@@ -292,7 +319,10 @@ def call_payload(
     if arg_refs:
         payload["arg_refs"] = arg_refs
     if getattr(taint, "integrity_default", "clean") == "context":
-        _add_context_fields(payload, taint, args or {}, driving_subset(args or {}, driving))
+        _add_context_fields(
+            payload, taint, args or {}, driving_subset(args or {}, driving),
+            include_scalars=integrity_sink,
+        )
     if normalized is not None:
         payload["normalized"] = normalized_payload(normalized)
     if roles is not None:
@@ -309,6 +339,7 @@ def _root_payload(root: object) -> "dict[str, object]":
 
 def _add_context_fields(
     payload: "dict[str, object]", taint: object, args: dict, driving: dict,
+    *, include_scalars: bool = False,
 ) -> None:
     """Record what a context-mode verdict turned on, so it can be re-derived.
 
@@ -330,7 +361,8 @@ def _add_context_fields(
         entry = provenance.setdefault(name, {})
         # Wrapped as {name: value}: the same leaves the gate's check sees for this
         # argument inside the driving subset (a nested dict's keys are data).
-        entry["trusted"] = bool(taint.is_trusted({name: value}))  # type: ignore[attr-defined]
+        entry["trusted"] = bool(taint.is_trusted(  # type: ignore[attr-defined]
+            {name: value}, include_scalars=include_scalars))
         origin = taint.trusted_origin(value)  # type: ignore[attr-defined]
         entry["trusted_origin"] = getattr(origin, "value", None)
 

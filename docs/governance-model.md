@@ -79,7 +79,9 @@ In order. Any denial is final.
 8. **Per-value taint** — the driving argument's own provenance is consulted:
    - *integrity*: an untrusted-derived value flowing into a high-risk operation
      (write outside the workspace, execute generated code, egress to an external
-     destination) is refused — **unless the integrity axis is superseded** (below);
+     destination, or an operator-declared **integrity sink** — a state-changing
+     call such as a password or profile update, §12) is refused — **unless the
+     integrity axis is superseded** (below);
    - *confidentiality*: egress is refused while the **confidentiality floor** is up
      (see §5). The floor is **never** superseded.
 
@@ -393,6 +395,22 @@ its tools. The operator declares their roles so the kernel can govern them:
   registered untrusted *and* arms the confidentiality floor.
 - **`egress_sinks`** — calls that leave the trust boundary (send an email, post to a
   URL, move money). Gated when driven by an untrusted/secret value.
+- **`integrity_sinks`** — calls that change state the attacker must not steer,
+  without anything leaving the boundary: a password or profile update, a role
+  grant, a forwarding rule, a standing-order amount. Their driving args get the
+  integrity check and nothing else — no confidentiality floor (a secret read does
+  not block a password change the user asked for) and no allowlist obligation
+  (a password cannot be enumerated). Under `integrity_default: context` this is
+  origin gating: after an untrusted read the driving value must be a trusted value
+  — any span of the user's task that does not split a token (so
+  `'SunnyDay2024!'` or `1234 Elm Street, New York, NY 10001`), an enum member, a
+  trusted tool's output or an endorsed value — and **numbers in its driving args
+  are checked too** (`2200` must appear in trusted text or a trusted structured
+  output; `2,200.00` counts). Under `clean` it falls back to the ledger's
+  substring match (a long verbatim copy only). Strict requires `driving_args` for
+  every integrity sink, as for egress sinks. Before this role such calls were none
+  of egress / outside-workspace write / exec, so the integrity gate never looked
+  at them in any mode.
 - **`positional_sinks`**, **`value_policies`** — as in §3 and the gate sequence.
 - **`driving_args`** — per sink, the argument(s) the integrity taint check keys on.
   By default the *whole* argument blob drives the decision, so untrusted *content*

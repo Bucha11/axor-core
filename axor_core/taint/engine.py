@@ -167,19 +167,20 @@ class TaintEngine:
         """
         return (self._session_any_tainted, self._session_any_sensitive)
 
-    def derive_value(self, value: object) -> CausalRoot:
+    def derive_value(self, value: object, *, include_scalars: bool = False) -> CausalRoot:
         """Per-value causal root of `value`.
 
         The ledger match attributes the untrusted/sensitive sources the value
         visibly carries. In ``"clean"`` mode that is the whole answer — a value with
         no match is trusted. In ``"context"`` mode, once this node's context holds
         untrusted data, a value is additionally joined with the context root unless
-        every string leaf of it is a registered trusted value.
+        every string leaf of it is a registered trusted value — and, with
+        ``include_scalars`` (an integrity sink's driving args), every number too.
         """
         matched = self._ledger.derive(value)
         if self._integrity_default != "context" or not self._context_root.is_tainted:
             return matched
-        if self._trusted.covers(value):
+        if self._trusted.covers(value, include_scalars=include_scalars):
             return matched
         return CausalRoot.mint(matched, self._context_root)
 
@@ -206,10 +207,11 @@ class TaintEngine:
         """The origin that makes ``value`` trusted, or None."""
         return self._trusted.origin_of(value)
 
-    def is_trusted(self, value: object) -> bool:
-        """Whether ``value`` escapes the context root: every string leaf is a
-        trusted value (vacuously true for a value with no string leaf)."""
-        return self._trusted.covers(value)
+    def is_trusted(self, value: object, *, include_scalars: bool = False) -> bool:
+        """Whether ``value`` escapes the context root: every string leaf (and, with
+        ``include_scalars``, every number) is a trusted value; vacuously true for a
+        value with no checked leaf."""
+        return self._trusted.covers(value, include_scalars=include_scalars)
 
     def inherit_value_ledger(self, parent: "TaintEngine") -> None:
         """Inherit the parent's per-value provenance into this (child) engine so

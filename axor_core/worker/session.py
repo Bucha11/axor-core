@@ -148,6 +148,7 @@ class GovernedSession:
         untrusted_sources: "set[str] | frozenset[str] | None" = None,
         sensitive_sources: "set[str] | frozenset[str] | None" = None,
         imperative_sinks: "set[str] | frozenset[str] | None" = None,
+        integrity_sinks: "set[str] | frozenset[str] | None" = None,
         benign_tools: "set[str] | frozenset[str] | None" = None,
         driving_args: "dict[str, list[str]] | None" = None,
         trajectory_observers: "list | None" = None,
@@ -188,6 +189,8 @@ class GovernedSession:
         self._untrusted_sources = frozenset(untrusted_sources or ())
         self._sensitive_sources = frozenset(sensitive_sources or ())
         self._imperative_sinks = frozenset(imperative_sinks or ())
+        # Operator-declared state-changing sinks (integrity only, no floor).
+        self._integrity_sinks = frozenset(integrity_sinks or ())
         self._driving_args = dict(driving_args or {})
         self._trajectory_observers = list(trajectory_observers or [])
         self._value_policies = dict(value_policies or {})
@@ -239,7 +242,7 @@ class GovernedSession:
             )
             if self._integrity_default == "context":
                 _eg_errors += validate_egress_driving_args(
-                    self._egress_sinks, self._driving_args
+                    self._egress_sinks, self._driving_args, self._integrity_sinks
                 )
             if _eg_errors:
                 raise ValueError("strict egress allowlist: " + "; ".join(_eg_errors))
@@ -257,6 +260,7 @@ class GovernedSession:
                     positional_sinks=self._positional_sinks,
                     benign_tools=self._benign_tools,
                     value_policies=self._value_policies,
+                    integrity_sinks=self._integrity_sinks,
                 )
                 if _role_errors:
                     raise ValueError("strict role completeness: " + "; ".join(_role_errors))
@@ -898,6 +902,7 @@ class GovernedSession:
             untrusted_sources=self._untrusted_sources,
             sensitive_sources=self._sensitive_sources,
             imperative_sinks=self._imperative_sinks,
+            integrity_sinks=self._integrity_sinks,
             benign_tools=self._benign_tools,
             driving_args=self._driving_args,
             trajectory_observers=self._trajectory_observers,

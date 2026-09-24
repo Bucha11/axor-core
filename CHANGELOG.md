@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+### Added (integrity sinks)
+
+- **`integrity_sinks`** — operator-declared state-changing sinks (password /
+  profile update, role grant, standing-order amount) whose driving args the
+  attacker must not choose. Integrity check only: no confidentiality floor, no
+  allowlist obligation. Previously such calls were none of egress /
+  outside-workspace write / exec, so the integrity gate never looked at them —
+  an injected `update_password(password=…)` passed in every mode. On
+  `ToolCallGovernor`, `GovernedSession`, `GovernanceConfig` (`integrity_sinks:`),
+  replay (`KernelConfig.integrity_sinks`), recorded as `roles.integrity_sink`.
+  Strict counts it as a declared role and, under `context`, requires
+  `driving_args` for it.
+- **Task spans are trusted values.** Under `context`, any span of the user's task
+  that does not split a token is trusted (case-insensitive): `'SunnyDay2024!'`
+  and `1234 Elm Street, New York, NY 10001` now count. Tool outputs, operator
+  config and endorsements keep whole-leaf equality.
+- **Numbers on integrity sinks are checked** under `context`: an amount must
+  appear in trusted text or a trusted structured output (`2,200.00` = `2200`).
+- `roles` in recorded `TOOL_CALL` payloads gains `integrity_sink`.
+
 ### Changed
 
 - **Strict defaults to context-default integrity.** Unset, `integrity_default`

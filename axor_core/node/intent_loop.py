@@ -16,7 +16,6 @@ from axor_core.policy.value_policy import check_value_policies
 from axor_core.policy.gates import (
     carrier_gate,
     consequence_gate,
-    driving_subset,
     integrity_superseded_by_decidable,
     positional_gate,
     ssrf_gate,
@@ -35,6 +34,7 @@ from axor_core.policy.provenance import (
     ValueRefLedger,
     call_payload,
     declared_roles,
+    derive_driving_root,
     output_root,
     is_trusted_tool,
     result_payload,
@@ -161,6 +161,7 @@ class IntentLoop:
         untrusted_sources: "frozenset[str] | set[str] | None" = None,
         sensitive_sources: "frozenset[str] | set[str] | None" = None,
         imperative_sinks: "frozenset[str] | set[str] | None" = None,
+        integrity_sinks: "frozenset[str] | set[str] | None" = None,
         benign_tools: "frozenset[str] | set[str] | None" = None,
         driving_args: "dict[str, list[str]] | None" = None,
         require_egress_allowlist: bool = False,
@@ -261,6 +262,8 @@ class IntentLoop:
         # Threaded into carrier_gate so a renamed imperative sink is honoured here,
         # matching the synchronous governor (previously this path ignored it).
         self._imperative_sinks = frozenset(imperative_sinks or ())
+        # Operator-declared state-changing sinks: integrity check only, no floor.
+        self._integrity_sinks = frozenset(integrity_sinks or ())
         # Explicitly-benign reads, kept for the lazy STRICT role check below.
         self._benign_tools = frozenset(benign_tools or ())
         self._require_tool_roles = require_tool_roles
@@ -296,7 +299,7 @@ class IntentLoop:
             )
             if getattr(self._taint_engine, "integrity_default", "clean") == "context":
                 _eg_errors += validate_egress_driving_args(
-                    self._egress_sinks, self._driving_args
+                    self._egress_sinks, self._driving_args, self._integrity_sinks
                 )
             if _eg_errors:
                 raise ValueError("strict egress allowlist: " + "; ".join(_eg_errors))
@@ -651,6 +654,7 @@ class IntentLoop:
                     positional_sinks=self._positional_sinks,
                     benign_tools=self._benign_tools,
                     value_policies=self._value_policies,
+                    integrity_sinks=self._integrity_sinks,
                 ):
             role_denial = (
                 f"tool {tool_name!r} has no declared data-flow role; STRICT mode "
@@ -714,8 +718,9 @@ class IntentLoop:
             # only on the record_signal path. Without it derive_source_id falls back
             # to provenance/"unknown" and the narrowing silently misses.
             check_root = (
-                self._taint_engine.derive_value(
-                    driving_subset(tool_args, self._driving_args.get(tool_name))
+                derive_driving_root(
+                    self._taint_engine, tool_args, self._driving_args.get(tool_name),
+                    integrity_sink=tool_name in self._integrity_sinks,
                 )
                 if self._taint_engine is not None
                 else None
@@ -762,8 +767,9 @@ class IntentLoop:
         # soundly over-tainting opaque model output would collapse this back to
         # session-sticky tainting and needs a sound per-value interpreter backend.
         if normalized is not None:
-            driving_root = self._taint_engine.derive_value(
-                driving_subset(tool_args, self._driving_args.get(tool_name))
+            driving_root = derive_driving_root(
+                self._taint_engine, tool_args, self._driving_args.get(tool_name),
+                integrity_sink=tool_name in self._integrity_sinks,
             )
 
             # Density telemetry: record, per high-stakes sink firing, the per-value
@@ -835,6 +841,7 @@ class IntentLoop:
                 integrity_superseded=integrity_superseded_by_decidable(
                     tool_name, tool_args, self._driving_args, self._value_policies
                 ),
+                integrity_sinks=self._integrity_sinks,
             )
             if gd is not None:
                 return _gate_denial(gd)
@@ -1172,6 +1179,7 @@ class IntentLoop:
                 egress_sinks=self._egress_sinks,
                 imperative_sinks=self._imperative_sinks,
                 positional_sinks=self._positional_sinks,
+                integrity_sinks=self._integrity_sinks,
             ),
         )
 
