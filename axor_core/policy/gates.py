@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from axor_core.contracts.anomaly import NormalizedIntent
 from axor_core.contracts.canonical import ConsequenceClass
 from axor_core.contracts.taint import Carrier
-from axor_core.policy.consequence import consequence_class
+from axor_core.policy.consequence import consequence_class, is_consequence_classified
 from axor_core.policy.sinks import is_imperative_sink
 from axor_core.policy.value_policy import check_value_policies
 from axor_core.security.carrier import classify_carrier
@@ -87,19 +87,29 @@ def consequence_gate(
     ceiling: ConsequenceClass,
     overrides: dict | None = None,
     has_governance_gate: bool = False,
+    strict: bool = False,
 ) -> GateDecision | None:
     """Content-blind action-class gate. Deny if the sink's irreversibility exceeds
     the unattended ceiling and no governance/human gate (escalation or lease)
-    covers it."""
-    cls = consequence_class(tool_name, operation=operation, overrides=overrides)
+    covers it. Under ``strict`` a sink with no explicit class is CATASTROPHIC."""
+    cls = consequence_class(
+        tool_name, operation=operation, overrides=overrides, strict=strict
+    )
     if cls <= ceiling:
         return None
     if has_governance_gate:
         return None
+    unclassified = strict and not is_consequence_classified(tool_name, overrides)
     return GateDecision(
         reason=(
             f"consequence gate: sink '{tool_name}' is {cls.name}, exceeding the "
             f"unattended ceiling {ceiling.name}; a governance/human gate is required"
+            + (
+                " (it has no declared consequence class — under STRICT an "
+                "unclassified sink is CATASTROPHIC; declare it in "
+                "consequence_overrides)"
+                if unclassified else ""
+            )
         ),
         category="consequence_gate",
     )
@@ -226,6 +236,7 @@ def taint_gate(
     floor_active: bool,
     egress_sinks: frozenset[str] | set[str] = frozenset(),
     integrity_superseded: bool = False,
+    integrity_sinks: frozenset[str] | set[str] = frozenset(),
 ) -> GateDecision | None:
     """Per-value taint: integrity (untrusted-derived value into a high-risk
     operation) plus the confidentiality floor (egress while a secret read is
@@ -235,15 +246,22 @@ def taint_gate(
     ``integrity_superseded`` (see :func:`integrity_superseded_by_decidable`): when
     the sink's driving args are fully guarded by satisfied decidable predicates,
     the integrity axis is carried by those (stronger) predicates and is skipped
-    here; the confidentiality floor still applies."""
+    here; the confidentiality floor still applies.
+
+    ``integrity_sinks`` are operator-declared state-changing sinks (a password or
+    profile update, a role grant): integrity only, never the floor."""
     exfil = (
         tool_name in egress_sinks
         or normalized.destination_kind in EXFIL_DESTINATIONS
     )
+    # An integrity sink is operator-declared: a state-changing call whose driving
+    # args the attacker must not choose (a password, an address, a role). It gets
+    # the integrity check only — no confidentiality floor, nothing leaves.
     integrity_risk = (not integrity_superseded) and driving_root.is_tainted and (
         normalized.writes_outside_workdir
         or normalized.executes_generated_code
         or exfil
+        or tool_name in integrity_sinks
     )
     confidentiality_risk = exfil and floor_active
     if not (integrity_risk or confidentiality_risk):

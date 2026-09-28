@@ -27,6 +27,54 @@ def carrier_join(a: Carrier, b: Carrier) -> Carrier:
     return _CARRIER_ORDER[max(_CARRIER_ORDER.index(a), _CARRIER_ORDER.index(b))]
 
 
+class TrustedOrigin(str, Enum):
+    """Where a value the attacker cannot author came from.
+
+    Used by the context-default integrity mode: once a node's context holds
+    untrusted data, a model-generated value is clean only if it provably equals a
+    value of one of these origins (docs/rfc-integrity-context-default.md).
+    """
+    TASK = "task"            # the user's task for this node
+    OPERATOR = "operator"    # operator configuration (enum allowlist members)
+    TOOL = "tool"            # output of a trusted tool
+    ENDORSED = "endorsed"    # released by governance endorsement
+
+
+# The two integrity defaults for a model-generated value that carries no
+# registered untrusted fragment. "clean": trusted (legacy). "context": carries the
+# node's context root unless it has a TrustedOrigin.
+INTEGRITY_DEFAULTS = frozenset({"clean", "context"})
+
+
+def resolve_integrity_default(requested: "str | None", *, strict: bool) -> str:
+    """The integrity default a governed session or governor runs with.
+
+    ``None`` means "the mode's default": ``"context"`` under STRICT, ``"clean"``
+    otherwise. An explicit value wins. Choosing ``"clean"`` under STRICT is the
+    legacy opt-out and is logged: it restores the gap where a re-encoded
+    untrusted identifier passes the integrity gate on every sink without an enum
+    allowlist (docs/rfc-integrity-context-default.md).
+    """
+    if requested is None:
+        return "context" if strict else "clean"
+    if requested not in INTEGRITY_DEFAULTS:
+        raise ValueError(
+            f"unknown integrity_default {requested!r}; expected one of "
+            f"{sorted(INTEGRITY_DEFAULTS)}"
+        )
+    if strict and requested == "clean":
+        import logging
+
+        logging.getLogger("axor.taint").warning(
+            "integrity_default='clean' under STRICT: model-generated values that "
+            "carry no registered untrusted fragment are trusted, so a re-encoded "
+            "attacker identifier passes the integrity gate on every sink without "
+            "an enum allowlist. This is the legacy opt-out; STRICT defaults to "
+            "'context'."
+        )
+    return requested
+
+
 class TaintSource(str, Enum):
     """Origin of an external input that triggered a taint propagation."""
     WEB = "web"

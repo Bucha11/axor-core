@@ -83,11 +83,14 @@ def test_strict_requires_allowlist_on_the_driving_arg():
 
 
 def test_strict_driving_arg_with_matching_allowlist_constructs_and_blocks_attacker():
+    from axor_core.contracts.canonical import ConsequenceClass
     from axor_core.policy.value_policy import enum
     g = ToolCallGovernor(
         untrusted_sources={"read_doc"}, egress_sinks={"send_email"},
         driving_args={"send_email": ["to"]},
         value_policies={"send_email": [enum("to", {"alice@corp.com"})]},
+        consequence_overrides={"read_doc": ConsequenceClass.BENIGN,
+                               "send_email": ConsequenceClass.CONSEQUENTIAL},
         require_egress_allowlist=True,
     )
     d = g.evaluate("read_doc", {"id": 1})

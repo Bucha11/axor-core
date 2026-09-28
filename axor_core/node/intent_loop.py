@@ -16,7 +16,6 @@ from axor_core.policy.value_policy import check_value_policies
 from axor_core.policy.gates import (
     carrier_gate,
     consequence_gate,
-    driving_subset,
     integrity_superseded_by_decidable,
     positional_gate,
     ssrf_gate,
@@ -26,6 +25,7 @@ from axor_core.kernel.registration import (
     validate_value_policies,
     validate_egress_allowlists,
     validate_driving_arg_allowlists,
+    validate_egress_driving_args,
     tool_is_classified,
 )
 from axor_core.taint.engine import TaintEngine
@@ -34,11 +34,15 @@ from axor_core.policy.provenance import (
     ValueRefLedger,
     call_payload,
     declared_roles,
+    derive_driving_root,
     output_root,
+    is_trusted_tool,
     result_payload,
+    seed_operator_trusted,
     source_tokens,
 )
 from axor_core.contracts.result import ExecutorEvent, ExecutorEventKind
+from axor_core.contracts.taint import TrustedOrigin
 from axor_core.contracts.trace import (
     CancelledEvent,
     IntentDeniedEvent,
@@ -157,6 +161,7 @@ class IntentLoop:
         untrusted_sources: "frozenset[str] | set[str] | None" = None,
         sensitive_sources: "frozenset[str] | set[str] | None" = None,
         imperative_sinks: "frozenset[str] | set[str] | None" = None,
+        integrity_sinks: "frozenset[str] | set[str] | None" = None,
         benign_tools: "frozenset[str] | set[str] | None" = None,
         driving_args: "dict[str, list[str]] | None" = None,
         require_egress_allowlist: bool = False,
@@ -164,8 +169,14 @@ class IntentLoop:
         trajectory_observers: "list | None" = None,
         invocation_recorder: "Callable[[str, dict, bool], None] | None" = None,
         admission: "AdmissionController | None" = None,
+        spawn_inherits_context: bool = False,
     ) -> None:
         self._executor = capability_executor
+        # True only when the spawn callback is the kernel's own GovernedNode spawn,
+        # which builds the child's engine by inheriting THIS engine (context root,
+        # trusted index, mode). A host that wires its own spawn_callback gets no
+        # such guarantee, so the default keeps the full spawn carrier gate.
+        self._spawn_inherits_context = spawn_inherits_context
         self._trace_events = trace_events
         self._depth = current_depth
         self._tool_result_callback = tool_result_callback
@@ -251,9 +262,18 @@ class IntentLoop:
         # Threaded into carrier_gate so a renamed imperative sink is honoured here,
         # matching the synchronous governor (previously this path ignored it).
         self._imperative_sinks = frozenset(imperative_sinks or ())
+        # Operator-declared state-changing sinks: integrity check only, no floor.
+        self._integrity_sinks = frozenset(integrity_sinks or ())
         # Explicitly-benign reads, kept for the lazy STRICT role check below.
         self._benign_tools = frozenset(benign_tools or ())
         self._require_tool_roles = require_tool_roles
+        # STRICT (either obligation): a tool with no explicit consequence class is
+        # CATASTROPHIC, admissible only through an escalation grant or lease.
+        self._strict = require_egress_allowlist or require_tool_roles
+        # Context-default integrity: operator allowlist members are trusted values
+        # (the same seeding the synchronous governor does). No-op for a backend
+        # that does not implement the context-default contract.
+        seed_operator_trusted(self._taint_engine, self._value_policies)
         # Per-sink driving arguments — the fields the taint decision keys on
         # (whole-args by default). Narrows over-blocking of untrusted content sent
         # to a trusted destination.
@@ -277,6 +297,10 @@ class IntentLoop:
             _eg_errors += validate_driving_arg_allowlists(
                 self._egress_sinks, self._driving_args, self._value_policies
             )
+            if getattr(self._taint_engine, "integrity_default", "clean") == "context":
+                _eg_errors += validate_egress_driving_args(
+                    self._egress_sinks, self._driving_args, self._integrity_sinks
+                )
             if _eg_errors:
                 raise ValueError("strict egress allowlist: " + "; ".join(_eg_errors))
         _illegal = {s for s in self._positional_sinks if s.lower() in INSTRUCTION_COMPLETE_SINKS}
@@ -630,6 +654,7 @@ class IntentLoop:
                     positional_sinks=self._positional_sinks,
                     benign_tools=self._benign_tools,
                     value_policies=self._value_policies,
+                    integrity_sinks=self._integrity_sinks,
                 ):
             role_denial = (
                 f"tool {tool_name!r} has no declared data-flow role; STRICT mode "
@@ -693,8 +718,9 @@ class IntentLoop:
             # only on the record_signal path. Without it derive_source_id falls back
             # to provenance/"unknown" and the narrowing silently misses.
             check_root = (
-                self._taint_engine.derive_value(
-                    driving_subset(tool_args, self._driving_args.get(tool_name))
+                derive_driving_root(
+                    self._taint_engine, tool_args, self._driving_args.get(tool_name),
+                    integrity_sink=tool_name in self._integrity_sinks,
                 )
                 if self._taint_engine is not None
                 else None
@@ -741,8 +767,9 @@ class IntentLoop:
         # soundly over-tainting opaque model output would collapse this back to
         # session-sticky tainting and needs a sound per-value interpreter backend.
         if normalized is not None:
-            driving_root = self._taint_engine.derive_value(
-                driving_subset(tool_args, self._driving_args.get(tool_name))
+            driving_root = derive_driving_root(
+                self._taint_engine, tool_args, self._driving_args.get(tool_name),
+                integrity_sink=tool_name in self._integrity_sinks,
             )
 
             # Density telemetry: record, per high-stakes sink firing, the per-value
@@ -752,7 +779,7 @@ class IntentLoop:
             # agree on which sinks count.
             sink_consequence = consequence_class(
                 tool_name, operation=normalized.operation,
-                overrides=self._consequence_overrides,
+                overrides=self._consequence_overrides, strict=self._strict,
             )
             if sink_consequence >= ConsequenceClass.REVERSIBLE:
                 session_tainted, session_sensitive = (
@@ -814,6 +841,7 @@ class IntentLoop:
                 integrity_superseded=integrity_superseded_by_decidable(
                     tool_name, tool_args, self._driving_args, self._value_policies
                 ),
+                integrity_sinks=self._integrity_sinks,
             )
             if gd is not None:
                 return _gate_denial(gd)
@@ -1109,7 +1137,24 @@ class IntentLoop:
         this engine's per-value ledger)."""
         if self._taint_engine is None:
             return None
-        driving_root = self._taint_engine.derive_value(spawn_args)
+        # Context-default integrity: the task a model writes after reading
+        # untrusted data is context-tainted, so the full carrier gate would refuse
+        # every free-text spawn. When the child provably inherits this node's
+        # context root, that adds nothing: every sink the child reaches is gated
+        # on the same context, and its capabilities cannot exceed this node's. So
+        # the spawn is judged on what the task visibly carries (the legacy label):
+        # a task that copies a registered untrusted fragment is still refused.
+        # Not applied to other imperative sinks — a message recipient, a shell or
+        # an interpreter does not run under this engine.
+        derive_carried = getattr(self._taint_engine, "derive_carried", None)
+        if (
+            self._spawn_inherits_context
+            and derive_carried is not None
+            and getattr(self._taint_engine, "integrity_default", "clean") == "context"
+        ):
+            driving_root = derive_carried(spawn_args)
+        else:
+            driving_root = self._taint_engine.derive_value(spawn_args)
         gd = carrier_gate(
             "spawn_child", spawn_args, None, driving_root, self._imperative_sinks
         )
@@ -1134,6 +1179,7 @@ class IntentLoop:
                 egress_sinks=self._egress_sinks,
                 imperative_sinks=self._imperative_sinks,
                 positional_sinks=self._positional_sinks,
+                integrity_sinks=self._integrity_sinks,
             ),
         )
 
@@ -1207,7 +1253,16 @@ class IntentLoop:
             sensitive_sources=self._sensitive_sources,
         )
         if root is None:
-            return  # clean read — nothing to register
+            # Clean read — no provenance to register. In context mode a trusted
+            # tool's output seeds the trusted-origin index, exactly as the
+            # synchronous governor's register_output does.
+            register_trusted = getattr(self._taint_engine, "register_trusted", None)
+            if register_trusted is not None and tool_name and is_trusted_tool(
+                str(tool_name), self._benign_tools,
+                require_tool_roles=self._require_tool_roles,
+            ):
+                register_trusted(result, TrustedOrigin.TOOL)
+            return
         self._taint_engine.register_value(result, root)
         self._record_taint_propagated(
             effective_intent.node_id, str(tool_name), result, root,
@@ -1260,7 +1315,7 @@ class IntentLoop:
         has_gate = self._escalation.covers(tool_name)
         gd = consequence_gate(
             tool_name, operation, ceiling, self._consequence_overrides,
-            has_governance_gate=has_gate,
+            has_governance_gate=has_gate, strict=self._strict,
         )
         return gd.reason if gd is not None else None
 

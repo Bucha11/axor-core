@@ -109,6 +109,37 @@ def validate_egress_allowlists(
     return errors
 
 
+def validate_egress_driving_args(
+    egress_sinks: "frozenset[str] | set[str] | None",
+    driving_args: "dict[str, list[str] | frozenset[str] | set[str]] | None",
+    integrity_sinks: "frozenset[str] | set[str] | None" = None,
+) -> list[str]:
+    """STRICT obligation under ``integrity_default == "context"``: every declared
+    egress sink and integrity sink must declare its driving args.
+
+    In context mode a value the model writes is tainted once the node has read
+    untrusted data, unless it is a trusted value. Without driving args the whole
+    argument blob drives the decision, and the blob always contains model-written
+    content (a message body, a summary) — so after the first untrusted read the
+    sink refuses every call, even to an allowlisted destination. That is a
+    misconfiguration, and STRICT fails it at construction rather than at run time:
+    declare the destination field(s), which the enum allowlist already constrains
+    (docs/rfc-integrity-context-default.md §7). Returns one error per offending
+    sink (empty == valid).
+    """
+    da = driving_args or {}
+    sinks = frozenset(egress_sinks or ()) | frozenset(integrity_sinks or ())
+    return [
+        f"sink {sink!r} declares no driving_args: under STRICT with "
+        f"integrity_default='context' the whole argument blob would drive the "
+        f"integrity check, and it holds model-written content, so every call after "
+        f"an untrusted read would be refused — declare the destination field(s) "
+        f"(e.g. driving_args: {{{sink}: [to]}})"
+        for sink in sorted(sinks)
+        if not (da.get(sink) or ())
+    ]
+
+
 def validate_driving_arg_allowlists(
     egress_sinks: "frozenset[str] | set[str] | None",
     driving_args: "dict[str, list[str] | frozenset[str] | set[str]] | None",
@@ -163,6 +194,7 @@ def _classified_tools(
     positional_sinks: "frozenset[str] | set[str] | None" = None,
     benign_tools: "frozenset[str] | set[str] | None" = None,
     value_policies: "dict[str, list[ValuePredicate]] | None" = None,
+    integrity_sinks: "frozenset[str] | set[str] | None" = None,
 ) -> frozenset[str]:
     """The set of tools that carry an explicit data-flow role (any taxonomy set, a
     value policy, explicitly benign, or kernel-exempt)."""
@@ -171,6 +203,7 @@ def _classified_tools(
         | frozenset(sensitive_sources or ())
         | frozenset(egress_sinks or ())
         | frozenset(positional_sinks or ())
+        | frozenset(integrity_sinks or ())
         | frozenset(benign_tools or ())
         | frozenset((value_policies or {}).keys())
         | _ROLE_EXEMPT
@@ -186,6 +219,7 @@ def tool_is_classified(
     positional_sinks: "frozenset[str] | set[str] | None" = None,
     benign_tools: "frozenset[str] | set[str] | None" = None,
     value_policies: "dict[str, list[ValuePredicate]] | None" = None,
+    integrity_sinks: "frozenset[str] | set[str] | None" = None,
 ) -> bool:
     """True iff ``tool`` has an explicit data-flow role. Used for the per-call
     STRICT obligation on the governor/loop paths, which (unlike GovernedSession) do
@@ -198,7 +232,34 @@ def tool_is_classified(
         positional_sinks=positional_sinks,
         benign_tools=benign_tools,
         value_policies=value_policies,
+        integrity_sinks=integrity_sinks,
     )
+
+
+def validate_consequence_completeness(
+    allowed_tools: "frozenset[str] | set[str]",
+    overrides: "dict | None" = None,
+) -> list[str]:
+    """STRICT-mode obligation: every callable tool has an explicit consequence
+    class — a built-in table key or an operator ``consequence_overrides`` entry.
+
+    The consequence axis looks a class up by the tool's exact name, and an unknown
+    name fell to CONSEQUENTIAL, i.e. unattended: renaming ``shutdown`` to
+    ``shutdown_server`` took it off the axis. Under STRICT an unclassified sink is
+    CATASTROPHIC at run time; this refuses the session at construction instead, so
+    the operator states the class rather than having every call to the tool
+    escalate. Returns one error per unclassified tool (empty == valid).
+    """
+    from axor_core.policy.consequence import is_consequence_classified
+
+    return [
+        f"tool {tool!r} has no declared consequence class: STRICT mode requires "
+        f"every tool to be in the built-in action table or in consequence_overrides "
+        f"(benign / reversible / consequential / catastrophic) — an unclassified "
+        f"tool is treated as catastrophic"
+        for tool in sorted(frozenset(allowed_tools))
+        if not is_consequence_classified(tool, overrides)
+    ]
 
 
 def validate_role_completeness(
@@ -210,6 +271,7 @@ def validate_role_completeness(
     positional_sinks: "frozenset[str] | set[str] | None" = None,
     benign_tools: "frozenset[str] | set[str] | None" = None,
     value_policies: "dict[str, list[ValuePredicate]] | None" = None,
+    integrity_sinks: "frozenset[str] | set[str] | None" = None,
 ) -> list[str]:
     """STRICT-mode obligation: every callable tool has an explicit data-flow role.
 
@@ -233,6 +295,7 @@ def validate_role_completeness(
         positional_sinks=positional_sinks,
         benign_tools=benign_tools,
         value_policies=value_policies,
+        integrity_sinks=integrity_sinks,
     )
     unclassified = sorted(frozenset(allowed_tools) - classified)
     if not unclassified:
@@ -240,7 +303,7 @@ def validate_role_completeness(
     return [
         f"tool {tool!r} has no declared data-flow role: STRICT mode requires every "
         f"tool to be classified (untrusted_source / sensitive_source / egress_sink / "
-        f"positional_sink / value_policy) or explicitly benign_tools — an "
+        f"integrity_sink / positional_sink / value_policy) or explicitly benign_tools — an "
         f"unclassified read defaults to clean and silently arms no floor"
         for tool in unclassified
     ]

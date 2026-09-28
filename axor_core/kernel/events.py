@@ -20,11 +20,18 @@ replay agree on these keys):
   the subgraph walks as edges, while this is a per-argument taint summary a
   producer with no ref vocabulary (the synchronous governor) can still record,
   "floor_active": bool, "roles": {"untrusted_source", "sensitive_source",
-  "egress_sink", "imperative_sink", "positional_sink"} — the OPERATOR's declared
-  data-flow roles for this tool, which is what the taint gate keys on and what
-  ``normalized`` cannot tell you: the normalizer classifies structurally from the
-  tool's name, so a deployment's ``send_email`` normalises to
-  ``destination_kind: none`` and looks like a local no-op}`` — ``verdict`` on the
+  "egress_sink", "imperative_sink", "positional_sink", "integrity_sink"} — the
+  OPERATOR's declared data-flow roles for this tool, which is what the taint
+  gate keys on and what ``normalized`` cannot tell you: the normalizer
+  classifies structurally from the tool's name, so a deployment's
+  ``send_email`` normalises to ``destination_kind: none`` and looks like a
+  local no-op; and, only for a call
+  decided under ``integrity_default == "context"``: "integrity_default":
+  "context", "context_root" and "driving_carried" (roots as above), and per
+  argument in ``arg_provenance`` "trusted": bool and "trusted_origin": origin
+  name or null — ``driving_root`` is ``driving_carried`` joined with
+  ``context_root`` unless every driving arg is trusted, and replay re-derives it
+  from these parts (``policy.from_record.context_record``)}`` — ``verdict`` on the
   event is the recorded overall gate verdict for this call; ``gate`` is the
   denying gate's category if denied. A REFUSED tool call is a TOOL_CALL with
   ``verdict: deny``, not a DENIAL: this branch is the only one replay re-gates,

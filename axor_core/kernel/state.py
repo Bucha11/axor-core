@@ -96,6 +96,11 @@ class GovernanceState:
     tainted_refs: dict[str, CausalRoot] = field(default_factory=dict)
     excised_refs: set[str] = field(default_factory=set)
     floor_active: bool = False
+    # Context-default integrity: the join of the untrusted sources this node's
+    # model has been shown — every tainted TOOL_RESULT / MESSAGE_RECEIVED root,
+    # including counterfactual synthetic taint. Excision does not remove from it
+    # (the model already saw the value). Integrity sources only.
+    context_root: CausalRoot = field(default_factory=CausalRoot.constant)
     budget_spent_calls: int = 0
     # Cost is the sum of per-tool weights of approved calls (spec §15). Kept
     # alongside the call count so a budget can cap either dimension — an
@@ -110,6 +115,7 @@ class GovernanceState:
             tainted_refs=dict(self.tainted_refs),
             excised_refs=set(self.excised_refs),
             floor_active=self.floor_active,
+            context_root=self.context_root,
             budget_spent_calls=self.budget_spent_calls,
             budget_spent_cost=self.budget_spent_cost,
             facts=dict(self.facts),

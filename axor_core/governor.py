@@ -27,6 +27,7 @@ from typing import Any
 from axor_core.contracts.anomaly import NormalizedIntent
 from axor_core.contracts.canonical import ConsequenceClass
 from axor_core.contracts.intent import Intent, IntentKind
+from axor_core.contracts.taint import TrustedOrigin, resolve_integrity_default
 from axor_core.policy.normalizer import IntentNormalizer
 from axor_core.contracts.trace import (
     IntentDeniedEvent,
@@ -38,7 +39,6 @@ from axor_core.policy.gates import (
     GateDecision,
     carrier_gate,
     consequence_gate,
-    driving_subset,
     integrity_superseded_by_decidable,
     positional_gate,
     ssrf_gate,
@@ -50,13 +50,17 @@ from axor_core.policy.provenance import (
     ValueRefLedger,
     call_payload,
     declared_roles,
+    derive_driving_root,
     output_root,
+    is_trusted_tool,
+    seed_operator_trusted,
     result_payload,
     source_tokens,
 )
 from axor_core.kernel.registration import (
     validate_driving_arg_allowlists,
     validate_egress_allowlists,
+    validate_egress_driving_args,
     tool_is_classified,
 )
 from axor_core.taint.engine import TaintEngine
@@ -149,10 +153,12 @@ class ToolCallGovernor:
         sensitive_sources: "set[str] | frozenset[str] | None" = None,
         egress_sinks: "set[str] | frozenset[str] | None" = None,
         imperative_sinks: "set[str] | frozenset[str] | None" = None,
+        integrity_sinks: "set[str] | frozenset[str] | None" = None,
         benign_tools: "set[str] | frozenset[str] | None" = None,
         driving_args: "dict[str, list[str]] | None" = None,
         require_egress_allowlist: bool = False,
         require_tool_roles: bool = False,
+        integrity_default: "str | None" = None,
         node_id: str = "",
     ) -> None:
         self._positional_sinks = frozenset(positional_sinks or ())
@@ -178,6 +184,9 @@ class ToolCallGovernor:
         self._sensitive_sources = frozenset(sensitive_sources or ())
         self._egress_sinks = frozenset(egress_sinks or ())
         self._imperative_sinks = frozenset(imperative_sinks or ())
+        # State-changing sinks whose driving args the attacker must not choose
+        # (integrity check only — no confidentiality floor, no allowlist obligation).
+        self._integrity_sinks = frozenset(integrity_sinks or ())
         # Explicitly-benign reads (trusted output that need not be tainted). Kept so
         # the per-call STRICT role check can tell "declared benign" from "forgot to
         # classify" — without it, both would fail open to a clean read.
@@ -189,6 +198,9 @@ class ToolCallGovernor:
         # fail-open default where a renamed, undeclared tool normalises to a benign
         # no-op and slips past every gate.
         self._require_tool_roles = require_tool_roles
+        # STRICT (either obligation): a tool with no explicit consequence class is
+        # CATASTROPHIC — the governor has no human gate, so it is refused.
+        self._strict = require_egress_allowlist or require_tool_roles
         # Per-sink driving arguments — the fields the taint decision keys on. Empty
         # = whole-args (safe, coarse). Declaring them narrows to the destination /
         # instruction field so untrusted content to a trusted destination is not
@@ -197,15 +209,28 @@ class ToolCallGovernor:
         # STRICT obligation: every egress sink must carry a destination allowlist
         # (an enum value_policy) — the sound, paraphrase-proof control. Fail closed
         # at construction rather than ship an egress sink on content-derivation alone.
+        # None = the STRICT default: the governor has no mode knob, so STRICT is
+        # its fail-closed obligations (either one) — "context" then, else "clean".
+        resolved_integrity = resolve_integrity_default(
+            integrity_default, strict=require_egress_allowlist or require_tool_roles,
+        )
         if require_egress_allowlist:
             errors = validate_egress_allowlists(self._egress_sinks, self._value_policies)
             errors += validate_driving_arg_allowlists(
                 self._egress_sinks, self._driving_args, self._value_policies
             )
+            if resolved_integrity == "context":
+                errors += validate_egress_driving_args(
+                    self._egress_sinks, self._driving_args, self._integrity_sinks
+                )
             if errors:
                 raise ValueError("strict egress allowlist: " + "; ".join(errors))
         self._normalizer = IntentNormalizer()
-        self._taint = TaintEngine(node_id=node_id)
+        self._taint = TaintEngine(node_id=node_id, integrity_default=resolved_integrity)
+        # Context-default integrity: operator allowlist members are values the
+        # attacker cannot author. Seeding them keeps the trusted-origin proof
+        # consistent with the enum supersession (T4) those members already carry.
+        seed_operator_trusted(self._taint, self._value_policies)
         # The value-ref vocabulary the kernel event schema is written in. The
         # gates decide on content derivation and need no ids; the RECORD does —
         # `arg_refs` and `value_ref` are what let a consumer bind a denied sink
@@ -242,6 +267,7 @@ class ToolCallGovernor:
                 egress_sinks=self._egress_sinks,
                 imperative_sinks=self._imperative_sinks,
                 positional_sinks=self._positional_sinks,
+                integrity_sinks=self._integrity_sinks,
             ),
         )
 
@@ -291,6 +317,7 @@ class ToolCallGovernor:
             positional_sinks=self._positional_sinks,
             benign_tools=self._benign_tools,
             value_policies=self._value_policies,
+            integrity_sinks=self._integrity_sinks,
         ):
             return _denied(
                 f"tool {tool_name!r} has no declared data-flow role; STRICT mode "
@@ -303,7 +330,8 @@ class ToolCallGovernor:
         # 1. consequence — content-blind action-class gate. (No lease/escalation
         #    in the governor, so no governance-gate exception.)
         gd = consequence_gate(
-            tool_name, normalized.operation, self._ceiling, self._consequence_overrides
+            tool_name, normalized.operation, self._ceiling, self._consequence_overrides,
+            strict=self._strict,
         )
         if gd is not None:
             return _deny(gd)
@@ -318,8 +346,9 @@ class ToolCallGovernor:
         if gd is not None:
             return _deny(gd)
 
-        driving_root = self._taint.derive_value(
-            driving_subset(args, self._driving_args.get(tool_name))
+        driving_root = derive_driving_root(
+            self._taint, args, self._driving_args.get(tool_name),
+            integrity_sink=tool_name in self._integrity_sinks,
         )
 
         # 4. positional admission — for declared instruction-incomplete sinks.
@@ -342,6 +371,7 @@ class ToolCallGovernor:
             integrity_superseded=integrity_superseded_by_decidable(
                 tool_name, args, self._driving_args, self._value_policies
             ),
+            integrity_sinks=self._integrity_sinks,
         )
         if gd is not None:
             return _deny(gd)
@@ -403,7 +433,15 @@ class ToolCallGovernor:
             sensitive_sources=self._sensitive_sources,
         )
         if root is None:
-            return  # clean read — nothing to register
+            # Clean read — no provenance to register. In context mode a trusted
+            # tool's output seeds the trusted-origin index (a value copied from it
+            # is not tainted by the context root).
+            # A decision with no normalized intent names no tool: never trusted.
+            if tool_name and is_trusted_tool(
+                tool_name, self._benign_tools, require_tool_roles=self._require_tool_roles
+            ):
+                self._taint.register_trusted(output, TrustedOrigin.TOOL)
+            return
         self._taint.register_value(output, root)
         self._trace_events.append(
             TaintPropagatedEvent(
@@ -417,6 +455,21 @@ class ToolCallGovernor:
         )
 
     # ── introspection ────────────────────────────────────────────────────────
+
+    def register_task(self, task: object) -> None:
+        """Record the user's task as trusted (context-default integrity).
+
+        The synchronous governor never sees the prompt; the host framework does.
+        Call this with the user's own task text (each turn) so a destination the
+        user named is not tainted by the context root. Only the user's text belongs
+        here — a task written by a model is not trusted."""
+        self._taint.register_trusted(task, TrustedOrigin.TASK)
+
+    def register_trusted(
+        self, value: object, origin: TrustedOrigin = TrustedOrigin.OPERATOR
+    ) -> None:
+        """Record an operator-vouched value as trusted (context-default integrity)."""
+        self._taint.register_trusted(value, origin)
 
     def confidentiality_floor_active(self) -> bool:
         """True once a secret read has armed the egress floor this session."""

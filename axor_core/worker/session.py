@@ -47,6 +47,7 @@ from axor_core.extensions.registry import ExtensionRegistry
 from axor_core.extensions.sanitizer import ExtensionSanitizer
 from axor_core.worker.commands import SlashCommandRouter
 from axor_core.taint.engine import TaintEngine
+from axor_core.contracts.taint import resolve_integrity_default
 from axor_core.tokens import estimate_tokens
 
 _log = logging.getLogger("axor.session")
@@ -147,6 +148,7 @@ class GovernedSession:
         untrusted_sources: "set[str] | frozenset[str] | None" = None,
         sensitive_sources: "set[str] | frozenset[str] | None" = None,
         imperative_sinks: "set[str] | frozenset[str] | None" = None,
+        integrity_sinks: "set[str] | frozenset[str] | None" = None,
         benign_tools: "set[str] | frozenset[str] | None" = None,
         driving_args: "dict[str, list[str]] | None" = None,
         trajectory_observers: "list | None" = None,
@@ -158,6 +160,7 @@ class GovernedSession:
         session_sink: "SessionSink | None" = None,
         context_taps: "list[ContextTap] | None" = None,
         per_node_degradation: bool = False,
+        integrity_default: "str | None" = None,
     ) -> None:
         # Wall-clock the session was constructed — handed to sentinel in the
         # closed-session record (slow-and-low staging compares session start times).
@@ -186,6 +189,8 @@ class GovernedSession:
         self._untrusted_sources = frozenset(untrusted_sources or ())
         self._sensitive_sources = frozenset(sensitive_sources or ())
         self._imperative_sinks = frozenset(imperative_sinks or ())
+        # Operator-declared state-changing sinks (integrity only, no floor).
+        self._integrity_sinks = frozenset(integrity_sinks or ())
         self._driving_args = dict(driving_args or {})
         self._trajectory_observers = list(trajectory_observers or [])
         self._value_policies = dict(value_policies or {})
@@ -218,17 +223,27 @@ class GovernedSession:
         # construction below (it knows the registered-tool universe); the flag also
         # rides into the loop so the lazy per-call check is consistent across paths.
         self._require_tool_roles = (mode == ExecutionMode.STRICT)
+        # None = the mode's default: "context" under STRICT, "clean" otherwise.
+        self._integrity_default = resolve_integrity_default(
+            integrity_default, strict=(mode == ExecutionMode.STRICT)
+        )
         self._benign_tools = frozenset(benign_tools or ())
         if self._require_egress_allowlist:
             from axor_core.kernel.registration import (
                 validate_egress_allowlists,
                 validate_driving_arg_allowlists,
+                validate_egress_driving_args,
+                validate_consequence_completeness,
                 validate_role_completeness,
             )
             _eg_errors = validate_egress_allowlists(self._egress_sinks, self._value_policies)
             _eg_errors += validate_driving_arg_allowlists(
                 self._egress_sinks, self._driving_args, self._value_policies
             )
+            if self._integrity_default == "context":
+                _eg_errors += validate_egress_driving_args(
+                    self._egress_sinks, self._driving_args, self._integrity_sinks
+                )
             if _eg_errors:
                 raise ValueError("strict egress allowlist: " + "; ".join(_eg_errors))
             # STRICT role completeness: every registered tool needs an explicit
@@ -245,9 +260,17 @@ class GovernedSession:
                     positional_sinks=self._positional_sinks,
                     benign_tools=self._benign_tools,
                     value_policies=self._value_policies,
+                    integrity_sinks=self._integrity_sinks,
                 )
                 if _role_errors:
                     raise ValueError("strict role completeness: " + "; ".join(_role_errors))
+                _cons_errors = validate_consequence_completeness(
+                    _tools, self._consequence_overrides
+                )
+                if _cons_errors:
+                    raise ValueError(
+                        "strict consequence completeness: " + "; ".join(_cons_errors)
+                    )
         self._behavioral_drift_observer = behavioral_drift_observer
         self._overlay_ceiling = _overlay_ceiling
         self._overlay_escalation = _overlay_escalation
@@ -373,7 +396,12 @@ class GovernedSession:
         self._active_policy: ExecutionPolicy | None = None
 
         # taint engine — persists across turns so taint is sticky within a session
-        self._taint_engine = TaintEngine(node_id=self._session_id)
+        # integrity_default="context": a model-generated value carries the node's
+        # context root unless it is a trusted value (docs/rfc-integrity-context-
+        # default.md). Resolved above; children inherit it via inherit_value_ledger.
+        self._taint_engine = TaintEngine(
+            node_id=self._session_id, integrity_default=self._integrity_default
+        )
 
         # degradation engine — persists across turns; level is monotonically increasing
         from axor_core.degradation.engine import DegradationEngine
@@ -874,6 +902,7 @@ class GovernedSession:
             untrusted_sources=self._untrusted_sources,
             sensitive_sources=self._sensitive_sources,
             imperative_sinks=self._imperative_sinks,
+            integrity_sinks=self._integrity_sinks,
             benign_tools=self._benign_tools,
             driving_args=self._driving_args,
             trajectory_observers=self._trajectory_observers,

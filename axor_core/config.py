@@ -28,15 +28,17 @@ from typing import Any
 
 from axor_core.contracts.canonical import ConsequenceClass
 from axor_core.contracts.mode import ExecutionMode
+from axor_core.contracts.taint import INTEGRITY_DEFAULTS
 from axor_core.policy.value_policy import ValuePredicate, enum, numeric_range
 
 # Recognised top-level keys. Anything else is a config error (fail closed).
 _KNOWN_KEYS = frozenset({
     "mode", "workspace", "profile",
     "untrusted_sources", "sensitive_sources", "egress_sinks",
-    "positional_sinks", "imperative_sinks", "benign_tools",
+    "positional_sinks", "imperative_sinks", "integrity_sinks", "benign_tools",
     "value_policies", "consequence_overrides",
     "driving_args",
+    "integrity_default",
     "federation",
 })
 _CONSEQUENCE_BY_NAME = {c.name.lower(): c for c in ConsequenceClass}
@@ -58,6 +60,9 @@ class GovernanceConfig:
     egress_sinks: frozenset[str] = frozenset()
     positional_sinks: frozenset[str] = frozenset()
     imperative_sinks: frozenset[str] = frozenset()
+    # State-changing sinks whose driving args the attacker must not choose
+    # (a password / profile update, a role grant): integrity only, no floor.
+    integrity_sinks: frozenset[str] = frozenset()
     benign_tools: frozenset[str] = frozenset()
     # tool name -> list of decidable predicates over its arguments
     value_policies: dict[str, list[ValuePredicate]] = field(default_factory=dict)
@@ -65,6 +70,12 @@ class GovernanceConfig:
     driving_args: dict[str, list[str]] = field(default_factory=dict)
     # tool name -> action-class override (raise/lower how irreversible it is)
     consequence_overrides: dict[str, ConsequenceClass] = field(default_factory=dict)
+    # "clean" (legacy) or "context": whether a model-generated value that carries
+    # no registered untrusted fragment is trusted, or carries the node's context
+    # root unless it is a trusted value (docs/rfc-integrity-context-default.md).
+    # None = the mode's default ("context" under strict, "clean" otherwise),
+    # resolved by the session / governor it is splatted into.
+    integrity_default: "str | None" = None
     # Built opt-in A2A objects (None when no `federation:` section). The gateway is
     # the receive side (which peer values to trust); the identity is the send side
     # (used by a transport adapter to mint our outgoing receipts).
@@ -95,8 +106,16 @@ class GovernanceConfig:
                 f"{[m.value for m in ExecutionMode]}"
             )
 
+        integrity_default = data.get("integrity_default")
+        if integrity_default is not None and integrity_default not in INTEGRITY_DEFAULTS:
+            raise ValueError(
+                f"unknown integrity_default {integrity_default!r}; expected one of "
+                f"{sorted(INTEGRITY_DEFAULTS)}"
+            )
+
         return cls(
             mode=mode,
+            integrity_default=integrity_default,
             workspace=data.get("workspace"),
             profile=data.get("profile"),
             untrusted_sources=_as_set(data.get("untrusted_sources"), "untrusted_sources"),
@@ -104,6 +123,7 @@ class GovernanceConfig:
             egress_sinks=_as_set(data.get("egress_sinks"), "egress_sinks"),
             positional_sinks=_as_set(data.get("positional_sinks"), "positional_sinks"),
             imperative_sinks=_as_set(data.get("imperative_sinks"), "imperative_sinks"),
+            integrity_sinks=_as_set(data.get("integrity_sinks"), "integrity_sinks"),
             benign_tools=_as_set(data.get("benign_tools"), "benign_tools"),
             value_policies=_parse_value_policies(data.get("value_policies")),
             driving_args=_parse_driving_args(data.get("driving_args")),
@@ -138,11 +158,13 @@ class GovernanceConfig:
             "egress_sinks": set(self.egress_sinks),
             "positional_sinks": set(self.positional_sinks),
             "imperative_sinks": set(self.imperative_sinks),
+            "integrity_sinks": set(self.integrity_sinks),
             "benign_tools": set(self.benign_tools),
             "value_policies": dict(self.value_policies),
             "driving_args": dict(self.driving_args),
             # GovernedSession names the consequence-override table `danger`.
             "danger": dict(self.consequence_overrides),
+            "integrity_default": self.integrity_default,
         }
         if self.workspace is not None:
             kwargs["workspace"] = self.workspace
@@ -165,12 +187,14 @@ class GovernanceConfig:
             "egress_sinks": set(self.egress_sinks),
             "positional_sinks": set(self.positional_sinks),
             "imperative_sinks": set(self.imperative_sinks),
+            "integrity_sinks": set(self.integrity_sinks),
             "benign_tools": set(self.benign_tools),
             "value_policies": dict(self.value_policies),
             "driving_args": dict(self.driving_args),
             "consequence_overrides": dict(self.consequence_overrides),
             "require_egress_allowlist": self.mode is ExecutionMode.STRICT,
             "require_tool_roles": self.mode is ExecutionMode.STRICT,
+            "integrity_default": self.integrity_default,
         }
 
 

@@ -22,6 +22,20 @@ def test_taint_engine_satisfies_contract():
     assert isinstance(TaintEngine(), ValueProvenance)
 
 
+def test_taint_engine_satisfies_context_contract():
+    """The reference engine implements the context-default integrity contract; a
+    backend that implements only ValueProvenance keeps the legacy default (the
+    kernel wiring is a no-op for it) — see policy.provenance.seed_operator_trusted."""
+    from axor_core.contracts.provenance import ContextProvenance
+    assert isinstance(TaintEngine(integrity_default="context"), ContextProvenance)
+    assert not isinstance(_FakeTrustModel(["x"]), ContextProvenance)
+
+
+def test_unknown_integrity_default_is_refused():
+    with pytest.raises(ValueError, match="integrity_default"):
+        TaintEngine(integrity_default="sticky")
+
+
 class _FakeTrustModel:
     def __init__(self, flagged): self._flagged = flagged
     def register_value(self, content, root): pass

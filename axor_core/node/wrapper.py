@@ -22,6 +22,7 @@ from axor_core.contracts.envelope import ExecutionEnvelope
 from axor_core.contracts.extension import ExtensionBundle
 from axor_core.contracts.intent import Intent, IntentKind
 from axor_core.contracts.invokable import Invokable
+from axor_core.contracts.taint import TrustedOrigin
 from axor_core.contracts.policy import ExecutionPolicy, ExportMode
 
 # Export restrictiveness ordering (least → most leakage-restrictive). Used to narrow
@@ -124,6 +125,7 @@ class GovernedNode:
         untrusted_sources: "frozenset[str] | set[str] | None" = None,
         sensitive_sources: "frozenset[str] | set[str] | None" = None,
         imperative_sinks: "frozenset[str] | set[str] | None" = None,
+        integrity_sinks: "frozenset[str] | set[str] | None" = None,
         benign_tools: "frozenset[str] | set[str] | None" = None,
         driving_args: "dict[str, list[str]] | None" = None,
         require_egress_allowlist: bool = False,
@@ -175,6 +177,7 @@ class GovernedNode:
         self._untrusted_sources = frozenset(untrusted_sources or ())
         self._sensitive_sources = frozenset(sensitive_sources or ())
         self._imperative_sinks = frozenset(imperative_sinks or ())
+        self._integrity_sinks = frozenset(integrity_sinks or ())
         self._benign_tools = frozenset(benign_tools or ())
         self._driving_args = dict(driving_args or {})
         self._require_egress_allowlist = require_egress_allowlist
@@ -229,6 +232,19 @@ class GovernedNode:
 
         # ── 2. Lineage ─────────────────────────────────────────────────────────
         lineage = self._build_lineage(raw_state)
+
+        # Context-default integrity: the task is a trusted value when the user
+        # wrote it. A root node's task is the user's (every turn). A child's task
+        # is written by the parent's model, so it is trusted only if the context
+        # it inherited is clean — otherwise it is model-generated under untrusted
+        # influence and must not become a trusted value in the child.
+        register_trusted = getattr(self._taint_engine, "register_trusted", None)
+        context_root = getattr(self._taint_engine, "context_root", None)
+        if register_trusted is not None and (
+            self._depth == 0
+            or (context_root is not None and not context_root().is_tainted)
+        ):
+            register_trusted(raw_state.task, TrustedOrigin.TASK)
 
         # register with trace collector
         if self._trace_collector:
@@ -360,6 +376,10 @@ class GovernedNode:
             current_depth=self._depth,
             tool_result_callback=tool_result_callback,
             spawn_callback=_spawn_child_callback,
+            # _handle_spawn builds the child's engine by inheriting this one
+            # (context root, trusted index, integrity mode), so the loop may judge
+            # a spawn on what the task visibly carries — see _spawn_taint_reason.
+            spawn_inherits_context=True,
             escalation_callback=self._escalation_callback,
             taint_engine=self._taint_engine,
             degradation_engine=self._degradation_engine,
@@ -376,6 +396,7 @@ class GovernedNode:
             untrusted_sources=self._untrusted_sources,
             sensitive_sources=self._sensitive_sources,
             imperative_sinks=self._imperative_sinks,
+            integrity_sinks=self._integrity_sinks,
             benign_tools=self._benign_tools,
             driving_args=self._driving_args,
             require_egress_allowlist=self._require_egress_allowlist,
@@ -594,6 +615,7 @@ class GovernedNode:
             untrusted_sources=self._untrusted_sources,
             sensitive_sources=self._sensitive_sources,
             imperative_sinks=self._imperative_sinks,
+            integrity_sinks=self._integrity_sinks,
             benign_tools=self._benign_tools,
             driving_args=self._driving_args,
             require_egress_allowlist=self._require_egress_allowlist,

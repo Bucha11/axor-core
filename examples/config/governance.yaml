@@ -167,11 +167,40 @@ value_policies:
 #
 # Tip: list EVERY destination-bearing field (to, cc, bcc), or an unlisted one that
 # carries the destination falls back to whole-args (fail-safe, never a bypass).
+# ── Integrity sinks: state changes the attacker must not steer ──────────────────
+#
+# A password / profile update is not egress (nothing leaves), not an outside-
+# workspace write and not exec — so without this the integrity gate never looks
+# at it, and an injected "update the password to X" passes. Declared here, its
+# driving args (below) must not be untrusted-derived: under integrity_default
+# context they must come from the user's task (any span of it), an allowlist, a
+# benign tool or an endorsement; numbers in them are checked too. No
+# confidentiality floor, no allowlist obligation. Strict requires driving_args.
+# integrity_sinks:
+#   - update_password           # driving_args: {update_password: [password]}
+#   - update_user_info          # driving_args: {update_user_info: [street, city]}
+
 driving_args:
   send_email: [to, cc, bcc]   # the recipients drive the egress decision, not the body
   post_webhook: [url]
   transfer_money: [recipient]
   share_file: [to]
+
+
+# ── Integrity default for model-generated values ─────────────────────────────────
+#
+# Unset, the mode decides: `context` under strict (this file), `clean` otherwise.
+#
+# clean: a value the model writes is tainted only if it visibly contains
+#   a registered fragment of an untrusted read — a re-encoded attacker IBAN / URL /
+#   path passes.
+# context: once a node has read untrusted data, a value the model writes into a
+#   driving arg is tainted unless it equals a trusted value (the user's task, an
+#   enum allowlist member, a benign tool's output, an endorsed value). Re-encoding
+#   no longer helps an attacker. Under strict every egress sink must declare
+#   driving_args (above), or construction fails.
+#   See docs/rfc-integrity-context-default.md.
+# integrity_default: clean     # legacy opt-out under strict (logged)
 
 
 # ── Consequence overrides: raise/lower how irreversible a custom tool is ─────────
@@ -181,10 +210,35 @@ driving_args:
 # unattended ceiling requires a human/operator gate (escalation or a capability
 # lease) — it cannot run unattended. Classes: benign | reversible | consequential |
 # catastrophic.
+#
+# Under strict EVERY tool needs a class: a tool in neither the built-in table nor
+# this list is treated as catastrophic (a human gate on every call), and a session
+# with such a registered tool fails to construct. Outside strict an unknown name
+# defaults to consequential, raised to catastrophic when its name says so
+# (shutdown_server, drop_table, wipe_disk, ...).
 consequence_overrides:
   drop_database: catastrophic       # irreversible — force a human gate
   delete_workspace: catastrophic
   send_invoice: consequential       # real-world side effect, hard to undo
+  # reads — observation only
+  read_inbox: benign
+  get_webpage: benign
+  search_documents: benign
+  read_channel_messages: benign
+  list_my_calendars: benign
+  get_current_time: benign
+  read_credentials: benign
+  get_api_key: benign
+  # local, undoable
+  rate_item: reversible
+  set_thermostat: reversible
+  # leave the trust boundary / act in the world
+  send_email: consequential
+  send_chat_message: consequential
+  post_webhook: consequential
+  share_file: consequential
+  transfer_money: consequential
+  dispatch_agent: consequential
 
 
 # ── Federation (agent-to-agent trust) — OPTIONAL ─────────────────────────────────
