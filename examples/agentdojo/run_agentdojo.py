@@ -23,6 +23,7 @@ run more. Requires ANTHROPIC_API_KEY. Uses claude-haiku.
 """
 from __future__ import annotations
 
+import dataclasses
 import os
 import sys
 
@@ -73,6 +74,15 @@ def make_governor() -> ToolCallGovernor:
     # while the suite name still selects the AgentDojo tasks.
     cfg_name = os.environ.get("AXOR_BENCH_CONFIG", f"{SUITE}.yaml")
     cfg = GovernanceConfig.from_yaml(os.path.join(_CONFIG_DIR, cfg_name))
+    # AXOR_BENCH_INTEGRITY selects the integrity polarity: "clean" (today's ledger,
+    # default-trust) or "context" (context-default integrity — a model-emitted value
+    # is untrusted unless it provably originates from a trusted source registered on
+    # the governor: the user task, operator config, trusted tools). Under "context"
+    # the executor MUST call governor.register_task(<user prompt>) so prompt-given
+    # driving values are proven trusted; see GovernedToolsExecutor.
+    integrity = os.environ.get("AXOR_BENCH_INTEGRITY")
+    if integrity:
+        cfg = dataclasses.replace(cfg, integrity_default=integrity)
     return ToolCallGovernor(**cfg.as_governor_kwargs())
 
 
