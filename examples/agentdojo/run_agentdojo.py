@@ -83,7 +83,16 @@ def make_governor() -> ToolCallGovernor:
     integrity = os.environ.get("AXOR_BENCH_INTEGRITY")
     if integrity:
         cfg = dataclasses.replace(cfg, integrity_default=integrity)
-    return ToolCallGovernor(**cfg.as_governor_kwargs())
+    kw = cfg.as_governor_kwargs()
+    # AXOR_BENCH_ORIGIN=1 = the rope_bridge "origin" combo: STRICT tool roles
+    # (fail-closed on an unclassified tool/consequence) but NO egress allowlist
+    # obligation, so the integrity/origin axis — not an enum — decides each driving
+    # value. mode:strict alone would also force require_egress_allowlist=True, which
+    # the no-oracle origin config must not carry, so override it here.
+    if os.environ.get("AXOR_BENCH_ORIGIN") == "1":
+        kw["require_tool_roles"] = True
+        kw["require_egress_allowlist"] = False
+    return ToolCallGovernor(**kw)
 
 
 # Per-suite task slices: a curated set of GENUINELY SERIOUS injection tasks
