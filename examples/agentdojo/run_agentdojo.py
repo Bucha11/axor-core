@@ -92,6 +92,19 @@ def make_governor() -> ToolCallGovernor:
     if os.environ.get("AXOR_BENCH_ORIGIN") == "1":
         kw["require_tool_roles"] = True
         kw["require_egress_allowlist"] = False
+        # Auto-derive a COMPLETE per-tool consequence class over the whole suite
+        # tool universe (mirrors rope_bridge AxorOriginBootstrap._consequence):
+        # every tool is BENIGN (observation) unless it is a declared egress/integrity
+        # sink, which is pinned at the default unattended ceiling (CONSEQUENTIAL) so
+        # the consequence gate passes and the origin axis decides. STRICT is
+        # fail-closed on an unclassified consequence, so covering every tool is
+        # required, not optional. An explicit YAML consequence_override still wins.
+        from axor_core.contracts.canonical import ConsequenceClass as _C
+        _sinks = set(kw.get("egress_sinks") or ()) | set(kw.get("integrity_sinks") or ())
+        _auto = {t.name: (_C.CONSEQUENTIAL if t.name in _sinks else _C.BENIGN)
+                 for t in get_suites("v1")[SUITE].tools}
+        _auto.update(kw.get("consequence_overrides") or {})
+        kw["consequence_overrides"] = _auto
     return ToolCallGovernor(**kw)
 
 
