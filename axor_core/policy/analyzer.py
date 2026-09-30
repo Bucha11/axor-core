@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import logging
+
 from axor_core.contracts.policy import SignalClassifier, TaskSignal
 from axor_core.contracts.trace import (
     SignalChosenEvent,
     TraceEventKind,
 )
 from axor_core.policy.heuristic import HeuristicClassifier
+
+_log = logging.getLogger("axor.policy.analyzer")
 
 # If confidence is below this threshold and an external classifier
 # is available — escalate. Otherwise use heuristic result as-is.
@@ -135,6 +139,15 @@ class TaskAnalyzer:
         self._threshold    = escalation_threshold
         self._agent_domain = agent_domain   # from AgentDefinition.domain
 
+    @property
+    def ambiguity_threshold(self) -> float:
+        """The single source of the ambiguity decision: classifications below
+        this confidence are ambiguous. Consumers (e.g. the session's adaptive
+        narrowing) must read this property instead of hard-coding a number —
+        the analyzer's configured threshold and the session's interpretation
+        of confidence must never diverge."""
+        return self._threshold
+
     async def analyze(self, raw_input: str) -> tuple[TaskSignal, SignalChosenEvent]:
         """
         Classify raw input into a TaskSignal with domain detection.
@@ -142,20 +155,40 @@ class TaskAnalyzer:
         """
         signal, confidence, scores = await self._heuristic.classify_with_scores(raw_input)
         classifier_used = "heuristic"
+        external_domain = ""
 
         if confidence < self._threshold and self._external is not None:
-            ext_signal, ext_conf, ext_scores = await self._external.classify_with_scores(raw_input)
-            if ext_conf > confidence:
-                signal = ext_signal
-                confidence = ext_conf
-                classifier_used = type(self._external).__name__
-                # external scores replace heuristic scores only if provided;
-                # empty dict means external did not expose a distribution
-                if ext_scores:
-                    scores = ext_scores
+            # Fail-closed (classifier-threat-model.md): a broken external
+            # classifier degrades to the heuristic result — it never crashes
+            # governed execution.
+            try:
+                ext_signal, ext_conf, ext_scores = await self._external.classify_with_scores(raw_input)
+            except Exception:
+                _log.warning(
+                    "external classifier %s raised; falling back to heuristic result",
+                    type(self._external).__name__,
+                    exc_info=True,
+                )
+            else:
+                if ext_conf > confidence:
+                    signal = ext_signal
+                    confidence = ext_conf
+                    classifier_used = type(self._external).__name__
+                    external_domain = ext_signal.domain
+                    # external scores replace heuristic scores only if provided;
+                    # empty dict means external did not expose a distribution
+                    if ext_scores:
+                        scores = ext_scores
 
-        # domain detection — agent domain takes priority over task-level
-        domain = _detect_domain(raw_input, self._agent_domain)
+        # domain resolution priority: agent domain (operator-declared) →
+        # external classifier's domain head (when it won the escalation and
+        # produced a non-default domain) → keyword detection fallback.
+        if self._agent_domain != "general":
+            domain = self._agent_domain
+        elif external_domain and external_domain != "general":
+            domain = external_domain
+        else:
+            domain = _detect_domain(raw_input, self._agent_domain)
         # domain distribution always comes from the text heuristic; agent-domain
         # assignment is a policy override, not a probabilistic statement.
         scores = {**scores, **_marginal_domain_scores(raw_input)}

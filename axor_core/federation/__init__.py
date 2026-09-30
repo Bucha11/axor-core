@@ -8,6 +8,13 @@ L2 — a value from an authenticated peer in a federated domain running a compat
      kernel, carrying a valid provenance receipt, has its provenance restored (we
      trust the peer's labels instead of re-minting). A forged or tampered receipt is
      denied; an incompatible kernel or non-federated domain degrades to L1.
+
+SCOPE (spec v2 Ch.1, decision v2-1/v2-2): the RESTORE path above is legitimate
+only where the peer is governed under OUR operator keyset — `federated_domains`
+means our own domains (intra-federation, where labels are data). For a peer
+under a DIFFERENT keyset, labels are claims: use
+:mod:`axor_core.federation.ladder` (L0/L1/L2 + governance_attested — bounded
+discount, never label authority, forgery falls to L0 evidenced).
 """
 
 from axor_core.federation.signing import (

@@ -10,14 +10,20 @@ if TYPE_CHECKING:
     from axor_core.contracts.agent import AgentDefinition
     from axor_core.contracts.memory import MemoryProvider
     from axor_core.contracts.session import SessionSink
+    from axor_core.node.intent_loop import EscalationCallback
 from axor_core.contracts.cancel import make_token, CancelReason
 from axor_core.contracts.session import SessionAuditRecord, ToolInvocationRecord
 from axor_core.contracts.context import RawExecutionState, LineageSummary
 from axor_core.contracts.extension import ExtensionLoader
 from axor_core.contracts.drift import BehavioralDriftObserver
+from axor_core.contracts.observation import ContextTap
 from axor_core.contracts.invokable import Invokable
 from axor_core.contracts.mode import ExecutionMode
-from axor_core.contracts.policy import ExecutionPolicy, SignalClassifier
+from axor_core.contracts.policy import (
+    EscalationPolicy,
+    ExecutionPolicy,
+    SignalClassifier,
+)
 from axor_core.contracts.result import ExecutionResult
 from axor_core.contracts.trace import TraceConfig
 from axor_core.capability.executor import CapabilityExecutor
@@ -41,9 +47,16 @@ from axor_core.extensions.registry import ExtensionRegistry
 from axor_core.extensions.sanitizer import ExtensionSanitizer
 from axor_core.worker.commands import SlashCommandRouter
 from axor_core.taint.engine import TaintEngine
+from axor_core.contracts.taint import resolve_integrity_default
 from axor_core.tokens import estimate_tokens
 
 _log = logging.getLogger("axor.session")
+
+# Fallback ambiguity threshold, used ONLY when the analyzer does not expose
+# one (custom analyzers). The stock TaskAnalyzer owns the ambiguity decision
+# via its ambiguity_threshold property — the session never re-interprets
+# confidence with its own number, so the two cannot diverge.
+_FALLBACK_AMBIGUITY_THRESHOLD = 0.75
 
 
 class GovernedSession:
@@ -65,7 +78,29 @@ class GovernedSession:
         session = GovernedSession(
             executor=ClaudeCodeExecutor(),
             capability_executor=cap_executor,
-            classifier=LocalTrainedClassifier(),
+            classifier=TaskSignalClassifier(),   # axor-classifier-simple
+        )
+
+    PRODUCTION compatibility/security guard — operator-defined policy
+    (classifier fully bypassed, which also disables task-aware planning;
+    the target model separating authority from planning is the
+    AuthorityPolicy/ExecutionPlan split) plus an operator escalation
+    ceiling and approver so a too-narrow policy recovers per-tool:
+
+        session = GovernedSession(
+            executor=ClaudeCodeExecutor(),
+            capability_executor=cap_executor,
+            mode=ExecutionMode.PRODUCTION,
+            default_policy=presets.standard(),
+            escalation_policy=EscalationPolicy(
+                allow_escalation=True, grantable_tools=("write", "bash"),
+                require_human=True,
+            ),
+            escalation_callback=AllowlistEscalationApprover(
+                {"write": 20, "bash": 10},
+                allowed_path_prefixes=("/workspace",),  # confines write grants
+                unconfined_tools=("bash",),  # bash exposes no checkable path
+            ),
         )
 
     With soft token limit:
@@ -90,6 +125,9 @@ class GovernedSession:
         executor: Invokable,
         capability_executor: CapabilityExecutor,
         classifier: SignalClassifier | None = None,
+        escalation_callback: "EscalationCallback | None" = None,
+        escalation_policy: "EscalationPolicy | None" = None,
+        default_policy: ExecutionPolicy | None = None,
         behavioral_drift_observer: BehavioralDriftObserver | None = None,
         extension_loaders: list[ExtensionLoader] | None = None,
         trace_config: TraceConfig | None = None,
@@ -110,6 +148,7 @@ class GovernedSession:
         untrusted_sources: "set[str] | frozenset[str] | None" = None,
         sensitive_sources: "set[str] | frozenset[str] | None" = None,
         imperative_sinks: "set[str] | frozenset[str] | None" = None,
+        integrity_sinks: "set[str] | frozenset[str] | None" = None,
         benign_tools: "set[str] | frozenset[str] | None" = None,
         driving_args: "dict[str, list[str]] | None" = None,
         trajectory_observers: "list | None" = None,
@@ -117,7 +156,11 @@ class GovernedSession:
         detection_floor: float | None = None,
         adjudicator=None,
         federation_gateway=None,
+        admission=None,
         session_sink: "SessionSink | None" = None,
+        context_taps: "list[ContextTap] | None" = None,
+        per_node_degradation: bool = False,
+        integrity_default: "str | None" = None,
     ) -> None:
         # Wall-clock the session was constructed — handed to sentinel in the
         # closed-session record (slow-and-low staging compares session start times).
@@ -127,6 +170,13 @@ class GovernedSession:
         self._session_sink = session_sink
         self._tool_invocations: "list[ToolInvocationRecord]" = []
         self._record_emitted = False   # guard: aclose is idempotent, emit once
+        # Core → Probe observation seam: taps receive a SessionContextView on the
+        # governance hot path — GovernedNode fires node/context_observation on
+        # each context build. Observe-only — tap failures are logged, never raised.
+        self._context_taps: list[ContextTap] = list(context_taps or [])
+        # Per-node degradation opt-in (spec v2 Ch.4): children get their own
+        # engine seeded at max(parent level, NORMAL) instead of the shared one.
+        self._per_node_degradation = per_node_degradation
 
         # Profile = a named bundle of existing knobs (no new mechanism); it
         # pre-fills mode / isolation / escalation / consequence-ceiling / watcher.
@@ -139,12 +189,15 @@ class GovernedSession:
         self._untrusted_sources = frozenset(untrusted_sources or ())
         self._sensitive_sources = frozenset(sensitive_sources or ())
         self._imperative_sinks = frozenset(imperative_sinks or ())
+        # Operator-declared state-changing sinks (integrity only, no floor).
+        self._integrity_sinks = frozenset(integrity_sinks or ())
         self._driving_args = dict(driving_args or {})
         self._trajectory_observers = list(trajectory_observers or [])
         self._value_policies = dict(value_policies or {})
         self._detection_floor = detection_floor  # opt-in; None = detection observe-only
         self._adjudicator = adjudicator          # opt-in advisory layer; None = off
         self._federation_gateway = federation_gateway  # opt-in A2A trust; None = off
+        self._admission = admission  # opt-in control-plane admission; None = no plane
         _overlay_ceiling = None
         _overlay_escalation = None
         if profile is not None:
@@ -170,17 +223,27 @@ class GovernedSession:
         # construction below (it knows the registered-tool universe); the flag also
         # rides into the loop so the lazy per-call check is consistent across paths.
         self._require_tool_roles = (mode == ExecutionMode.STRICT)
+        # None = the mode's default: "context" under STRICT, "clean" otherwise.
+        self._integrity_default = resolve_integrity_default(
+            integrity_default, strict=(mode == ExecutionMode.STRICT)
+        )
         self._benign_tools = frozenset(benign_tools or ())
         if self._require_egress_allowlist:
             from axor_core.kernel.registration import (
                 validate_egress_allowlists,
                 validate_driving_arg_allowlists,
+                validate_egress_driving_args,
+                validate_consequence_completeness,
                 validate_role_completeness,
             )
             _eg_errors = validate_egress_allowlists(self._egress_sinks, self._value_policies)
             _eg_errors += validate_driving_arg_allowlists(
                 self._egress_sinks, self._driving_args, self._value_policies
             )
+            if self._integrity_default == "context":
+                _eg_errors += validate_egress_driving_args(
+                    self._egress_sinks, self._driving_args, self._integrity_sinks
+                )
             if _eg_errors:
                 raise ValueError("strict egress allowlist: " + "; ".join(_eg_errors))
             # STRICT role completeness: every registered tool needs an explicit
@@ -197,9 +260,17 @@ class GovernedSession:
                     positional_sinks=self._positional_sinks,
                     benign_tools=self._benign_tools,
                     value_policies=self._value_policies,
+                    integrity_sinks=self._integrity_sinks,
                 )
                 if _role_errors:
                     raise ValueError("strict role completeness: " + "; ".join(_role_errors))
+                _cons_errors = validate_consequence_completeness(
+                    _tools, self._consequence_overrides
+                )
+                if _cons_errors:
+                    raise ValueError(
+                        "strict consequence completeness: " + "; ".join(_cons_errors)
+                    )
         self._behavioral_drift_observer = behavioral_drift_observer
         self._overlay_ceiling = _overlay_ceiling
         self._overlay_escalation = _overlay_escalation
@@ -219,6 +290,21 @@ class GovernedSession:
 
         self._deny_on_ambiguity: bool = (mode == ExecutionMode.STRICT)
         self._strict_escalation: bool = (mode == ExecutionMode.STRICT)
+
+        # Human/operator escalation gate — threaded into every node's IntentLoop
+        # (children inherit it at spawn). None → require_human escalations are
+        # auto-denied (fail-closed). See axor_core.capability.approvals for
+        # ready-made callbacks.
+        self._escalation_callback = escalation_callback
+        # Operator-defined escalation ceiling (authority). Applied to every
+        # classifier-selected policy: which capabilities may later be granted
+        # is never derived from task text — presets carry no escalation.
+        self._operator_escalation = escalation_policy
+        # Session-wide explicit policy: used whenever run() gets no per-call
+        # policy=. With it set the task classifier is bypassed entirely —
+        # the recommended posture for PRODUCTION deployments.
+        self._default_policy = default_policy
+        self._classifier_policy_warned = False
 
         # Process-isolation gate. In PRODUCTION/STRICT an untrusted
         # agent should execute tools out-of-process (DaemonCapabilityClient);
@@ -310,7 +396,12 @@ class GovernedSession:
         self._active_policy: ExecutionPolicy | None = None
 
         # taint engine — persists across turns so taint is sticky within a session
-        self._taint_engine = TaintEngine(node_id=self._session_id)
+        # integrity_default="context": a model-generated value carries the node's
+        # context root unless it is a trusted value (docs/rfc-integrity-context-
+        # default.md). Resolved above; children inherit it via inherit_value_ledger.
+        self._taint_engine = TaintEngine(
+            node_id=self._session_id, integrity_default=self._integrity_default
+        )
 
         # degradation engine — persists across turns; level is monotonically increasing
         from axor_core.degradation.engine import DegradationEngine
@@ -390,6 +481,25 @@ class GovernedSession:
             executor=executor,
             capability_executor=capability_executor,
             **kwargs,
+        )
+
+    def _apply_operator_escalation(self, policy: ExecutionPolicy) -> ExecutionPolicy:
+        """Stamp the operator-defined escalation ceiling onto a policy the
+        operator did NOT write per-call (session default_policy or a
+        classifier-selected preset). A per-call policy= keeps its own
+        escalation config — explicit per-call config is the top of the
+        precedence chain:
+
+            per-call policy escalation
+              > session escalation_policy (applied to default_policy and
+                classifier-selected policies)
+              > the policy's own (default: disabled)
+        """
+        if self._operator_escalation is None:
+            return policy
+        import dataclasses
+        return dataclasses.replace(
+            policy, escalation_policy=self._operator_escalation
         )
 
     async def run(
@@ -475,15 +585,77 @@ class GovernedSession:
         cancel_token = make_token()
         self._active_token = cancel_token
 
+        # Explicit policy resolution: per-call policy= wins over the session's
+        # default_policy. With either set, the classifier is bypassed entirely.
+        # The operator escalation ceiling applies to the session default too —
+        # the README production configuration (default_policy + escalation_policy
+        # + approver) works as written; only a per-call policy keeps its own
+        # escalation config (see _apply_operator_escalation).
+        if policy is None and self._default_policy is not None:
+            policy = self._apply_operator_escalation(self._default_policy)
+        if policy is None and self._mode == ExecutionMode.PRODUCTION \
+                and not self._classifier_policy_warned:
+            _log.warning(
+                "session=%s PRODUCTION mode is deriving policy from task "
+                "classification (advisory, content-based). Recommended: pass "
+                "an explicit policy= per call or default_policy= at "
+                "construction to make policy operator-defined.",
+                self._session_id,
+            )
+            self._classifier_policy_warned = True
+
         # Adaptive policy: re-classify each turn; capability surface can only
         # narrow automatically — broadening requires an explicit operator override.
+        # Narrowing is confidence-gated: a low-confidence re-classification must
+        # not permanently strip capability from the whole session (classification
+        # is advisory; its errors have to stay cheap). Recovery from an
+        # over-narrow start is per-tool via escalate_policy, not re-broadening.
         effective_policy = policy
         if policy is None:
-            signal, _ = await self._analyzer.analyze(task)
+            signal, signal_event = await self._analyzer.analyze(task)
             new_policy = self._selector.select(signal)
+            # Escalation ceiling is operator authority, not classifier
+            # output — stamp it onto whatever preset was selected.
+            new_policy = self._apply_operator_escalation(new_policy)
+            # Custom analyzers may return no event; treat absent confidence as
+            # authoritative (legacy behaviour) — the stock TaskAnalyzer always
+            # reports one. The ambiguity decision itself belongs to the
+            # analyzer (single source), never re-derived here.
+            confidence = getattr(signal_event, "confidence", None)
+            threshold = getattr(
+                self._analyzer, "ambiguity_threshold", _FALLBACK_AMBIGUITY_THRESHOLD
+            )
+            confident = confidence is None or confidence >= threshold
             if self._active_policy is None:
-                self._active_policy = new_policy
-            else:
+                # An AMBIGUOUS classification is applied to this turn only —
+                # it must not become the session's irreversible adaptive
+                # baseline. The baseline is set by the first confident
+                # classification (which may be broader than an earlier
+                # ambiguous guess: nothing was locked by it).
+                if confident:
+                    self._active_policy = new_policy
+                    effective_policy = self._active_policy
+                else:
+                    # An ambiguous classification must not choose authority —
+                    # not even for one turn: an ambiguous "expansive" would
+                    # hand out write/bash/spawn right now, and a completed
+                    # effect cannot be un-happened by refusing to set the
+                    # baseline afterwards. Run fail-closed instead; the
+                    # operator escalation ceiling still applies, so recovery
+                    # is per-tool via escalate_policy, not via trusting the
+                    # guess.
+                    fallback = self._apply_operator_escalation(
+                        self._selector.safe_fallback()
+                    )
+                    _log.info(
+                        "session=%s ambiguous first classification "
+                        "(confidence %.2f < %.2f): candidate %s NOT applied; "
+                        "running under fail-closed '%s', baseline not set",
+                        self._session_id, confidence, threshold,
+                        new_policy.name, fallback.name,
+                    )
+                    effective_policy = fallback
+            elif confident:
                 narrowed = self._composer.apply_parent_restrictions(
                     new_policy, self._active_policy
                 )
@@ -495,7 +667,17 @@ class GovernedSession:
                         narrowed.name,
                     )
                 self._active_policy = narrowed
-            effective_policy = self._active_policy
+                effective_policy = self._active_policy
+            else:
+                _log.info(
+                    "session=%s adaptive narrowing skipped: classification "
+                    "confidence %.2f < %.2f (policy stays %s)",
+                    self._session_id,
+                    confidence,
+                    threshold,
+                    self._active_policy.name,
+                )
+                effective_policy = self._active_policy
 
         node = self._make_node(self._context_manager)
         result = await node.run(
@@ -706,6 +888,7 @@ class GovernedSession:
             analyzer=self._analyzer,
             selector=self._selector,
             composer=self._composer,
+            escalation_callback=self._escalation_callback,
             context_manager=context_manager,
             budget_engine=self._budget_engine,
             trace_collector=self._collector,
@@ -719,6 +902,7 @@ class GovernedSession:
             untrusted_sources=self._untrusted_sources,
             sensitive_sources=self._sensitive_sources,
             imperative_sinks=self._imperative_sinks,
+            integrity_sinks=self._integrity_sinks,
             benign_tools=self._benign_tools,
             driving_args=self._driving_args,
             trajectory_observers=self._trajectory_observers,
@@ -730,6 +914,10 @@ class GovernedSession:
             value_policies=self._value_policies,
             adjudicator=self._adjudicator,
             federation_gateway=self._federation_gateway,
+            admission=self._admission,
+            context_taps=self._context_taps or None,
+            agent_id=self._agent_def.name if self._agent_def is not None else "",
+            per_node_degradation=self._per_node_degradation,
         )
 
     async def _handle_command(self, raw: str) -> ExecutionResult:

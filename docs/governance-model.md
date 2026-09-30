@@ -51,7 +51,14 @@ In order. Any denial is final.
    reads the kind of call, never the argument text. It catches the destructive
    trusted-provenance action that the provenance axes cannot see (there is nothing to
    taint). Sinks above the policy's "unattended ceiling" require a human/operator
-   gate (escalation or a capability lease).
+   gate (escalation or a capability lease). The class is looked up by the tool's
+   name: an operator override (`consequence_overrides` / `danger`), else the
+   built-in table, else — for a name the table does not know — `consequential`,
+   raised to `catastrophic` when the name's tokens say so (`shutdown_server`,
+   `drop_table`, `wipe_disk`, `restart_gateway`; tightening only, never over an
+   explicit class). The name heuristic is a heuristic: a rename that avoids the
+   vocabulary still passes, which is why Strict does not rely on it — under Strict
+   a tool with no explicit class is `catastrophic` (§10).
 3. **Value policies** — operator-registered predicates on *decidable* arguments: an
    `amount` must be a number in a range; a `target` must be in an allowed set. These
    are checked by a decision procedure, not a guess.
@@ -72,7 +79,9 @@ In order. Any denial is final.
 8. **Per-value taint** — the driving argument's own provenance is consulted:
    - *integrity*: an untrusted-derived value flowing into a high-risk operation
      (write outside the workspace, execute generated code, egress to an external
-     destination) is refused — **unless the integrity axis is superseded** (below);
+     destination, or an operator-declared **integrity sink** — a state-changing
+     call such as a password or profile update, §12) is refused — **unless the
+     integrity axis is superseded** (below);
    - *confidentiality*: egress is refused while the **confidentiality floor** is up
      (see §5). The floor is **never** superseded.
 
@@ -202,19 +211,33 @@ Three hard guarantees, enforced in the kernel regardless of what you plug in:
 
 ## 7. The acknowledged gaps
 
-**Integrity paraphrase (the main one).** The integrity per-value gate is
-content-derivation: it matches the registered untrusted content inside a sink
-argument. It is sound in the deny direction but **incomplete** against an
-in-process model that paraphrases an untrusted value before passing it to a sink
-that *cannot* be made positional (a generic write or exec). On that partition, a
-paraphrased untrusted influence is not caught. Segmentation normalises case,
-edge-punctuation, structural delimiters, and Unicode (NFKC + zero-width strip), so
-formatting tricks are closed; cross-script homoglyphs, base64/encoding, and
-sub-fragment shredding remain in the residual. This is recorded honestly — there
-are tests that assert the *sound* behaviour and are marked expected-to-fail, so the
-suite trips the moment a sound per-value interpreter backend closes the gap. The
-confidentiality floor (§5) and the positional gate (§3) already close their share;
-this residual is the integrity, non-liftable partition only.
+**Integrity: model-generated values (the main one).** The integrity per-value gate
+is content-derivation: it matches registered untrusted content inside a sink
+argument, and an argument that contains none is treated as clean. It is sound in
+the deny direction but **incomplete**, and the incompleteness is wider than
+paraphrase. Any value the model generates that contains no registered fragment
+passes as trusted, including *copies* of an untrusted identifier the model
+re-encoded (compacted, re-cased, re-separated, split across fields, base64'd) and
+verbatim copies the ledger never segmented (a space-grouped IBAN: every block is
+below the 12-character minimum). Equivalent path spellings (`/etc/./x` for
+`/etc/x`) pass the same way. Segmentation normalises case, edge-punctuation,
+structural delimiters, and Unicode (NFKC + zero-width strip), which closes
+formatting tricks on the *same* spelling and nothing more.
+
+Where it is closed today: an `enum` allowlist on the driving arg (content-blind; in
+Strict mandatory on every egress sink), the positional gate (§3) for sinks that can
+be made positional, and the confidentiality floor (§5) for secrets. Where it is
+open: egress without an allowlist outside Strict, and writes outside the workspace
+and generated-code execution in every mode. This is recorded honestly — the tests
+assert the *sound* behaviour and are marked expected-to-fail
+(`tests/adversarial/test_context_default_integrity.py`,
+`tests/test_tokenizer_evasion.py`), so the suite trips when the gap closes. The
+fix inverts the default: a model-generated value carries the taint of the model's
+context unless it provably originates from a trusted source. It is
+`integrity_default: context` (§12): the default under Strict (§10), opt-in in
+Library/Production until its utility cost there is measured. It closes every case
+above
+([rfc-integrity-context-default](rfc-integrity-context-default.md)).
 
 **SSRF host classification.** The internal-destination gate (§2, step 5) classifies
 hosts by *literal IP*, decoding the obfuscated forms (dotted/octal/hex/integer,
@@ -284,18 +307,26 @@ It is within-session, distinct from the cross-session reputation graph (`axor-se
 
 ## 10. Modes
 
-| Mode | Isolation | Policy from task text | On ambiguity | Egress allowlist |
-|---|---|---|---|---|
-| Library | none (same process) | yes (classifier on) | escalate | optional |
-| Production | bypass attempts raise an error | yes | escalate | optional |
-| Strict | production + audit-required trace | no — operator sets policy | deny | **required** |
+| Mode | Isolation | Policy from task text | On ambiguity | Egress allowlist | Integrity default |
+|---|---|---|---|---|---|
+| Library | none (same process) | yes (classifier on) | escalate | optional | `clean` |
+| Production | bypass attempts raise an error | yes | escalate | optional | `clean` |
+| Strict | production + audit-required trace | no — operator sets policy | deny | **required** | `context` |
 
-Strict removes content-derived policy decisions entirely and fails closed. It adds
+Strict removes content-derived policy decisions entirely and fails closed. It runs
+`integrity_default: context` (§12): after an untrusted read, a model-written value
+drives a sink only if it is a trusted value, which closes the §7 gap on every sink
+— including outside-workspace writes and generated-code execution, which carry no
+allowlist obligation. Consequently **every declared egress sink must also declare
+its `driving_args`**: otherwise the whole argument blob, which always holds
+model-written content, drives the check and every call after an untrusted read is
+refused; Strict fails that at construction. `integrity_default: clean` restores
+the legacy behaviour under Strict and is logged as an opt-out. It adds
 one more obligation: **every declared egress sink must carry a destination
 allowlist** (an `enum` value policy on its destination argument). The per-value
 taint gate on an egress sink is content-derivation — sound in the deny direction
-but with the §7 paraphrase residual; an `enum` allowlist is content-blind and
-provenance-independent (membership, not derivation), so it closes that residual.
+but with the §7 model-generated-value gap; an `enum` allowlist is content-blind and
+provenance-independent (membership, not derivation), so it closes that gap there.
 Strict refuses to construct a session whose egress sink relies on the leaky gate
 alone — the misconfiguration fails closed at construction, not at run time. In
 Library/Production the allowlist stays optional (the content-derivation gate still
@@ -320,6 +351,13 @@ value policy, or explicitly declared `benign_tools` (a trusted read whose output
 need not be tainted). The misconfiguration fails closed at construction. (`spawn_child`
 and `escalate_policy` are kernel-internal intents and are exempt.)
 
+Strict closes the same gap on the consequence axis: **every tool needs an explicit
+consequence class** — a built-in table key or a `consequence_overrides` entry. An
+exact-name table cannot see a renamed destructive tool (`shutdown_server` is not
+`shutdown`), so under Strict an unclassified tool is `catastrophic` on every path
+(streaming, `ToolCallGovernor`, replay with `KernelConfig(strict_consequence=True)`),
+and a Strict session with such a registered tool fails to construct.
+
 ---
 
 ## 11. The guarantees, in one place
@@ -333,7 +371,9 @@ and `escalate_policy` are kernel-internal intents and are exempt.)
   content to make an enforcement decision.
 - The adjudicator and detection see only a content-free projection.
 - The confidentiality floor is sound against paraphrase; the integrity per-value gate
-  has a documented paraphrase residual (§7) on the non-liftable partition.
+  has a documented gap (§7): a model-generated value with no registered fragment
+  derives clean, so it holds only where an `enum` allowlist or the positional gate
+  covers the sink.
 - A child cannot exceed its parent or launder a value across the spawn boundary;
   cross-agent trust is only ever raised by a verified signed receipt.
 - Unknown sinks fail closed under the high-assurance (strict) ceiling.
@@ -359,6 +399,22 @@ its tools. The operator declares their roles so the kernel can govern them:
   registered untrusted *and* arms the confidentiality floor.
 - **`egress_sinks`** — calls that leave the trust boundary (send an email, post to a
   URL, move money). Gated when driven by an untrusted/secret value.
+- **`integrity_sinks`** — calls that change state the attacker must not steer,
+  without anything leaving the boundary: a password or profile update, a role
+  grant, a forwarding rule, a standing-order amount. Their driving args get the
+  integrity check and nothing else — no confidentiality floor (a secret read does
+  not block a password change the user asked for) and no allowlist obligation
+  (a password cannot be enumerated). Under `integrity_default: context` this is
+  origin gating: after an untrusted read the driving value must be a trusted value
+  — any span of the user's task that does not split a token (so
+  `'SunnyDay2024!'` or `1234 Elm Street, New York, NY 10001`), an enum member, a
+  trusted tool's output or an endorsed value — and **numbers in its driving args
+  are checked too** (`2200` must appear in trusted text or a trusted structured
+  output; `2,200.00` counts). Under `clean` it falls back to the ledger's
+  substring match (a long verbatim copy only). Strict requires `driving_args` for
+  every integrity sink, as for egress sinks. Before this role such calls were none
+  of egress / outside-workspace write / exec, so the integrity gate never looked
+  at them in any mode.
 - **`positional_sinks`**, **`value_policies`** — as in §3 and the gate sequence.
 - **`driving_args`** — per sink, the argument(s) the integrity taint check keys on.
   By default the *whole* argument blob drives the decision, so untrusted *content*
@@ -369,6 +425,22 @@ its tools. The operator declares their roles so the kernel can govern them:
   integrity axis — the confidentiality floor stays whole-call, so a secret in any
   field still cannot leave. Fail-safe: if a declared driving arg is absent from a
   call, the check falls back to the whole blob (never a bypass).
+- **`integrity_default`** — `clean` or `context`; unset, the mode decides
+  (`context` under Strict, `clean` otherwise). Under `context`, once a
+  node has read untrusted data, a value the model writes into a driving argument
+  is tainted unless it equals a **trusted value**: the user's task, an `enum`
+  allowlist member, the output of a trusted tool, or a governance-endorsed value.
+  Equality is on whole values after canonicalisation (IBAN separators and case,
+  e-mail case, phone separators), never containment, so re-encoding an attacker
+  value no longer gets it past the gate (§7). Trusted tools are `benign_tools`, and
+  outside Strict also reads the normalizer classifies clean. The mode is per node;
+  a child inherits its parent's context, and a child's task counts as trusted only
+  if the parent's context was clean. `ToolCallGovernor` never sees the prompt: call
+  `register_task(text)` with the user's task each turn. Cost: after an untrusted
+  read, a sink whose driving value is not a trusted value is refused, so declare
+  `driving_args` for every integrity sink. A free-text `spawn_child` is still
+  admitted on the in-process path (judged on what the task visibly carries), because
+  the child inherits the context and its sinks stay gated.
 
 A declared role takes precedence over the built-in heuristic; undeclared tools still
 get the heuristic. The same declaration is accepted by `GovernedSession` and

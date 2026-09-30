@@ -70,6 +70,8 @@ _LAZY = {
     # capability (Ring 1, light)
     "CapabilityExecutor": "axor_core.capability.executor",
     "ToolHandler": "axor_core.capability.executor",
+    "AllowlistEscalationApprover": "axor_core.capability.approvals",
+    "console_escalation_callback": "axor_core.capability.approvals",
     # governor (Ring 0 kernel only)
     "ToolCallGovernor": "axor_core.governor",
     "GovernanceDecision": "axor_core.governor",
@@ -82,6 +84,14 @@ _LAZY = {
     "make_token": "axor_core.contracts.cancel",
     "SignalClassifier": "axor_core.contracts.policy",
     "ExecutionPolicy": "axor_core.contracts.policy",
+    "AuthorityPolicy": "axor_core.contracts.authority",
+    "ChildAuthorityPolicy": "axor_core.contracts.authority",
+    "ExportAuthorityPolicy": "axor_core.contracts.authority",
+    "ExecutionPlan": "axor_core.contracts.planning",
+    "RetrievalBreadth": "axor_core.contracts.planning",
+    "DecompositionPreference": "axor_core.contracts.planning",
+    "ResourceBudget": "axor_core.contracts.planning",
+    "split_legacy_policy": "axor_core.policy.legacy",
     "TaskSignal": "axor_core.contracts.policy",
     "TaskComplexity": "axor_core.contracts.policy",
     "TaskNature": "axor_core.contracts.policy",
@@ -127,6 +137,9 @@ if TYPE_CHECKING:  # static visibility for type checkers / IDEs (not loaded at r
     from axor_core.worker.session import GovernedSession
     from axor_core.budget import TokenCostRates
     from axor_core.capability.executor import CapabilityExecutor, ToolHandler
+    from axor_core.capability.approvals import (
+        AllowlistEscalationApprover, console_escalation_callback,
+    )
     from axor_core.governor import ToolCallGovernor, GovernanceDecision
     from axor_core.config import GovernanceConfig
     from axor_core.contracts.invokable import Invokable
@@ -134,6 +147,13 @@ if TYPE_CHECKING:  # static visibility for type checkers / IDEs (not loaded at r
     from axor_core.contracts.policy import (
         SignalClassifier, ExecutionPolicy, TaskSignal, TaskComplexity, TaskNature,
     )
+    from axor_core.contracts.authority import (
+        AuthorityPolicy, ChildAuthorityPolicy, ExportAuthorityPolicy,
+    )
+    from axor_core.contracts.planning import (
+        ExecutionPlan, RetrievalBreadth, DecompositionPreference, ResourceBudget,
+    )
+    from axor_core.policy.legacy import split_legacy_policy
     from axor_core.contracts.result import ExecutionResult, TokenUsage
     from axor_core.contracts.extension import ExtensionLoader, ExtensionBundle
     from axor_core.contracts.trace import TraceConfig
@@ -154,6 +174,9 @@ __all__ = [
     "CancelToken", "CancelReason", "make_token",
     "SignalClassifier",
     "ExecutionPolicy",
+    "AuthorityPolicy", "ChildAuthorityPolicy", "ExportAuthorityPolicy",
+    "ExecutionPlan", "RetrievalBreadth", "DecompositionPreference",
+    "ResourceBudget", "split_legacy_policy",
     "TaskSignal", "TaskComplexity", "TaskNature",
     "ExecutionResult", "TokenUsage",
     "ExtensionLoader", "ExtensionBundle",
@@ -165,6 +188,7 @@ __all__ = [
     "NullMemoryProvider",
     # capability
     "CapabilityExecutor", "ToolHandler",
+    "AllowlistEscalationApprover", "console_escalation_callback",
     # governor
     "ToolCallGovernor", "GovernanceDecision",
     "GovernanceConfig",

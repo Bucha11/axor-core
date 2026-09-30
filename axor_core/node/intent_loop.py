@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any, AsyncIterator, Awaitable, Callable
 
 from axor_core.capability.executor import CapabilityExecutor
 from axor_core.contracts.anomaly import NormalizedIntent
+from axor_core.contracts.cancel import CancelReason
 from axor_core.contracts.envelope import ExecutionEnvelope
 from axor_core.contracts.intent import Intent, IntentKind, ResolvedIntent
 from axor_core.contracts.canonical import ConsequenceClass
@@ -15,7 +16,6 @@ from axor_core.policy.value_policy import check_value_policies
 from axor_core.policy.gates import (
     carrier_gate,
     consequence_gate,
-    driving_subset,
     integrity_superseded_by_decidable,
     positional_gate,
     ssrf_gate,
@@ -25,16 +25,29 @@ from axor_core.kernel.registration import (
     validate_value_policies,
     validate_egress_allowlists,
     validate_driving_arg_allowlists,
+    validate_egress_driving_args,
     tool_is_classified,
 )
 from axor_core.taint.engine import TaintEngine
 from axor_core.policy.sinks import INSTRUCTION_COMPLETE_SINKS
-from axor_core.policy.provenance import output_root
+from axor_core.policy.provenance import (
+    ValueRefLedger,
+    call_payload,
+    declared_roles,
+    derive_driving_root,
+    output_root,
+    is_trusted_tool,
+    result_payload,
+    seed_operator_trusted,
+    source_tokens,
+)
 from axor_core.contracts.result import ExecutorEvent, ExecutorEventKind
+from axor_core.contracts.taint import TrustedOrigin
 from axor_core.contracts.trace import (
     CancelledEvent,
     IntentDeniedEvent,
     SinkDensityEvent,
+    TaintPropagatedEvent,
     TokensSpentEvent,
     TraceEvent,
     TraceEventKind,
@@ -63,6 +76,7 @@ from axor_core.federation.gateway import FederationError
 from axor_core.taint.causal_root import CausalRoot
 
 if TYPE_CHECKING:
+    from axor_core.contracts.admission import AdmissionController
     from axor_core.contracts.reputation import ReputationEnricher
     from axor_core.degradation.engine import DegradationEngine
     from axor_core.contracts.provenance import ValueProvenance
@@ -134,6 +148,10 @@ class IntentLoop:
         reputation_enricher: "ReputationEnricher | None" = None,
         max_intents_per_session: int | None = None,
         max_total_spawns: int | None = None,
+        budget_cap_calls: int | None = None,
+        budget_cap_cost: float | None = None,
+        tool_weights: "dict[str, float] | None" = None,
+        default_tool_weight: float = 1.0,
         value_policies: "dict | None" = None,
         consequence_overrides: "dict | None" = None,
         positional_sinks: "frozenset[str] | set[str] | None" = None,
@@ -143,14 +161,22 @@ class IntentLoop:
         untrusted_sources: "frozenset[str] | set[str] | None" = None,
         sensitive_sources: "frozenset[str] | set[str] | None" = None,
         imperative_sinks: "frozenset[str] | set[str] | None" = None,
+        integrity_sinks: "frozenset[str] | set[str] | None" = None,
         benign_tools: "frozenset[str] | set[str] | None" = None,
         driving_args: "dict[str, list[str]] | None" = None,
         require_egress_allowlist: bool = False,
         require_tool_roles: bool = False,
         trajectory_observers: "list | None" = None,
         invocation_recorder: "Callable[[str, dict, bool], None] | None" = None,
+        admission: "AdmissionController | None" = None,
+        spawn_inherits_context: bool = False,
     ) -> None:
         self._executor = capability_executor
+        # True only when the spawn callback is the kernel's own GovernedNode spawn,
+        # which builds the child's engine by inheriting THIS engine (context root,
+        # trusted index, mode). A host that wires its own spawn_callback gets no
+        # such guarantee, so the default keeps the full spawn carrier gate.
+        self._spawn_inherits_context = spawn_inherits_context
         self._trace_events = trace_events
         self._depth = current_depth
         self._tool_result_callback = tool_result_callback
@@ -167,11 +193,32 @@ class IntentLoop:
         self._degradation_engine = degradation_engine
         self._reputation_enricher = reputation_enricher
         self._normalizer = IntentNormalizer()
+        # The value-ref vocabulary the kernel event schema is written in — the
+        # same ledger the synchronous governor keeps, so both paths record refs
+        # the replay fold and the plane's value graph can resolve.
+        self._value_refs = ValueRefLedger()
+        self._normalized_of_call: NormalizedIntent | None = None
         self._intent_sequence = 0
         self._token_totals = _TokenAccumulator()
         # DoS guards — opt-in (None = unlimited). GovernedSession sets prod defaults.
         self._max_intents_per_session = max_intents_per_session
         self._max_total_spawns = max_total_spawns
+        # Budget: an operator-declared ceiling on APPROVED tool calls per run
+        # (spec §15). Enforced HERE at the loop boundary — the same cap the replay
+        # kernel checks (axor_core.kernel.replay.evaluate_call, category="budget"),
+        # so a run and its counterfactual agree on when the budget is exhausted.
+        # Exhaustion is a typed denial (recorded like any gate denial and fed to
+        # degradation), never a silent overrun. None = unlimited.
+        self._budget_cap_calls = budget_cap_calls
+        self._budget_spent_calls = 0
+        # Cost budget (spec §15): a cap on the summed per-tool weights of approved
+        # calls, the operator-declared deterministic cost model. Same parity as the
+        # call cap — the replay kernel (KernelConfig.budget_cap_cost / weight_of)
+        # applies the identical would-exceed predicate and weight table.
+        self._budget_cap_cost = budget_cap_cost
+        self._tool_weights = dict(tool_weights or {})
+        self._default_tool_weight = default_tool_weight
+        self._budget_spent_cost = 0.0
         self._value_policies = value_policies or {}
         # Registration validator: reject value policies that try to discharge a
         # field requiring rich-syntax (fuzz) checking with a simple decidable
@@ -215,9 +262,18 @@ class IntentLoop:
         # Threaded into carrier_gate so a renamed imperative sink is honoured here,
         # matching the synchronous governor (previously this path ignored it).
         self._imperative_sinks = frozenset(imperative_sinks or ())
+        # Operator-declared state-changing sinks: integrity check only, no floor.
+        self._integrity_sinks = frozenset(integrity_sinks or ())
         # Explicitly-benign reads, kept for the lazy STRICT role check below.
         self._benign_tools = frozenset(benign_tools or ())
         self._require_tool_roles = require_tool_roles
+        # STRICT (either obligation): a tool with no explicit consequence class is
+        # CATASTROPHIC, admissible only through an escalation grant or lease.
+        self._strict = require_egress_allowlist or require_tool_roles
+        # Context-default integrity: operator allowlist members are trusted values
+        # (the same seeding the synchronous governor does). No-op for a backend
+        # that does not implement the context-default contract.
+        seed_operator_trusted(self._taint_engine, self._value_policies)
         # Per-sink driving arguments — the fields the taint decision keys on
         # (whole-args by default). Narrows over-blocking of untrusted content sent
         # to a trusted destination.
@@ -229,6 +285,11 @@ class IntentLoop:
         # executed) for the session's closed-session record. Observe-only; never
         # gates execution. Default None → zero overhead when sentinel is not attached.
         self._invocation_recorder = invocation_recorder
+        # Optional control-plane admission (advisory overlay, spec 12.0). None =
+        # no plane attached → governance never waits on the network. Polled at
+        # the intent boundary only, so pause/stop take effect between intents,
+        # never mid-effect.
+        self._admission = admission
         # STRICT obligation: every egress sink must carry an enum allowlist (the
         # sound, paraphrase-proof destination control). Fail closed at construction.
         if require_egress_allowlist:
@@ -236,6 +297,10 @@ class IntentLoop:
             _eg_errors += validate_driving_arg_allowlists(
                 self._egress_sinks, self._driving_args, self._value_policies
             )
+            if getattr(self._taint_engine, "integrity_default", "clean") == "context":
+                _eg_errors += validate_egress_driving_args(
+                    self._egress_sinks, self._driving_args, self._integrity_sinks
+                )
             if _eg_errors:
                 raise ValueError("strict egress allowlist: " + "; ".join(_eg_errors))
         _illegal = {s for s in self._positional_sinks if s.lower() in INSTRUCTION_COMPLETE_SINKS}
@@ -280,6 +345,20 @@ class IntentLoop:
         async for event in stream:
             # cooperative cancellation — check before every event
             if envelope.cancel_token.is_cancelled():
+                self._record_cancellation(envelope)
+                return
+
+            # Control-plane admission (advisory overlay). Holds while paused,
+            # returns False on stop; a disconnected/absent plane always admits.
+            # The plane cannot widen — it can only stop or hold — so this is
+            # never part of the allow decision.
+            if self._admission is not None and not await self._admission.await_admission(
+                envelope.node_id
+            ):
+                if not envelope.cancel_token.is_cancelled():
+                    envelope.cancel_token.cancel(
+                        CancelReason.USER_ABORT, "stopped via control plane"
+                    )
                 self._record_cancellation(envelope)
                 return
 
@@ -336,7 +415,8 @@ class IntentLoop:
                         )
                         if spawn_decision.kind == PolicyDecisionKind.DENY:
                             self._record_denial(
-                                spawn_intent, spawn_decision.reason, envelope
+                                spawn_intent, spawn_decision.reason, envelope,
+                                "capability",
                             )
                             denial = _denial_result(tool_name, spawn_decision.reason)
                             if self._tool_result_callback is not None:
@@ -361,7 +441,7 @@ class IntentLoop:
                         spawn_args = event.payload.get("args", {})
                         taint_reason = self._spawn_taint_reason(spawn_args)
                         if taint_reason is not None:
-                            self._record_denial(spawn_intent, taint_reason, envelope)
+                            self._record_denial(spawn_intent, taint_reason, envelope, "taint_enforcement")
                             denial = _denial_result(tool_name, taint_reason)
                             if self._tool_result_callback is not None:
                                 await self._tool_result_callback(
@@ -476,7 +556,7 @@ class IntentLoop:
             reason = (
                 f"session intent limit reached ({self._max_intents_per_session})"
             )
-            self._record_denial(intent, reason, envelope)
+            self._record_denial(intent, reason, envelope, "budget")
             return ResolvedIntent(
                 intent=intent,
                 approved=False,
@@ -487,13 +567,50 @@ class IntentLoop:
         decision, pending_consumption = self._evaluate_tool_intent(intent, envelope)
 
         if decision.kind == PolicyDecisionKind.DENY:
-            self._record_denial(intent, decision.reason, envelope)
+            self._record_denial(intent, decision.reason, envelope, "capability")
             denial_resp = _make_denial_response(decision.reason)
             self._record_degradation_signal(intent, denial_resp)
             return ResolvedIntent(
                 intent=intent,
                 approved=False,
                 reason=decision.reason,
+                result=denial_resp.to_tool_result(),
+            )
+
+        # Budget cap (spec §15) — enforced at the loop boundary, in replay-parity
+        # order (capability passed above; budget before the consequence/value/taint
+        # cascade). The N+1th APPROVED call is denied: spent counts only calls that
+        # cleared every gate (incremented at the execute site below), so a
+        # gate-denied call burns no budget, exactly as the replay kernel folds it.
+        # A budget denial is a typed fact (recorded + fed to degradation), so a run
+        # that hits its ceiling stops loudly — it never silently overruns.
+        budget_reason: str | None = None
+        if (
+            self._budget_cap_calls is not None
+            and self._budget_spent_calls >= self._budget_cap_calls
+        ):
+            budget_reason = (
+                f"budget: call cap {self._budget_cap_calls} exhausted "
+                f"({self._budget_spent_calls} spent)"
+            )
+        elif (
+            self._budget_cap_cost is not None
+            and self._budget_spent_cost + self._tool_weight(tool_name)
+            > self._budget_cap_cost
+        ):
+            budget_reason = (
+                f"budget: cost cap {self._budget_cap_cost} exhausted "
+                f"({self._budget_spent_cost} spent, "
+                f"+{self._tool_weight(tool_name)} for '{tool_name}')"
+            )
+        if budget_reason is not None:
+            self._record_denial(intent, budget_reason, envelope, "budget")
+            denial_resp = _make_denial_response(budget_reason, "budget")
+            self._record_degradation_signal(intent, denial_resp)
+            return ResolvedIntent(
+                intent=intent,
+                approved=False,
+                reason=budget_reason,
                 result=denial_resp.to_tool_result(),
             )
 
@@ -519,6 +636,11 @@ class IntentLoop:
                 self._degradation_engine.record_detection(normalized)
                 for ev in self._degradation_engine.drain_events():
                     self._trace_events.append(ev)
+        # Stashed for `_call_payload`: a denial can be recorded from a dozen
+        # places in this method, and threading the projection through every one
+        # of them is how one of them ends up recording a call with no
+        # `normalized` block — which replay then re-gates as a local no-op.
+        self._normalized_of_call = normalized
 
         # STRICT role completeness (lazy, per call): an unclassified tool fails
         # closed instead of defaulting to a clean benign read. Mirrors the governor;
@@ -532,13 +654,14 @@ class IntentLoop:
                     positional_sinks=self._positional_sinks,
                     benign_tools=self._benign_tools,
                     value_policies=self._value_policies,
+                    integrity_sinks=self._integrity_sinks,
                 ):
             role_denial = (
                 f"tool {tool_name!r} has no declared data-flow role; STRICT mode "
                 "refuses an unclassified tool (it would default to a clean read and "
                 "arm no floor)"
             )
-            self._record_denial(intent, role_denial, envelope)
+            self._record_denial(intent, role_denial, envelope, "unclassified_tool")
             denial_resp = _make_denial_response(role_denial, "unclassified_tool")
             self._record_degradation_signal(intent, denial_resp)
             return ResolvedIntent(
@@ -558,7 +681,7 @@ class IntentLoop:
             operation=normalized.operation if normalized is not None else None,
         )
         if consequence_denial is not None:
-            self._record_denial(intent, consequence_denial, envelope)
+            self._record_denial(intent, consequence_denial, envelope, "consequence_gate")
             denial_resp = _make_denial_response(consequence_denial, "consequence_gate")
             self._record_degradation_signal(intent, denial_resp)
             return ResolvedIntent(
@@ -574,7 +697,7 @@ class IntentLoop:
         # by decidable decision procedures.
         value_denial = check_value_policies(tool_name, tool_args, self._value_policies)
         if value_denial is not None:
-            self._record_denial(intent, value_denial, envelope)
+            self._record_denial(intent, value_denial, envelope, "value_policy")
             denial_resp = _make_denial_response(value_denial, "value_policy")
             self._record_degradation_signal(intent, denial_resp)
             return ResolvedIntent(
@@ -595,8 +718,9 @@ class IntentLoop:
             # only on the record_signal path. Without it derive_source_id falls back
             # to provenance/"unknown" and the narrowing silently misses.
             check_root = (
-                self._taint_engine.derive_value(
-                    driving_subset(tool_args, self._driving_args.get(tool_name))
+                derive_driving_root(
+                    self._taint_engine, tool_args, self._driving_args.get(tool_name),
+                    integrity_sink=tool_name in self._integrity_sinks,
                 )
                 if self._taint_engine is not None
                 else None
@@ -605,7 +729,7 @@ class IntentLoop:
                 tool_name, normalized, envelope, driving_root=check_root
             )
             if degradation_denial is not None:
-                self._record_denial(intent, degradation_denial, envelope)
+                self._record_denial(intent, degradation_denial, envelope, "degradation")
                 denial_resp = _make_denial_response(degradation_denial)
                 self._record_degradation_signal(intent, denial_resp, normalized)
                 return ResolvedIntent(
@@ -617,7 +741,7 @@ class IntentLoop:
 
         # Shared gate denial → ResolvedIntent (records denial + degradation signal).
         def _gate_denial(gd) -> ResolvedIntent:
-            self._record_denial(intent, gd.reason, envelope)
+            self._record_denial(intent, gd.reason, envelope, gd.category)
             denial_resp = _make_denial_response(gd.reason, gd.category)
             self._record_degradation_signal(intent, denial_resp, normalized)
             return ResolvedIntent(
@@ -643,8 +767,9 @@ class IntentLoop:
         # soundly over-tainting opaque model output would collapse this back to
         # session-sticky tainting and needs a sound per-value interpreter backend.
         if normalized is not None:
-            driving_root = self._taint_engine.derive_value(
-                driving_subset(tool_args, self._driving_args.get(tool_name))
+            driving_root = derive_driving_root(
+                self._taint_engine, tool_args, self._driving_args.get(tool_name),
+                integrity_sink=tool_name in self._integrity_sinks,
             )
 
             # Density telemetry: record, per high-stakes sink firing, the per-value
@@ -654,7 +779,7 @@ class IntentLoop:
             # agree on which sinks count.
             sink_consequence = consequence_class(
                 tool_name, operation=normalized.operation,
-                overrides=self._consequence_overrides,
+                overrides=self._consequence_overrides, strict=self._strict,
             )
             if sink_consequence >= ConsequenceClass.REVERSIBLE:
                 session_tainted, session_sensitive = (
@@ -716,6 +841,7 @@ class IntentLoop:
                 integrity_superseded=integrity_superseded_by_decidable(
                     tool_name, tool_args, self._driving_args, self._value_policies
                 ),
+                integrity_sinks=self._integrity_sinks,
             )
             if gd is not None:
                 return _gate_denial(gd)
@@ -732,7 +858,7 @@ class IntentLoop:
                     f"adjudicator (advisory): denied '{tool_name}' on its "
                     f"projection (hash {projection_hash(projection)})"
                 )
-                self._record_denial(intent, reason, envelope)
+                self._record_denial(intent, reason, envelope, "budget")
                 denial_resp = _make_denial_response(reason, "adjudicator")
                 self._record_degradation_signal(intent, denial_resp, normalized)
                 return ResolvedIntent(
@@ -747,6 +873,13 @@ class IntentLoop:
         if pending_consumption is not None:
             pending_consumption.commit()
 
+        # Consume one unit of budget for this approved call, mirroring the replay
+        # kernel (which counts every non-DENY TOOL_CALL). Counted here — after all
+        # gates pass, before execute — so an execution error still counts (it was
+        # not a gate denial), keeping runtime and counterfactual budgets identical.
+        self._budget_spent_calls += 1
+        self._budget_spent_cost += self._tool_weight(tool_name)
+
         # approved or transformed — emit the appropriate trace event
         is_transform = decision.kind == PolicyDecisionKind.TRANSFORM
         self._trace_events.append(
@@ -754,7 +887,10 @@ class IntentLoop:
                 kind=TraceEventKind.INTENT_TRANSFORMED if is_transform else TraceEventKind.INTENT_APPROVED,
                 node_id=envelope.node_id,
                 sequence=len(self._trace_events),
-                payload={"tool": tool_name},
+                # the SHARED payload builder — the synchronous governor records
+                # the identical shape from the identical function, so the two
+                # ways of wrapping an agent cannot drift into two vocabularies.
+                payload=self._call_payload(tool_name, tool_args),
             )
         )
 
@@ -785,7 +921,7 @@ class IntentLoop:
                     )
                 except FederationError as exc:
                     reason = f"federation: rejected peer value — {exc}"
-                    self._record_denial(intent, reason, envelope)
+                    self._record_denial(intent, reason, envelope, "budget")
                     denial_resp = _make_denial_response(reason, "federation_gate")
                     return ResolvedIntent(
                         intent=intent, approved=False, reason=reason,
@@ -813,7 +949,7 @@ class IntentLoop:
             )
         except _KNOWN_TOOL_EXCEPTIONS as exc:
             reason = str(exc)
-            self._record_denial(intent, reason, envelope)
+            self._record_denial(intent, reason, envelope, "budget")
             return ResolvedIntent(
                 intent=intent,
                 approved=False,
@@ -834,13 +970,18 @@ class IntentLoop:
                 tb,
             )
             reason = f"tool execution failed: {type(exc).__name__}: {exc}"
-            self._record_denial(intent, reason, envelope)
+            self._record_denial(intent, reason, envelope, "budget")
             return ResolvedIntent(
                 intent=intent,
                 approved=False,
                 reason=reason,
                 result=_denial_result(tool_name, reason),
             )
+
+    def _tool_weight(self, tool_name: str) -> float:
+        """Operator-declared cost weight of one call to `tool_name` (spec §15).
+        Mirrors KernelConfig.weight_of so runtime and replay cost agree."""
+        return float(self._tool_weights.get(tool_name, self._default_tool_weight))
 
     def _evaluate_tool_intent(
         self,
@@ -996,18 +1137,72 @@ class IntentLoop:
         this engine's per-value ledger)."""
         if self._taint_engine is None:
             return None
-        driving_root = self._taint_engine.derive_value(spawn_args)
+        # Context-default integrity: the task a model writes after reading
+        # untrusted data is context-tainted, so the full carrier gate would refuse
+        # every free-text spawn. When the child provably inherits this node's
+        # context root, that adds nothing: every sink the child reaches is gated
+        # on the same context, and its capabilities cannot exceed this node's. So
+        # the spawn is judged on what the task visibly carries (the legacy label):
+        # a task that copies a registered untrusted fragment is still refused.
+        # Not applied to other imperative sinks — a message recipient, a shell or
+        # an interpreter does not run under this engine.
+        derive_carried = getattr(self._taint_engine, "derive_carried", None)
+        if (
+            self._spawn_inherits_context
+            and derive_carried is not None
+            and getattr(self._taint_engine, "integrity_default", "clean") == "context"
+        ):
+            driving_root = derive_carried(spawn_args)
+        else:
+            driving_root = self._taint_engine.derive_value(spawn_args)
         gd = carrier_gate(
             "spawn_child", spawn_args, None, driving_root, self._imperative_sinks
         )
         return gd.reason if gd is not None else None
+
+    def _call_payload(self, tool_name: str, args: dict) -> dict:
+        """The provenance a verdict was reached on — the SHARED builder, the one
+        ``ToolCallGovernor`` uses. Recording only the tool name left every
+        consumer re-deriving provenance the kernel had already computed."""
+        normalized = self._normalized_of_call
+        if normalized is not None and normalized.tool != tool_name:
+            # a spawn/message denial recorded while a tool call's projection is
+            # still stashed — better no block than another call's.
+            normalized = None
+        return call_payload(
+            tool_name, args, taint=self._taint_engine, driving_args=self._driving_args,
+            normalized=normalized, refs=self._value_refs,
+            roles=declared_roles(
+                tool_name,
+                untrusted_sources=self._untrusted_sources,
+                sensitive_sources=self._sensitive_sources,
+                egress_sinks=self._egress_sinks,
+                imperative_sinks=self._imperative_sinks,
+                positional_sinks=self._positional_sinks,
+                integrity_sinks=self._integrity_sinks,
+            ),
+        )
 
     def _record_denial(
         self,
         intent: Intent,
         reason: str,
         envelope: ExecutionEnvelope,
+        category: str = "capability",
     ) -> None:
+        payload: dict = {}
+        if intent.kind is IntentKind.TOOL_CALL and self._taint_engine is not None:
+            # a denied call carries the provenance it was denied ON. Without it a
+            # consumer can see THAT the kernel refused but not what it refused
+            # over — and an operator asking "why" gets nothing.
+            body = intent.payload if isinstance(intent.payload, dict) else {}
+            payload = self._call_payload(
+                str(body.get("tool", "")), dict(body.get("args") or {}),
+            )
+        # the category NAMES the gate a consumer records. Without it a denial can
+        # only be written as "refused, somehow", and trace/v1's `gate` field —
+        # which takes a gate name, not a category — has nothing to fill in.
+        payload["category"] = category
         self._trace_events.append(
             IntentDeniedEvent(
                 kind=TraceEventKind.INTENT_DENIED,
@@ -1015,6 +1210,7 @@ class IntentLoop:
                 sequence=len(self._trace_events),
                 intent_kind=intent.kind.value,
                 reason=reason,
+                payload=payload,
             )
         )
 
@@ -1032,11 +1228,18 @@ class IntentLoop:
         `override_root` short-circuits the structural derivation — used when the
         federation gateway has already decided the value's provenance (a peer value
         whose receipt was restored or re-minted untrusted).
+
+        An arming read is also RECORDED (see :meth:`_record_taint_propagated`):
+        the trace's only statement of where taint entered the run.
         """
         if self._taint_engine is None:
             return
         if override_root is not None:
             self._taint_engine.register_value(result, override_root)
+            self._record_taint_propagated(
+                effective_intent.node_id,
+                str(effective_intent.payload.get("tool", "")), result, override_root,
+            )
             return
         tool_name = effective_intent.payload.get("tool", "")
         # Shared arming map (policy.provenance.output_root) — the same mapping the
@@ -1050,8 +1253,45 @@ class IntentLoop:
             sensitive_sources=self._sensitive_sources,
         )
         if root is None:
-            return  # clean read — nothing to register
+            # Clean read — no provenance to register. In context mode a trusted
+            # tool's output seeds the trusted-origin index, exactly as the
+            # synchronous governor's register_output does.
+            register_trusted = getattr(self._taint_engine, "register_trusted", None)
+            if register_trusted is not None and tool_name and is_trusted_tool(
+                str(tool_name), self._benign_tools,
+                require_tool_roles=self._require_tool_roles,
+            ):
+                register_trusted(result, TrustedOrigin.TOOL)
+            return
         self._taint_engine.register_value(result, root)
+        self._record_taint_propagated(
+            effective_intent.node_id, str(tool_name), result, root,
+        )
+
+    def _record_taint_propagated(
+        self, node_id: str, tool_name: str, result: Any, root: "CausalRoot",
+    ) -> None:
+        """Record the read that introduced provenance, with its minted value ref.
+
+        This is the trace's SOURCE event. Without it a run is a list of verdicts
+        with no origin: the replay fold has nothing to put in ``tainted_refs``,
+        so a later ``arg_refs`` binding resolves to nothing, and the Control
+        Plane refuses the run ("no untrusted source in the recorded run"). The
+        synchronous governor records the identical payload from the identical
+        builder — the two paths must not differ on what a source looks like.
+        """
+        self._trace_events.append(
+            TaintPropagatedEvent(
+                kind=TraceEventKind.TAINT_PROPAGATED,
+                node_id=node_id,
+                sequence=len(self._trace_events),
+                taint_source=",".join(source_tokens(root.sources)),
+                taint_scope="value",
+                payload=result_payload(
+                    tool_name, self._value_refs.mint(result, root), root,
+                ),
+            )
+        )
 
     def _check_consequence(
         self,
@@ -1075,7 +1315,7 @@ class IntentLoop:
         has_gate = self._escalation.covers(tool_name)
         gd = consequence_gate(
             tool_name, operation, ceiling, self._consequence_overrides,
-            has_governance_gate=has_gate,
+            has_governance_gate=has_gate, strict=self._strict,
         )
         return gd.reason if gd is not None else None
 

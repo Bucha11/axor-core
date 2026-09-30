@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import dataclasses
 import logging
-from typing import Callable
+from collections.abc import Sequence
+from typing import TYPE_CHECKING, Callable
+
+if TYPE_CHECKING:
+    from axor_core.contracts.admission import AdmissionController
 
 from axor_core import trace as trace_mod
 from axor_core.budget.policy_engine import BudgetPolicyEngine, OptimizationAction
@@ -18,6 +22,7 @@ from axor_core.contracts.envelope import ExecutionEnvelope
 from axor_core.contracts.extension import ExtensionBundle
 from axor_core.contracts.intent import Intent, IntentKind
 from axor_core.contracts.invokable import Invokable
+from axor_core.contracts.taint import TrustedOrigin
 from axor_core.contracts.policy import ExecutionPolicy, ExportMode
 
 # Export restrictiveness ordering (least → most leakage-restrictive). Used to narrow
@@ -43,6 +48,7 @@ from axor_core.contracts.result import (
     ExecutorEventKind,
     TokenUsage,
 )
+from axor_core.contracts.degradation import DegradationLevel  # noqa: E402 — house pattern: this import block sits mid-file
 from axor_core.contracts.trace import TraceConfig, TraceEventKind
 from axor_core.capability.locked import governance_context
 from axor_core.taint.engine import TaintEngine
@@ -108,6 +114,10 @@ class GovernedNode:
         degradation_engine: "DegradationEngine | None" = None,
         max_intents_per_session: int | None = 1000,
         max_total_spawns: int | None = 200,
+        budget_cap_calls: int | None = None,
+        budget_cap_cost: float | None = None,
+        tool_weights: "dict[str, float] | None" = None,
+        default_tool_weight: float = 1.0,
         consequence_overrides: "dict | None" = None,
         value_policies: "dict | None" = None,
         positional_sinks: "frozenset[str] | set[str] | None" = None,
@@ -115,6 +125,7 @@ class GovernedNode:
         untrusted_sources: "frozenset[str] | set[str] | None" = None,
         sensitive_sources: "frozenset[str] | set[str] | None" = None,
         imperative_sinks: "frozenset[str] | set[str] | None" = None,
+        integrity_sinks: "frozenset[str] | set[str] | None" = None,
         benign_tools: "frozenset[str] | set[str] | None" = None,
         driving_args: "dict[str, list[str]] | None" = None,
         require_egress_allowlist: bool = False,
@@ -123,8 +134,18 @@ class GovernedNode:
         invocation_recorder: "Callable[[str, dict, bool], None] | None" = None,
         adjudicator=None,
         federation_gateway=None,
+        admission: "AdmissionController | None" = None,
+        context_taps: "Sequence | None" = None,
+        agent_id: str = "",
+        per_node_degradation: bool = False,
     ) -> None:
+        # Optional live-context taps (hot path) so an external monitor
+        # (axor-probe) can build drift snapshots. None/empty → the node-level
+        # emit is a no-op, zero overhead. agent_id rides into the emitted view.
+        self._context_taps = context_taps
+        self._agent_id = agent_id
         self._executor = executor
+        self._admission = admission
         self._child_executor = child_executor  # None → reuse parent executor
         self._cap_executor = capability_executor
         self._analyzer = analyzer
@@ -138,14 +159,25 @@ class GovernedNode:
         self._escalation_callback = escalation_callback  # None → auto-deny escalation
         self._taint_engine = taint_engine if taint_engine is not None else TaintEngine()
         self._degradation_engine = degradation_engine
+        # Per-node degradation (spec v2 Ch.4 §1/§3): opt-in. False keeps the
+        # v0.13 behavior — one engine shared down the subtree. True gives each
+        # spawned child its OWN engine seeded at max(parent level, NORMAL):
+        # narrow-or-preserve — a CAUTIOUS parent cannot spawn a NORMAL child
+        # to escape its own restriction (spawn-laundering closed).
+        self._per_node_degradation = per_node_degradation
         self._max_intents_per_session = max_intents_per_session
         self._max_total_spawns = max_total_spawns
+        self._budget_cap_calls = budget_cap_calls
+        self._budget_cap_cost = budget_cap_cost
+        self._tool_weights = dict(tool_weights or {})
+        self._default_tool_weight = default_tool_weight
         self._consequence_overrides = consequence_overrides or {}
         self._positional_sinks = frozenset(positional_sinks or ())
         self._egress_sinks = frozenset(egress_sinks or ())
         self._untrusted_sources = frozenset(untrusted_sources or ())
         self._sensitive_sources = frozenset(sensitive_sources or ())
         self._imperative_sinks = frozenset(imperative_sinks or ())
+        self._integrity_sinks = frozenset(integrity_sinks or ())
         self._benign_tools = frozenset(benign_tools or ())
         self._driving_args = dict(driving_args or {})
         self._require_egress_allowlist = require_egress_allowlist
@@ -201,6 +233,19 @@ class GovernedNode:
         # ── 2. Lineage ─────────────────────────────────────────────────────────
         lineage = self._build_lineage(raw_state)
 
+        # Context-default integrity: the task is a trusted value when the user
+        # wrote it. A root node's task is the user's (every turn). A child's task
+        # is written by the parent's model, so it is trusted only if the context
+        # it inherited is clean — otherwise it is model-generated under untrusted
+        # influence and must not become a trusted value in the child.
+        register_trusted = getattr(self._taint_engine, "register_trusted", None)
+        context_root = getattr(self._taint_engine, "context_root", None)
+        if register_trusted is not None and (
+            self._depth == 0
+            or (context_root is not None and not context_root().is_tainted)
+        ):
+            register_trusted(raw_state.task, TrustedOrigin.TASK)
+
         # register with trace collector
         if self._trace_collector:
             self._trace_collector.register_node(
@@ -227,6 +272,17 @@ class GovernedNode:
             )
         else:
             context = self._stub_context_view(raw_state, policy, lineage)
+
+        # Fire the live-context observation seam (hot path, fail-safe, no-op when
+        # no tap is attached). External monitors (axor-probe) build drift
+        # snapshots from this; core never imports them. Imported locally, matching
+        # this module's existing lazy-import style.
+        from axor_core.node.context_observation import emit_context_view
+
+        await emit_context_view(
+            self._context_taps, context,
+            session_id=raw_state.session_id, agent_id=self._agent_id,
+        )
 
         # ── 4. Envelope ────────────────────────────────────────────────────────
         extension_tools = (
@@ -320,11 +376,19 @@ class GovernedNode:
             current_depth=self._depth,
             tool_result_callback=tool_result_callback,
             spawn_callback=_spawn_child_callback,
+            # _handle_spawn builds the child's engine by inheriting this one
+            # (context root, trusted index, integrity mode), so the loop may judge
+            # a spawn on what the task visibly carries — see _spawn_taint_reason.
+            spawn_inherits_context=True,
             escalation_callback=self._escalation_callback,
             taint_engine=self._taint_engine,
             degradation_engine=self._degradation_engine,
             max_intents_per_session=self._max_intents_per_session,
             max_total_spawns=self._max_total_spawns,
+            budget_cap_calls=self._budget_cap_calls,
+            budget_cap_cost=self._budget_cap_cost,
+            tool_weights=self._tool_weights,
+            default_tool_weight=self._default_tool_weight,
             consequence_overrides=self._consequence_overrides,
             value_policies=self._value_policies,
             positional_sinks=self._positional_sinks,
@@ -332,6 +396,7 @@ class GovernedNode:
             untrusted_sources=self._untrusted_sources,
             sensitive_sources=self._sensitive_sources,
             imperative_sinks=self._imperative_sinks,
+            integrity_sinks=self._integrity_sinks,
             benign_tools=self._benign_tools,
             driving_args=self._driving_args,
             require_egress_allowlist=self._require_egress_allowlist,
@@ -340,6 +405,7 @@ class GovernedNode:
             invocation_recorder=self._invocation_recorder,
             adjudicator=self._adjudicator,
             federation_gateway=self._federation_gateway,
+            admission=self._admission,
         )
 
         raw_output, raw_payload, budget_export_mode = await self._collect_stream(
@@ -508,6 +574,18 @@ class GovernedNode:
         # engine; lateral protection across the node tree is preserved per-value.
         child_taint.inherit_value_ledger(self._taint_engine)
 
+        # Degradation posture at spawn (spec v2 Ch.4 §3). Default: the v0.13
+        # shared engine (subtree lock-down). Opt-in per-node: a FRESH engine
+        # seeded at max(parent level, NORMAL) — the child inherits a derived
+        # posture, not a blank one; spawn narrows or preserves, never widens.
+        child_degradation = self._degradation_engine
+        if self._per_node_degradation and self._degradation_engine is not None:
+            from axor_core.node.spawn import inherit_degradation
+
+            child_degradation = inherit_degradation(
+                self._degradation_engine, child_lineage.node_id
+            )
+
         child_node = GovernedNode(
             executor=self._child_executor or self._executor,
             capability_executor=self._cap_executor,
@@ -521,9 +599,14 @@ class GovernedNode:
             current_depth=self._depth + 1,
             child_executor=self._child_executor,
             escalation_callback=self._escalation_callback,
-            degradation_engine=self._degradation_engine,
+            degradation_engine=child_degradation,
+            per_node_degradation=self._per_node_degradation,
             max_intents_per_session=self._max_intents_per_session,
             max_total_spawns=self._max_total_spawns,
+            budget_cap_calls=self._budget_cap_calls,
+            budget_cap_cost=self._budget_cap_cost,
+            tool_weights=self._tool_weights,
+            default_tool_weight=self._default_tool_weight,
             taint_engine=child_taint,
             consequence_overrides=self._consequence_overrides,
             value_policies=self._value_policies,
@@ -532,6 +615,7 @@ class GovernedNode:
             untrusted_sources=self._untrusted_sources,
             sensitive_sources=self._sensitive_sources,
             imperative_sinks=self._imperative_sinks,
+            integrity_sinks=self._integrity_sinks,
             benign_tools=self._benign_tools,
             driving_args=self._driving_args,
             require_egress_allowlist=self._require_egress_allowlist,
@@ -540,15 +624,48 @@ class GovernedNode:
             invocation_recorder=self._invocation_recorder,
             adjudicator=self._adjudicator,
             federation_gateway=self._federation_gateway,
+            admission=self._admission,  # stop cascades down the subtree (spec 12.2)
         )
 
         child_cancel = envelope.cancel_token.child_token()
-        child_result = await child_node.run(
-            raw_state=child_raw_state,
-            extension_bundle=extension_bundle,
-            parent_policy=parent_policy,
-            cancel_token=child_cancel,
-        )
+        try:
+            child_result = await child_node.run(
+                raw_state=child_raw_state,
+                extension_bundle=extension_bundle,
+                parent_policy=parent_policy,
+                cancel_token=child_cancel,
+            )
+        except Exception as exc:  # noqa: BLE001 — crash/disappearance path
+            # Death by crash (spec v2 Ch.4 §4): a crashed child cannot be
+            # treated as having returned clean — absence is a FACT at the
+            # parent, folded into the degradation recompute. The audit trail
+            # stays intact; cancellation (BaseException) still propagates.
+            from axor_core.contracts.trace import ChildStaleEvent
+
+            stale_child = (
+                child_raw_state.lineage.node_id
+                if child_raw_state.lineage
+                else "unknown"
+            )
+            trace_events.append(
+                ChildStaleEvent(
+                    kind=TraceEventKind.CHILD_STALE,
+                    node_id=envelope.node_id,
+                    sequence=len(trace_events),
+                    payload={
+                        "child_node_id": stale_child,
+                        "error": f"{type(exc).__name__}: {exc}",
+                    },
+                )
+            )
+            if self._degradation_engine is not None:
+                self._degradation_engine.tighten(
+                    DegradationLevel.CAUTIOUS,
+                    reason=f"node_stale: child {stale_child} died without "
+                    f"returning ({type(exc).__name__})",
+                    trigger_intent="spawn",
+                )
+            return f"[child failed: node_stale ({type(exc).__name__})]"
 
         # Provenance of the child's returned output, registered into the parent's
         # per-value ledger so a parent sink later carrying it is gated.

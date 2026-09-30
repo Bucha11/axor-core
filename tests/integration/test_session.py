@@ -20,15 +20,38 @@ class TestGovernedSessionIntegration:
             trace_config=TraceConfig(local_only=True, persist_inputs=False),
         )
 
+    @staticmethod
+    def _confident(session):
+        """Report the heuristic's signal with high confidence: preset
+        selection applies only to classifications the analyzer trusts —
+        an ambiguous one runs fail-closed under safe_fallback."""
+        from types import SimpleNamespace
+        real_analyze = session._analyzer.analyze
+
+        async def _analyze(raw_input):
+            signal, _event = await real_analyze(raw_input)
+            return signal, SimpleNamespace(confidence=0.95)
+
+        session._analyzer.analyze = _analyze
+
     @pytest.mark.asyncio
     async def test_focused_task_selects_correct_policy(self, session):
+        self._confident(session)
         result = await session.run("write a test for the payment endpoint")
         assert result.metadata["policy"] == "focused_generative"
 
     @pytest.mark.asyncio
     async def test_expansive_task_selects_expansive_policy(self, session):
+        self._confident(session)
         result = await session.run("rewrite the entire codebase from Python to Go")
         assert result.metadata["policy"] == "expansive"
+
+    @pytest.mark.asyncio
+    async def test_ambiguous_first_classification_runs_fail_closed(self, session):
+        """Without a confident classification the first turn must not run
+        under a classifier-chosen authority — safe_fallback applies."""
+        result = await session.run("rewrite the entire codebase from Python to Go")
+        assert result.metadata["policy"] == "default"
 
     @pytest.mark.asyncio
     async def test_preset_policy_overrides_analysis(self, session):

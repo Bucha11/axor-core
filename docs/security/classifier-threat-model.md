@@ -102,17 +102,41 @@ Mitigations:
 
 ### Classifier Failure
 
-If the classifier raises an exception, `TaskAnalyzer` falls back to the
-DEFAULT policy preset.  The DEFAULT preset is the most restrictive preset —
-fail-closed.
+If the external (ML) classifier raises an exception, `TaskAnalyzer` catches
+it, logs a warning, and keeps the heuristic result — a broken or unreachable
+external classifier can never crash governed execution. The heuristic itself
+never escalates and degrades to "focused / no signal" on malformed
+coefficient data.
 
-### Adversarial Task Text
+### Misclassification Cost Containment
 
-Task text is attacker-controlled when the user is untrusted or when the
-session is processing external content.  In STRICT mode, no classification
-happens from task text, so this attack surface is eliminated.
+Classification is advisory and will sometimes be wrong. Two mechanisms keep a
+wrong guess cheap instead of trying to make the classifier perfect:
 
----
+- **Confidence-gated narrowing (single ambiguity source).** Session-level
+  adaptive narrowing is monotonic, so it acts only on classifications the
+  ANALYZER considers confident — the threshold is read from
+  `TaskAnalyzer.ambiguity_threshold`, never re-derived by the session, so
+  the analyzer's configuration and the session's interpretation cannot
+  diverge. An ambiguous classification never chooses authority — not
+  even for one turn: with no confident baseline yet, the turn runs
+  fail-closed under `safe_fallback` (read-only, no spawn; the operator
+  escalation ceiling still applies for per-tool recovery). The adaptive
+  baseline is set only by the first confident classification.
+- **Operator-defined escalation ceiling.** Classifier-selected presets
+  carry NO escalation policy: which capabilities may later be granted is an
+  authority decision. The operator sets the ceiling via
+  `GovernedSession(escalation_policy=...)` (stamped onto every
+  classifier-selected policy) or an explicit policy; `escalate_policy`
+  grants then run behind the approval callback, flood guard and TTL leases.
+
+Note on scope: these mechanisms contain the cost of the LEGACY model, in
+which classification still selects the initial `ExecutionPolicy` (tools
+included). The structural fix — classification removed from the authority
+path entirely (`AuthorityPolicy` operator-defined, `ExecutionPlan`
+classifier-shaped) — is the authority/plan split series; `default_policy=`
+and the containment above are the compatibility-window guards, not the
+target architecture.
 
 ## What the Classifier Does Not Do
 

@@ -4,7 +4,7 @@
 [![Security](https://github.com/Bucha11/axor-core/actions/workflows/security.yml/badge.svg?branch=main)](https://github.com/Bucha11/axor-core/actions/workflows/security.yml)
 [![PyPI](https://img.shields.io/pypi/v/axor-core?cacheSeconds=300)](https://pypi.org/project/axor-core/)
 [![Python](https://img.shields.io/pypi/pyversions/axor-core?cacheSeconds=300)](https://pypi.org/project/axor-core/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
 **Execution governance kernel for AI agents.**
 
@@ -16,6 +16,12 @@ Instead of trying to detect malicious prompts, Axor governs what actions are all
 same agent · same model · same prompt
 different policy → different execution behavior
 ```
+
+The kernel *enforces*. When you want to **see** what it caught — replay the
+incident deterministically, prove it, and turn it into a regression test — that
+is the [control plane](#control-plane): catch the discrepancy as an
+EvidenceCase → explain it with counterfactual replay → prevent it with a
+two-sided corpus. Same loop, one story; this repo is the enforcement half.
 
 ---
 
@@ -225,9 +231,40 @@ Policy may be selected dynamically from task signals, or fixed explicitly by the
 | Rewrite repo | expansive | broad | light | allowed (d=3) |
 | Audit security | focused_readonly | minimal | aggressive | denied |
 
-The heuristic classifier ships in core: rule-based, zero tokens, zero latency. Plug in `axor-classifier-simple` or `axor-classifier-llm` for higher accuracy on ambiguous tasks.
+The heuristic classifier ships in core: rule-based, zero tokens, zero latency. Plug in `axor-classifier-simple` for higher accuracy on ambiguous tasks (English + Russian).
 
 Policies derive minimum sufficient execution conditions — not static caps. A "rewrite repo" task gets broad context because the task requires it, not because limits were relaxed.
+
+Classification is advisory and misclassification stays cheap: session-level narrowing acts only on classifications the analyzer itself considers confident (single ambiguity source), an ambiguous classification never chooses authority (with no confident baseline the turn runs fail-closed under the safe fallback), and the escalation ceiling — which capabilities may later be granted at all — is operator-defined, never preset/classifier-derived. Operator guards:
+
+```python
+from axor_core import GovernedSession, AllowlistEscalationApprover, presets
+
+session = GovernedSession(
+    executor=..., capability_executor=...,
+    # Escalation ceiling — which tools MAY later be granted (authority,
+    # operator-defined; classifier-selected presets carry none):
+    escalation_policy=EscalationPolicy(
+        allow_escalation=True, grantable_tools=("write", "bash"),
+        require_human=True,
+    ),
+    # Approval gate for those grants (fail-closed without it):
+    escalation_callback=AllowlistEscalationApprover(
+        {"bash": 10, "write": 20},
+        allowed_path_prefixes=("/workspace",),  # confines path-bearing grants (write)
+        unconfined_tools=("bash",),             # bash calls expose no checkable path —
+                                                # grantable only without path restriction
+    ),
+    # Compatibility/security guard — operator-defined policy for every turn;
+    # classifier fully bypassed (also disables task-aware planning; the target
+    # model that separates the two is the AuthorityPolicy/ExecutionPlan split):
+    default_policy=presets.standard(),
+)
+```
+
+Path containment uses the same canonical resolution as lease enforcement (symlinks and `..` resolved against the real filesystem), so what the approver approves and what the lease enforces cannot disagree. Tools whose calls carry no extractable path argument (`bash` — a command string is not a file path) cannot be path-confined: a path-restricted `bash` lease would deny every call. Listing them in `unconfined_tools` is the explicit operator opt-in to grant them unrestricted (still bounded by `max_ops`, TTL and the flood guard) — omit the tool entirely if that is not acceptable.
+
+`console_escalation_callback` is the interactive alternative to the allowlist approver — it prompts a human on the terminal and denies when no TTY is attached.
 
 ---
 
@@ -344,11 +381,40 @@ What benchmarks do **not** prove: full prompt injection prevention, covert chann
 | [`axor-cli`](https://github.com/Bucha11/axor-cli) | Governed terminal runtime |
 | [`axor-claude`](https://github.com/Bucha11/axor-claude) | Claude / Claude Code adapter |
 | [`axor-langchain`](https://github.com/Bucha11/axor-langchain) | LangChain governance middleware |
+| [`axor-wrap`](https://github.com/Bucha11/axor-wrap) | Wrap engine — scan agent code → tool manifests → governance config → wrapped runtime; **also hosts the control-plane client** (`axor_wrap.plane`) |
 | [`axor-classifier-simple`](https://github.com/Bucha11/axor-classifier-simple) | ML task signal derivation (zero tokens) |
 | [`axor-classifier-llm`](https://github.com/Bucha11/axor-classifier-llm) | LLM verifier for gray-zone escalation |
 | [`axor-memory-sqlite`](https://github.com/Bucha11/axor-memory-sqlite) | Cross-session memory (SQLite) |
 | [`axor-telemetry`](https://github.com/Bucha11/axor-telemetry) | Privacy-preserving governance feedback |
 | [`axor-benchmarks`](https://github.com/Bucha11/axor-benchmarks) | Governance proof layer |
+| [`axor-control-plane`](https://github.com/Bucha11/axor-control-plane) | Runtime governance & evaluation **platform** built on this kernel |
+
+### Control plane
+
+[**axor-control-plane**](https://github.com/Bucha11/axor-control-plane) is the platform that operates `axor-core`-governed agents at runtime. The kernel enforces; the control plane observes, replays, and operates a fleet:
+
+- **Catch** (Eval) — run a fault scenario; a caught discrepancy (observed reality vs. the agent's claim) becomes a shareable, exportable **EvidenceCase**.
+- **Explain** (Replay) — scrub any run and fork counterfactuals ("no exec capability", "this value arrives tainted", "budget cap = N") that re-gate the recorded trace deterministically, with a value-provenance / taint graph.
+- **Prevent** (Regression) — pin runs into a corpus and replay it under a candidate policy: two-sided, deterministic CI.
+- **Govern** (Control) — live topology of governed nodes: pause / stop / replan / inject / attest / budget-cap, and cascade-stop over a subtree.
+
+Replay reuses the *same* pure kernel (`axor_core.kernel`) that enforcement does, so what you review is what actually ran.
+
+#### Attaching a node to the plane
+
+The plane **client** is not in this package. `PlaneSession`, `PlaneClient`, `PlaneAdmission` and the trace→event bridge live in [`axor-wrap`](https://github.com/Bucha11/axor-wrap) as `axor_wrap.plane`:
+
+```python
+# before (axor-core ≤ 0.9.x)          # now (axor-core ≥ 0.10, axor-wrap[plane])
+from axor_core.plane import (         from axor_wrap.plane import (
+    PlaneSession, PlaneClient,            PlaneSession, PlaneClient,
+    PlaneAdmission, trace_to_kernel,      PlaneAdmission, trace_to_kernel,
+)                                     )
+```
+
+What stays here is what the kernel reasons over whether or not a plane is ever attached: the desired-state lattice and its provenance guard (`axor_core.kernel.state`), the canonical byte form commands are signed over (`axor_core.kernel.jcs`), the event schema (`axor_core.kernel.events`), and the `AdmissionController` contract the loop steers through (`axor_core.contracts.admission`).
+
+The reason for the split is the guarantee itself. The plane is an advisory overlay that can only *narrow*, and it never enters the decision path (spec 12.0). A kernel that **cannot import** a plane client cannot grow a dependency on one — so that property is now enforced by the dependency graph rather than by review, and axor-core keeps zero required dependencies and no network surface at all. The `plane` extra is gone with the code; install `axor-wrap[plane]` instead.
 
 ---
 
@@ -408,7 +474,7 @@ When submitting a security fix: include a test that reproduces the bypass before
 
 ## License
 
-MIT
+Apache-2.0 — see [LICENSE](LICENSE).
 
 ---
 

@@ -28,6 +28,9 @@ class TraceEventKind(str, Enum):
     # federation
     CHILD_SPAWNED = "child_spawned"
     CHILD_COMPLETED = "child_completed"
+    # Crash/disappearance: the child never returned; absence is a fact at the
+    # parent (spec v2 Ch.4 section 4), never a clean return.
+    CHILD_STALE = "child_stale"
 
     # context
     CONTEXT_COMPRESSED = "context_compressed"
@@ -126,6 +129,15 @@ class ChildSpawnedEvent(TraceEvent):
     child_node_id: str = ""
     child_depth: int = 0
     context_fraction: float = 0.0
+
+
+@dataclass(frozen=True)
+class ChildStaleEvent(TraceEvent):
+    """The parent's pending receive on a spawn edge ended without a result
+    (crash, disappearance). Bridged to a kernel FACT ``node_stale`` — a
+    crashed child cannot silently be treated as having returned clean."""
+
+    child_node_id: str = ""
 
 
 @dataclass(frozen=True)

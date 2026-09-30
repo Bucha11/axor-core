@@ -133,6 +133,7 @@ def test_from_config_builds_session():
         "value_policies": {
             "send_email": [{"arg": "to", "kind": "enum", "allowed": ["a@b.com"]}]
         },
+        "driving_args": {"send_email": ["to"]},
     })
     # empty capability executor → STRICT role-completeness check is skipped
     session = GovernedSession.from_config(
@@ -216,3 +217,46 @@ def test_federation_unknown_algorithm_fails_closed():
             {"peer_id": "x", "domain": "d", "kernel_version": "0.8.0",
              "algorithm": "rsa-9000", "shared_key_env": "X"}
         ]}})
+
+
+# ── integrity_default (context-default integrity, RFC step 2) ─────────────────
+
+@pytest.mark.parametrize("mode, expected", [
+    ("library", "clean"), ("production", "clean"), ("strict", "context"),
+])
+def test_integrity_default_follows_the_mode(mode, expected):
+    """Unset, the mode decides: STRICT runs context-default integrity (RFC step 6),
+    library/production keep the legacy default."""
+    from axor_core import ToolCallGovernor
+    cfg = GovernanceConfig.from_dict({"mode": mode})
+    assert cfg.integrity_default is None
+    gov = ToolCallGovernor(**cfg.as_governor_kwargs())
+    assert gov._taint.integrity_default == expected
+    sess = GovernedSession.from_config(
+        EchoExecutor(), CapabilityExecutor(), cfg,
+        trace_config=TraceConfig(local_only=True, persist_inputs=False),
+    )
+    assert sess._taint_engine.integrity_default == expected
+
+
+def test_explicit_integrity_default_wins_over_the_mode():
+    from axor_core import ToolCallGovernor
+    cfg = GovernanceConfig.from_dict({"mode": "strict", "integrity_default": "clean"})
+    assert ToolCallGovernor(**cfg.as_governor_kwargs())._taint.integrity_default == "clean"
+
+
+def test_integrity_default_context_reaches_session_and_governor():
+    from axor_core import ToolCallGovernor
+    cfg = GovernanceConfig.from_dict({"integrity_default": "context"})
+    gov = ToolCallGovernor(**cfg.as_governor_kwargs())
+    assert gov._taint.integrity_default == "context"
+    sess = GovernedSession.from_config(
+        EchoExecutor(), CapabilityExecutor(), cfg,
+        trace_config=TraceConfig(local_only=True, persist_inputs=False),
+    )
+    assert sess._taint_engine.integrity_default == "context"
+
+
+def test_unknown_integrity_default_fails_closed():
+    with pytest.raises(ValueError, match="integrity_default"):
+        GovernanceConfig.from_dict({"integrity_default": "strict"})

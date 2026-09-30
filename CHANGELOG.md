@@ -2,10 +2,165 @@
 
 ## Unreleased
 
+### Added (integrity sinks)
+
+- **`integrity_sinks`** — operator-declared state-changing sinks (password /
+  profile update, role grant, standing-order amount) whose driving args the
+  attacker must not choose. Integrity check only: no confidentiality floor, no
+  allowlist obligation. Previously such calls were none of egress /
+  outside-workspace write / exec, so the integrity gate never looked at them —
+  an injected `update_password(password=…)` passed in every mode. On
+  `ToolCallGovernor`, `GovernedSession`, `GovernanceConfig` (`integrity_sinks:`),
+  replay (`KernelConfig.integrity_sinks`), recorded as `roles.integrity_sink`.
+  Strict counts it as a declared role and, under `context`, requires
+  `driving_args` for it.
+- **Task spans are trusted values.** Under `context`, any span of the user's task
+  that does not split a token is trusted (case-insensitive): `'SunnyDay2024!'`
+  and `1234 Elm Street, New York, NY 10001` now count. Tool outputs, operator
+  config and endorsements keep whole-leaf equality.
+- **Numbers on integrity sinks are checked** under `context`: an amount must
+  appear in trusted text or a trusted structured output (`2,200.00` = `2200`).
+- `roles` in recorded `TOOL_CALL` payloads gains `integrity_sink`.
+
+### Changed
+
+- **Strict defaults to context-default integrity.** Unset, `integrity_default`
+  now follows the mode: `context` under Strict (`GovernedSession(mode=STRICT)`,
+  `GovernanceConfig` `mode: strict`, or `ToolCallGovernor` with either Strict
+  obligation), `clean` otherwise. `integrity_default: clean` under Strict is the
+  legacy opt-out and is logged.
+- **Consequence axis sees renamed destructive tools.** A tool name the action
+  table does not know is split into tokens, and a catastrophic verb
+  (`shutdown`, `reboot`, `poweroff`, `wipe`) or a destructive verb with an
+  infrastructure object (`drop`/`delete`/`truncate`/... + `table`/`database`/
+  `disk`/..., `restart`/`reset` + `server`/`host`/`gateway`/...) raises it to
+  catastrophic in every mode. Tightening only; an operator's explicit class wins.
+  Previously `shutdown_server`, `drop_table` or `wipe_disk` ran unattended.
+- **Breaking (Strict only): every tool needs an explicit consequence class.**
+  Under Strict a tool in neither the built-in table nor `consequence_overrides`
+  is catastrophic at run time (governor, IntentLoop, and replay via
+  `KernelConfig(strict_consequence=True)`), and a Strict session with such a
+  registered tool fails construction
+  (`kernel.registration.validate_consequence_completeness`). The Strict example
+  config now classifies all of its tools.
+- **Breaking (Strict only): egress sinks must declare `driving_args`.** Under
+  Strict with `context`, construction fails for an egress sink without
+  `driving_args` — the whole-args fallback would refuse every call after an
+  untrusted read. Declare the allowlisted destination field, e.g.
+  `driving_args: {send_email: [to]}`.
+
+### Added
+
+- **Context-default integrity (opt-in, `integrity_default: context`).** Once a node
+  has read untrusted data, a value the model writes into a driving argument is
+  tainted unless it equals a trusted value — the user's task, an `enum` allowlist
+  member, a trusted tool's output, or a governance-endorsed value. Whole-value
+  equality after canonicalisation (IBAN separators/case, e-mail case, phone
+  separators), never containment. Closes the re-encoding gap below on every sink;
+  confidentiality is unchanged. New `axor_core/taint/trusted.py`
+  (`TrustedValueIndex`), `ContextProvenance` contract, `TrustedOrigin`,
+  `TaintEngine(integrity_default=...)`, `ToolCallGovernor.register_task()` /
+  `register_trusted()`, and the `integrity_default` key on `GovernanceConfig` /
+  `GovernedSession`. Children inherit the context root; a child's task is trusted
+  only if its parent's context was clean. Default: `context` under Strict, `clean` otherwise (see Changed). A free-text `spawn_child`
+  after untrusted data is admitted on the in-process spawn path
+  (`IntentLoop(spawn_inherits_context=True)`, set by `GovernedNode`): it is judged
+  on what the task visibly carries, and the child stays gated by the inherited
+  context. See `docs/rfc-integrity-context-default.md`.
+- **Context-mode verdicts are replayable.** A `TOOL_CALL` decided under
+  `integrity_default: context` records `context_root`, `driving_carried` and, per
+  argument, `trusted` / `trusted_origin` (legacy records unchanged). Replay folds
+  a per-node `context_root` and re-derives the driving root from these parts, so
+  counterfactual driving args and synthetic taint re-decide the call;
+  `policy.from_record.context_record` fails closed on an incomplete record.
+
+### Security
+
+- **Documented an integrity gap on model-generated values.** The per-value
+  integrity gate treats a value the model writes as clean when it contains no
+  registered fragment of an untrusted read. Re-encoded copies of an untrusted
+  identifier (compacted, re-cased, re-separated, split across fields, base64'd),
+  verbatim copies the ledger never segmented (a space-grouped IBAN) and equivalent
+  path spellings (`/etc/./x`) therefore pass. Closed today only where an `enum`
+  allowlist or the positional gate covers the sink; confidentiality is unaffected.
+  Pinned by `tests/adversarial/test_context_default_integrity.py` (strict-xfail);
+  O2 in `docs/kernel-theorem.md` and §7 of `docs/governance-model.md` corrected.
+  Fix specified in `docs/rfc-integrity-context-default.md`.
+- **T0 now covers the provenance-label producers.** `axor_core.taint.ledger` and
+  `axor_core.taint.causal_root` are added to the `t0-producers-non-interpreting`
+  import contract and to the T0 scan test, with a ledger determinism check.
+
+## 0.9.2 — 2026-07-13
+
+The multi-agent runtime layer (spec v2): labels ride in message envelopes,
+boundary gates run locally on both edge ends, and inter-federation trust is a
+ladder — discount, never label authority.
+
+### Added
+
+- **Kernel messaging (`kernel/messaging.py`, Ch.4).** New event kinds
+  `NODE_SPAWNED` / `MESSAGE_SENT` / `MESSAGE_RECEIVED`; the pure sender-side
+  gate `evaluate_message_send` (LOCKED admits no sends; undeclared peer edges
+  fail closed) and `fold_carried_root` (a message that lost its labels re-mints
+  untrusted). `replay()` folds `MESSAGE_RECEIVED` with carried labels intact and
+  monotonically on cycles (A→B→A cannot launder); `replay_tree()` folds a
+  multi-node trace per node — no shared governance state; size-1 degenerates to
+  exactly `replay()`.
+- **Runtime messaging (`node/messaging.py`).** `MessageEnvelope` (labels travel
+  with the value; federation-key signable, tamper → rejected) and
+  `InMemoryMessageBus` emitting kernel events on both edge ends. Peer-edge
+  delivery re-derives through the trust ladder; the foreign root is kept as an
+  opaque forensic ref beside the minted local root.
+- **Inter-federation trust ladder (`federation/ladder.py`, Ch.1).**
+  `PeerDeclaration` (undeclared = L0), `receive_foreign` (L0 full taint / L1
+  attribution-only / L2 bounded discount never-to-clean, floor never
+  peer-negotiable; forged assertion falls to L0 evidenced),
+  `effective_root_for_sink` (critical sinks ignore discounts entirely),
+  `establish_channel` (MCP-as-A2A pinned L0/L1; governance attestation —
+  signed kernel+config-hash — verified at establishment, failures evidenced).
+  The gateway restore path is documented as intra-keyset-only.
+- **Causal subgraph (`kernel/subgraph.py`, Ch.3).** Backward provenance walk
+  from an anchored claim/denial: minimal causes, roles
+  (origin/conduit/container/anchor), `fault_origin`, `contained_at`,
+  `federation_scope`; message hops become subgraph edges with carried labels.
+- **Spawn & death (Ch.4).** `node/spawn.inherit_degradation` — opt-in per-node
+  degradation (`per_node_degradation` on `GovernedSession`/`GovernedNode`):
+  a child starts at max(parent level, NORMAL), narrow-or-preserve. A crashed
+  child leaves a `CHILD_STALE` trace event and tightens the parent to CAUTIOUS
+  (bridged to a kernel `node_stale` FACT) — absence is a fact, never a clean
+  return.
+- **Bridge.** `CHILD_SPAWNED` → `NODE_SPAWNED`, `CHILD_COMPLETED` →
+  `MESSAGE_RECEIVED` (delegation), `CHILD_STALE` → FACT `node_stale`.
+
+### Compatibility
+
+- Additive only: a single node is a tree with no edges — the v0.13 single-agent
+  paths are unchanged and the 0.9.1 suite passes unmodified (the platform's
+  size-1 golden gate pins byte-identical behavior end-to-end).
+
+## 0.9.1 — 2026-07-10
+
 The kernel/platform split and one-implementation gate engine.
 
 ### Added
 
+- **`contracts/observation.py` — the Core → Probe observation seam.**
+  `SessionContextView` (structural context snapshot, incl. `taint_canaries`
+  drawn from `ContextFragment.taint_mark`) and the `ContextTap` protocol
+  axor-probe's `CoreContextTap` matches structurally (P-34). `GovernedSession`
+  accepts `context_taps=[...]`; `GovernedNode` fires
+  `node/context_observation.emit_context_view` on every context build (the
+  governance hot path), so a tap sees exactly the context the agent runs
+  against. Observe-only: a pure `ContextView → SessionContextView` mapper
+  derives all fields from the built view, and tap failures are logged per tap,
+  never raised.
+- **`context/excision.py` — authority-gated context repair.** `apply_excision`
+  applies an axor-probe `RepairProposal` (fragment ids cross as plain strings —
+  no import edge): an `automated_policy` authority may remove only the clean
+  pure-tainted `auto_excise` set; the `escalate` set (collateral/diffuse)
+  requires `human_operator`/`trusted_boundary` and is otherwise deferred —
+  recorded, not removed. Completes the context-healing loop: probe
+  `repair.localize` → `RepairProposal` → core `apply_excision`.
 - **Trust rings, machine-enforced.** Subsystems grouped into Ring 0 (kernel — the
   TCB), Ring 1 (runtime), Ring 2 (platform). An `import-linter` `kernel-purity`
   contract (`.importlinter`, run in CI) forbids the kernel from importing the
