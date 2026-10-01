@@ -76,11 +76,23 @@ governed benign-only, 7 passes/suite. Undefended uses the paper's established
 o4-mini 7-pass baselines (banking 67.9, slack 84.8), reproduced here (banking p1
 undef 68.8 ≈ 67.9).
 
-| suite | undef → gov (mean of 7) | axor cost | CaMeL o4-mini-high |
+| suite | undef → gov | axor cost | CaMeL o4-mini-high |
 |---|---|---|---|
-| banking | 67.9 → **46.4** | **−21.5pp** | +18.8 |
-| slack   | 84.8 → **41.5** | **−43.3pp** | −23.8 |
-| travel  | *execution-blocked* (see below) | — | +10.0 |
+| banking (n=7) | 67.9 → **46.4** | **−21.5pp** | +18.8 |
+| slack (n=7)   | 84.8 → **41.5** | **−43.3pp**¹ | −23.8 |
+| travel (n=3)  | 62.5 → **66.7** | **≈ 0** (noise) | +10.0 |
+
+¹ slack's −43.3pp is **inflated by `get_webpage`-as-integrity_sink over-block** — see
+the get_webpage section below: the gate drives ~17/23 slack denials (via the
+consequence axis) but adds **no** ASR protection (the per-value taint gate already
+catches get_webpage exfil to an external domain, with or without the integrity_sink,
+in both clean and context modes — verified deterministically). The honest slack
+cost is lower; a clean rerun without that over-block is the fix (pending).
+
+travel governed (66.7) ≥ undefended (62.5, noisy n=2) → **~0 cost**, the "neither
+defense loses" suite (CaMeL +10.0). travel was run as two 10-task halves/pass
+(`AXOR_BENCH_TASK_SLICE`) because a 20-task o4-mini pass exceeds one background
+window; 3 passes (65/65/70%).
 
 Per-pass governed: banking 50/50/50/43.8/43.8/50/37.5; slack
 42.9/47.6/42.9/38.1/28.6/47.6/42.9. **CaMeL is ahead on both** — and by more than
@@ -109,14 +121,13 @@ channel content). So the slack utility cost is the honest price of keeping ASR a
 0 — exactly the axor↔CaMeL trade-off: axor's structural gate is stricter (more
 utility cost, sound ASR); CaMeL keeps more utility via its interpreter.
 
-### travel on o4-mini is execution-blocked (not a result)
+### travel on o4-mini (resolved via task-slice)
 
-travel's 20-task governed pass does not complete inside one background window on
-o4-mini (reasoning latency; it reaches ~task 16/20, then the window ends, and with
-no task-level resume it never records). gpt-4o-mini travel ran fine (fast). To get
-o4-mini travel, split the 20 user tasks into two sub-invocations (task-slice) and
-combine — a small runner change, not yet done. travel is the ~0-cost "neither
-defense loses" suite (CaMeL +10.0), so banking+slack carry the comparison.
+travel's 20-task governed pass exceeds one background window on o4-mini (reasoning
+latency), so it was run as two 10-task halves (`AXOR_BENCH_TASK_SLICE=0:10` / `10:20`)
+and combined from raw success counts. 3 passes: 13/20, 13/20, 14/20 → gov **66.7%**.
+With undefended ≈ 62.5 that is **~0 cost** — travel's egress recipient is prompt-given,
+so origin does not over-block it (the "neither defense loses" suite).
 
 ## What was wrong before (the correction)
 
