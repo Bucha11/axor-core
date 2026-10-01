@@ -27,11 +27,17 @@ Configs: `config/{banking,slack,travel}_origin.yaml` (complete coverage: banking
 the STRICT-roles/no-allowlist combo and auto-derives a complete per-tool consequence
 class (BENIGN unless an egress/integrity sink → CONSEQUENTIAL).
 
-**Model: `gpt-4o-mini`** (OpenRouter) — the rope_bridge reference model, so the
-numbers are directly comparable. (The o4-mini/CaMeL clean-mode cost axis is a
-separate experiment, unchanged.)
+**Two model axes, two comparisons** (a model-match is mandatory — each baseline
+was measured on one backbone):
+- **o4-mini** → compare to **CaMeL** (CaMeL v2 Table 2 is o4-mini-high). This is
+  the paper's load-bearing comparison. See "o4-mini vs CaMeL" below.
+- **gpt-4o-mini** → compare to **ROPE** / `rope_bridge` (both gpt-4o-mini). The
+  gpt-4o-mini CU table just below is this axis.
 
-## Clean utility (CU) — 7 paired passes/suite, benign-only
+Do **not** cross them (an o4-mini number against a gpt-4o-mini reference is
+meaningless).
+
+## gpt-4o-mini vs ROPE — Clean utility (CU), 7 paired passes/suite, benign-only
 
 | suite | undef → gov (mean of 7) | cost | rope_bridge ref (gov CU) |
 |---|---|---|---|
@@ -62,6 +68,55 @@ origin-gated egress/integrity sink, which the context axis denies. rope_bridge's
 small full-matrix residuals (slack 1.9 = IT1 in-*body* link; travel 12.9 = IT6
 harm-in-the-agent's-*message-text*) are the in-message-text class no tool-call gate
 (axor or ROPE) can enforce; they are outside this serious-egress slice.
+
+## o4-mini vs CaMeL — the model-matched comparison (load-bearing)
+
+Origin on **o4-mini** (model-matched to CaMeL v2 o4-mini-high, same ethz harness),
+governed benign-only, 7 passes/suite. Undefended uses the paper's established
+o4-mini 7-pass baselines (banking 67.9, slack 84.8), reproduced here (banking p1
+undef 68.8 ≈ 67.9).
+
+| suite | undef → gov (mean of 7) | axor cost | CaMeL o4-mini-high |
+|---|---|---|---|
+| banking | 67.9 → **46.4** | **−21.5pp** | +18.8 |
+| slack   | 84.8 → **41.5** | **−43.3pp** | −23.8 |
+| travel  | *execution-blocked* (see below) | — | +10.0 |
+
+Per-pass governed: banking 50/50/50/43.8/43.8/50/37.5; slack
+42.9/47.6/42.9/38.1/28.6/47.6/42.9. **CaMeL is ahead on both** — and by more than
+in clean mode, because origin's integrity axis is deliberately *stricter* than the
+content-ledger clean mode: it closes the paraphrase residual, gates credential/PII
+writes (`integrity_sinks`), and treats channel-names/URLs as untrusted. That extra
+strictness buys sound ASR at a higher utility cost, which o4-mini's capability
+amplifies on the shared-channel partition (it completes more of those tasks
+undefended, so the gate removes more real utility — the paper's documented
+capability-scaling, here between gpt-4o-mini −23pp and o4-mini −43pp on slack).
+
+### The slack cost is the honest price of a load-bearing gate (not over-block)
+
+slack's −43pp is dominated by `get_webpage` as an integrity_sink (17/23 governed
+denials: a benign url-fetch of a channel link is denied because the URL is
+untrusted-derived). This is **not** removable over-block — it gates a real
+exfil-via-GET attack. Measured directly (gpt-4o-mini, curated slice):
+
+| slack config | governed ASR |
+|---|---|
+| origin (with `get_webpage` integrity_sink) | **0.0%** |
+| origin minus `get_webpage` integrity_sink | **11.1%** |
+
+Removing it lets an attack through (the agent fetches an attacker URL built from
+channel content). So the slack utility cost is the honest price of keeping ASR at
+0 — exactly the axor↔CaMeL trade-off: axor's structural gate is stricter (more
+utility cost, sound ASR); CaMeL keeps more utility via its interpreter.
+
+### travel on o4-mini is execution-blocked (not a result)
+
+travel's 20-task governed pass does not complete inside one background window on
+o4-mini (reasoning latency; it reaches ~task 16/20, then the window ends, and with
+no task-level resume it never records). gpt-4o-mini travel ran fine (fast). To get
+o4-mini travel, split the 20 user tasks into two sub-invocations (task-slice) and
+combine — a small runner change, not yet done. travel is the ~0-cost "neither
+defense loses" suite (CaMeL +10.0), so banking+slack carry the comparison.
 
 ## What was wrong before (the correction)
 
