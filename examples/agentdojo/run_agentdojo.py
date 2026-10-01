@@ -164,6 +164,13 @@ if os.environ.get("AXOR_BENCH_ALL_USER_TASKS") == "1" or CAMEL_MODE:
 if os.environ.get("AXOR_BENCH_INJECTIONS"):
     INJECTION_TASKS = os.environ["AXOR_BENCH_INJECTIONS"].split(",")
 
+# AXOR_BENCH_TASK_SLICE="start:end" runs only USER_TASKS[start:end], so a long
+# benign pass (e.g. travel's 20 tasks on a slow model) can be split across two
+# background windows and the raw success counts combined offline.
+if os.environ.get("AXOR_BENCH_TASK_SLICE"):
+    _a, _b = os.environ["AXOR_BENCH_TASK_SLICE"].split(":")
+    USER_TASKS = USER_TASKS[int(_a):int(_b)]
+
 
 def _make_llm():
     # Reasoning models (o3/o4-mini) spend completion budget on hidden reasoning
@@ -278,11 +285,11 @@ def main_camel() -> int:
         if condition == "undefended":
             print("BENIGN / UNDEFENDED ...")
             cu, _ = run_benign(False, suite)
-            print(f"\nundefended  {_pct(cu):.1f}%")
+            print(f"\nundefended  {_pct(cu):.1f}%  ({sum(cu)}/{len(cu)})")
         else:
             print("BENIGN / GOVERNED ...")
             cu, exec_ = run_benign(True, suite)
-            print(f"\ngoverned  {_pct(cu):.1f}%")
+            print(f"\ngoverned  {_pct(cu):.1f}%  ({sum(cu)}/{len(cu)})")
             print(f"benign denials:  {exec_.denied_count} ({exec_.denials})")
         return 0
     print("BENIGN / UNDEFENDED ...")
