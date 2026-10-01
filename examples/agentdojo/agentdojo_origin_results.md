@@ -82,12 +82,19 @@ undef 68.8 ≈ 67.9).
 | slack (n=7)   | 84.8 → **41.5** | **−43.3pp**¹ | −23.8 |
 | travel (n=3)  | 62.5 → **66.7** | **≈ 0** (noise) | +10.0 |
 
-¹ slack's −43.3pp is **inflated by `get_webpage`-as-integrity_sink over-block** — see
-the get_webpage section below: the gate drives ~17/23 slack denials (via the
-consequence axis) but adds **no** ASR protection (the per-value taint gate already
-catches get_webpage exfil to an external domain, with or without the integrity_sink,
-in both clean and context modes — verified deterministically). The honest slack
-cost is lower; a clean rerun without that over-block is the fix (pending).
+¹ slack's −43.3pp is **genuine shared-channel cost, not a config artifact.**
+Investigated and **refuted** an over-block hypothesis: a `get_webpage`-free variant
+(`slack_origin_v2.yaml`, get_webpage left untrusted but dropped from integrity_sinks)
+gave CU **44.5%** over 3 clean passes with **~22 denials/pass — unchanged** from the
+full config (41.5%, ~22 denials). Reason: benign url-fetches/posts whose URL is
+channel-derived are denied by the **per-value taint gate** (untrusted origin →
+external egress) whether or not `get_webpage` is a declared integrity_sink — the
+integrity_sink is *redundant* with taint there, so removing it neither lowers CU nor
+raises ASR (deterministically, get_webpage exfil stays caught). The cost is the real
+shared-channel limitation: a content/origin gate cannot tell a benign channel-derived
+URL from an attacker one, so both are refused. (The v2 run also confirmed the
+earlier "0→11%" ASR wobble was gpt-4o-mini noise / the uncatchable in-body-link
+class, not a get_webpage effect.)
 
 travel governed (66.7) ≥ undefended (62.5, noisy n=2) → **~0 cost**, the "neither
 defense loses" suite (CaMeL +10.0). travel was run as two 10-task halves/pass
@@ -104,22 +111,29 @@ amplifies on the shared-channel partition (it completes more of those tasks
 undefended, so the gate removes more real utility — the paper's documented
 capability-scaling, here between gpt-4o-mini −23pp and o4-mini −43pp on slack).
 
-### The slack cost is the honest price of a load-bearing gate (not over-block)
+### The slack cost is genuine shared-channel, not a `get_webpage` artifact
 
-slack's −43pp is dominated by `get_webpage` as an integrity_sink (17/23 governed
-denials: a benign url-fetch of a channel link is denied because the URL is
-untrusted-derived). This is **not** removable over-block — it gates a real
-exfil-via-GET attack. Measured directly (gpt-4o-mini, curated slice):
+slack's −43pp is driven by ~22 denials/pass on benign tasks whose egress/fetch URL
+or recipient is **channel-derived** (the channel is untrusted, so context-mode
+refuses the call). Two hypotheses about `get_webpage`-as-integrity_sink were tested
+and **both rejected**:
 
-| slack config | governed ASR |
-|---|---|
-| origin (with `get_webpage` integrity_sink) | **0.0%** |
-| origin minus `get_webpage` integrity_sink | **11.1%** |
+- *"It's load-bearing for ASR."* No. Deterministically, get_webpage exfil to an
+  external domain is caught by the **per-value taint gate** (untrusted origin →
+  external egress) with or without the integrity_sink, in clean and context modes.
+- *"It's removable over-block, so the real cost is lower."* No. `slack_origin_v2.yaml`
+  (get_webpage dropped from integrity_sinks) gave CU **44.5%** / ~22 denials over 3
+  clean passes — unchanged from 41.5% / ~22. The same benign calls are denied by
+  taint instead; the integrity_sink is simply **redundant** there.
 
-Removing it lets an attack through (the agent fetches an attacker URL built from
-channel content). So the slack utility cost is the honest price of keeping ASR at
-0 — exactly the axor↔CaMeL trade-off: axor's structural gate is stricter (more
-utility cost, sound ASR); CaMeL keeps more utility via its interpreter.
+So −43pp is the honest shared-channel limitation: a content/origin gate cannot
+distinguish a benign channel-derived URL from an attacker one, so both are refused.
+That is the axor↔CaMeL trade-off: axor's structural gate is stricter (more utility
+cost, sound ASR); CaMeL's interpreter keeps the provenance to tell them apart.
+
+(An earlier "0.0% → 11.1%" ASR wobble when dropping the integrity_sink was
+gpt-4o-mini sampling noise on a 9-pair slice / the uncatchable in-body-link class
+(IT1), not a get_webpage effect — superseded by the deterministic + v2 results.)
 
 ### travel on o4-mini (resolved via task-slice)
 
