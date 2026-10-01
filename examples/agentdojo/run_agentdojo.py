@@ -271,6 +271,20 @@ def main_camel() -> int:
     # averaging the benign utility-cost over many passes cheaply (ASR is already
     # established at 0 on a robust model).
     benign_only = os.environ.get("AXOR_BENCH_BENIGN_ONLY") == "1"
+    # AXOR_BENCH_CONDITION=undefended|governed runs ONE condition per invocation
+    # (so a slow o4-mini benign pass fits a single background window); default both.
+    condition = os.environ.get("AXOR_BENCH_CONDITION", "both")
+    if benign_only and condition in ("undefended", "governed"):
+        if condition == "undefended":
+            print("BENIGN / UNDEFENDED ...")
+            cu, _ = run_benign(False, suite)
+            print(f"\nundefended  {_pct(cu):.1f}%")
+        else:
+            print("BENIGN / GOVERNED ...")
+            cu, exec_ = run_benign(True, suite)
+            print(f"\ngoverned  {_pct(cu):.1f}%")
+            print(f"benign denials:  {exec_.denied_count} ({exec_.denials})")
+        return 0
     print("BENIGN / UNDEFENDED ...")
     ub_util, _ = run_benign(False, suite)
     print("\nBENIGN / GOVERNED ...")
