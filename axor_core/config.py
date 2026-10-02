@@ -28,7 +28,7 @@ from typing import Any
 
 from axor_core.contracts.canonical import ConsequenceClass
 from axor_core.contracts.mode import ExecutionMode
-from axor_core.contracts.taint import INTEGRITY_DEFAULTS
+from axor_core.contracts.taint import INTEGRITY_DEFAULTS, INTEGRITY_ORIGIN_MODES
 from axor_core.policy.value_policy import ValuePredicate, enum, numeric_range
 
 # Recognised top-level keys. Anything else is a config error (fail closed).
@@ -39,6 +39,7 @@ _KNOWN_KEYS = frozenset({
     "value_policies", "consequence_overrides",
     "driving_args",
     "integrity_default",
+    "integrity_origins",
     "federation",
 })
 _CONSEQUENCE_BY_NAME = {c.name.lower(): c for c in ConsequenceClass}
@@ -76,6 +77,8 @@ class GovernanceConfig:
     # None = the mode's default ("context" under strict, "clean" otherwise),
     # resolved by the session / governor it is splatted into.
     integrity_default: "str | None" = None
+    # Which TrustedOrigins clear a value at an integrity sink; resolved downstream.
+    integrity_origins: str = "any-trusted"
     # Built opt-in A2A objects (None when no `federation:` section). The gateway is
     # the receive side (which peer values to trust); the identity is the send side
     # (used by a transport adapter to mint our outgoing receipts).
@@ -113,9 +116,17 @@ class GovernanceConfig:
                 f"{sorted(INTEGRITY_DEFAULTS)}"
             )
 
+        integrity_origins = data.get("integrity_origins", "any-trusted")
+        if integrity_origins not in INTEGRITY_ORIGIN_MODES:
+            raise ValueError(
+                f"unknown integrity_origins {integrity_origins!r}; expected one of "
+                f"{sorted(INTEGRITY_ORIGIN_MODES)}"
+            )
+
         return cls(
             mode=mode,
             integrity_default=integrity_default,
+            integrity_origins=integrity_origins,
             workspace=data.get("workspace"),
             profile=data.get("profile"),
             untrusted_sources=_as_set(data.get("untrusted_sources"), "untrusted_sources"),
@@ -165,6 +176,7 @@ class GovernanceConfig:
             # GovernedSession names the consequence-override table `danger`.
             "danger": dict(self.consequence_overrides),
             "integrity_default": self.integrity_default,
+            "integrity_origins": self.integrity_origins,
         }
         if self.workspace is not None:
             kwargs["workspace"] = self.workspace
@@ -195,6 +207,7 @@ class GovernanceConfig:
             "require_egress_allowlist": self.mode is ExecutionMode.STRICT,
             "require_tool_roles": self.mode is ExecutionMode.STRICT,
             "integrity_default": self.integrity_default,
+            "integrity_origins": self.integrity_origins,
         }
 
 

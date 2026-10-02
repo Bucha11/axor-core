@@ -47,7 +47,10 @@ from axor_core.extensions.registry import ExtensionRegistry
 from axor_core.extensions.sanitizer import ExtensionSanitizer
 from axor_core.worker.commands import SlashCommandRouter
 from axor_core.taint.engine import TaintEngine
-from axor_core.contracts.taint import resolve_integrity_default
+from axor_core.contracts.taint import (
+    resolve_integrity_default,
+    resolve_integrity_origins,
+)
 from axor_core.tokens import estimate_tokens
 
 _log = logging.getLogger("axor.session")
@@ -161,6 +164,7 @@ class GovernedSession:
         context_taps: "list[ContextTap] | None" = None,
         per_node_degradation: bool = False,
         integrity_default: "str | None" = None,
+        integrity_origins: "str | None" = None,
     ) -> None:
         # Wall-clock the session was constructed — handed to sentinel in the
         # closed-session record (slow-and-low staging compares session start times).
@@ -226,6 +230,9 @@ class GovernedSession:
         # None = the mode's default: "context" under STRICT, "clean" otherwise.
         self._integrity_default = resolve_integrity_default(
             integrity_default, strict=(mode == ExecutionMode.STRICT)
+        )
+        self._integrity_origins = resolve_integrity_origins(
+            integrity_origins, strict=(mode == ExecutionMode.STRICT)
         )
         self._benign_tools = frozenset(benign_tools or ())
         if self._require_egress_allowlist:
@@ -400,7 +407,8 @@ class GovernedSession:
         # context root unless it is a trusted value (docs/rfc-integrity-context-
         # default.md). Resolved above; children inherit it via inherit_value_ledger.
         self._taint_engine = TaintEngine(
-            node_id=self._session_id, integrity_default=self._integrity_default
+            node_id=self._session_id, integrity_default=self._integrity_default,
+            integrity_origins=self._integrity_origins,
         )
 
         # degradation engine — persists across turns; level is monotonically increasing

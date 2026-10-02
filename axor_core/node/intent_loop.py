@@ -42,7 +42,7 @@ from axor_core.policy.provenance import (
     source_tokens,
 )
 from axor_core.contracts.result import ExecutorEvent, ExecutorEventKind
-from axor_core.contracts.taint import TrustedOrigin
+from axor_core.contracts.taint import TrustedOrigin, resolve_integrity_origins
 from axor_core.contracts.trace import (
     CancelledEvent,
     IntentDeniedEvent,
@@ -166,6 +166,7 @@ class IntentLoop:
         driving_args: "dict[str, list[str]] | None" = None,
         require_egress_allowlist: bool = False,
         require_tool_roles: bool = False,
+        integrity_origins: "str | None" = None,
         trajectory_observers: "list | None" = None,
         invocation_recorder: "Callable[[str, dict, bool], None] | None" = None,
         admission: "AdmissionController | None" = None,
@@ -189,7 +190,11 @@ class IntentLoop:
         # None engine would silently disable the entire data-flow core (fail-open).
         # Constructing a default makes the absence of an engine impossible, so that
         # cascade always runs (fail-closed).
-        self._taint_engine = taint_engine if taint_engine is not None else TaintEngine()
+        self._taint_engine = taint_engine if taint_engine is not None else TaintEngine(
+            integrity_origins=resolve_integrity_origins(
+                integrity_origins, strict=require_egress_allowlist or require_tool_roles,
+            )
+        )
         self._degradation_engine = degradation_engine
         self._reputation_enricher = reputation_enricher
         self._normalizer = IntentNormalizer()

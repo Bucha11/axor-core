@@ -3,7 +3,11 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from axor_core.contracts.taint import INTEGRITY_DEFAULTS, TrustedOrigin
+from axor_core.contracts.taint import (
+    INTEGRITY_DEFAULTS,
+    TrustedOrigin,
+    integrity_origins_for,
+)
 from axor_core.taint.causal_root import CausalRoot
 from axor_core.taint.fingerprint import content_fingerprint
 from axor_core.taint.ledger import ValueTaintLedger
@@ -75,7 +79,8 @@ class TaintEngine:
     Thread-safety: not thread-safe. Each session has its own instance.
     """
 
-    def __init__(self, node_id: str = "", integrity_default: str = "clean") -> None:
+    def __init__(self, node_id: str = "", integrity_default: str = "clean",
+                 integrity_origins: str = "any-trusted") -> None:
         if integrity_default not in INTEGRITY_DEFAULTS:
             raise ValueError(
                 f"unknown integrity_default {integrity_default!r}; expected one of "
@@ -83,6 +88,10 @@ class TaintEngine:
             )
         self._node_id = node_id
         self._integrity_default = integrity_default
+        # Which TrustedOrigins clear a value at an INTEGRITY SINK (resolved mode
+        # passed in by the caller, mirroring integrity_default). egress sinks and
+        # non-sink derivations are unaffected — see derive_value(integrity_sink=).
+        self._integrity_origins = integrity_origins_for(integrity_origins)
         self._pending_events: list[TraceEvent] = []
         self._ledger = ValueTaintLedger()
         # Context-default integrity. The context root is the join of every
@@ -167,7 +176,8 @@ class TaintEngine:
         """
         return (self._session_any_tainted, self._session_any_sensitive)
 
-    def derive_value(self, value: object, *, include_scalars: bool = False) -> CausalRoot:
+    def derive_value(self, value: object, *, include_scalars: bool = False,
+                     integrity_sink: bool = False) -> CausalRoot:
         """Per-value causal root of `value`.
 
         The ledger match attributes the untrusted/sensitive sources the value
@@ -176,11 +186,19 @@ class TaintEngine:
         untrusted data, a value is additionally joined with the context root unless
         every string leaf of it is a registered trusted value — and, with
         ``include_scalars`` (an integrity sink's driving args), every number too.
+
+        ``integrity_sink`` marks a driving arg of a declared integrity sink: only
+        then is the integrity-origin mode applied, so a value cleared only by a
+        trusted TOOL read is admitted under ``any-trusted`` but not under
+        ``request-only``. It is a distinct flag from ``include_scalars`` on
+        purpose — the scalar check must not double as the sink marker, or the mode
+        would silently leak onto egress sinks and non-sink derivations.
         """
         matched = self._ledger.derive(value)
         if self._integrity_default != "context" or not self._context_root.is_tainted:
             return matched
-        if self._trusted.covers(value, include_scalars=include_scalars):
+        accept = self._integrity_origins if integrity_sink else None
+        if self._trusted.covers(value, include_scalars=include_scalars, accept=accept):
             return matched
         return CausalRoot.mint(matched, self._context_root)
 
@@ -207,11 +225,14 @@ class TaintEngine:
         """The origin that makes ``value`` trusted, or None."""
         return self._trusted.origin_of(value)
 
-    def is_trusted(self, value: object, *, include_scalars: bool = False) -> bool:
+    def is_trusted(self, value: object, *, include_scalars: bool = False,
+                   integrity_sink: bool = False) -> bool:
         """Whether ``value`` escapes the context root: every string leaf (and, with
         ``include_scalars``, every number) is a trusted value; vacuously true for a
-        value with no checked leaf."""
-        return self._trusted.covers(value, include_scalars=include_scalars)
+        value with no checked leaf. ``integrity_sink`` applies the integrity-origin
+        mode, as in :meth:`derive_value`."""
+        accept = self._integrity_origins if integrity_sink else None
+        return self._trusted.covers(value, include_scalars=include_scalars, accept=accept)
 
     def inherit_value_ledger(self, parent: "TaintEngine") -> None:
         """Inherit the parent's per-value provenance into this (child) engine so
@@ -230,6 +251,11 @@ class TaintEngine:
             self._trusted.merge(parent_trusted)
         if getattr(parent, "_integrity_default", "clean") == "context":
             self._integrity_default = "context"
+        # Inherit the integrity-origin mode: the child must not clear a value on a
+        # looser origin set than its parent would.
+        parent_origins = getattr(parent, "_integrity_origins", None)
+        if parent_origins is not None:
+            self._integrity_origins = parent_origins
         # Inherit the session-wide shadow too, so child density measurement is
         # comparable to the parent's (observe-only).
         self._session_any_tainted = self._session_any_tainted or parent._session_any_tainted

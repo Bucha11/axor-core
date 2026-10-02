@@ -27,7 +27,11 @@ from typing import Any
 from axor_core.contracts.anomaly import NormalizedIntent
 from axor_core.contracts.canonical import ConsequenceClass
 from axor_core.contracts.intent import Intent, IntentKind
-from axor_core.contracts.taint import TrustedOrigin, resolve_integrity_default
+from axor_core.contracts.taint import (
+    TrustedOrigin,
+    resolve_integrity_default,
+    resolve_integrity_origins,
+)
 from axor_core.policy.normalizer import IntentNormalizer
 from axor_core.contracts.trace import (
     IntentDeniedEvent,
@@ -159,6 +163,7 @@ class ToolCallGovernor:
         require_egress_allowlist: bool = False,
         require_tool_roles: bool = False,
         integrity_default: "str | None" = None,
+        integrity_origins: "str | None" = None,
         node_id: str = "",
     ) -> None:
         self._positional_sinks = frozenset(positional_sinks or ())
@@ -214,6 +219,9 @@ class ToolCallGovernor:
         resolved_integrity = resolve_integrity_default(
             integrity_default, strict=require_egress_allowlist or require_tool_roles,
         )
+        resolved_origins = resolve_integrity_origins(
+            integrity_origins, strict=require_egress_allowlist or require_tool_roles,
+        )
         if require_egress_allowlist:
             errors = validate_egress_allowlists(self._egress_sinks, self._value_policies)
             errors += validate_driving_arg_allowlists(
@@ -226,7 +234,8 @@ class ToolCallGovernor:
             if errors:
                 raise ValueError("strict egress allowlist: " + "; ".join(errors))
         self._normalizer = IntentNormalizer()
-        self._taint = TaintEngine(node_id=node_id, integrity_default=resolved_integrity)
+        self._taint = TaintEngine(node_id=node_id, integrity_default=resolved_integrity,
+                                  integrity_origins=resolved_origins)
         # Context-default integrity: operator allowlist members are values the
         # attacker cannot author. Seeding them keeps the trusted-origin proof
         # consistent with the enum supersession (T4) those members already carry.

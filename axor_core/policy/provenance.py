@@ -110,7 +110,10 @@ def derive_driving_root(
 
     subset = driving_subset(args or {}, driving)
     if integrity_sink and getattr(taint, "integrity_default", None) == "context":
-        return taint.derive_value(subset, include_scalars=True)  # type: ignore[attr-defined]
+        # integrity_sink=True applies the integrity-origin mode (request-only vs
+        # any-trusted); include_scalars makes a named amount a checked value too.
+        return taint.derive_value(  # type: ignore[attr-defined]
+            subset, include_scalars=True, integrity_sink=True)
     return taint.derive_value(subset)  # type: ignore[attr-defined]
 
 

@@ -323,11 +323,24 @@ class TrustedValueIndex:
             for number in _scalars(value):
                 yield self._origin_of_number(number)
 
-    def covers(self, value: object, *, include_scalars: bool = False) -> bool:
+    def covers(
+        self,
+        value: object,
+        *,
+        include_scalars: bool = False,
+        accept: "frozenset[TrustedOrigin] | None" = None,
+    ) -> bool:
         """True iff every non-empty string leaf of ``value`` is a trusted value —
-        and, with ``include_scalars``, every numeric leaf too. A value with no
-        checked leaf is covered vacuously (its range is a value-policy matter)."""
-        return all(o is not None for o in self._origins(value, include_scalars))
+        and, with ``include_scalars``, every numeric leaf too. With ``accept``,
+        a leaf counts only if its origin is in that set; ``None`` accepts any
+        origin (the historical behaviour). A value with no checked leaf is
+        covered vacuously (its range is a value-policy matter). The index stores
+        each leaf's origin; which origins are accepted is a policy question, not
+        an index one."""
+        return all(
+            o is not None and (accept is None or o in accept)
+            for o in self._origins(value, include_scalars)
+        )
 
     def origin_of(
         self, value: object, *, include_scalars: bool = False,

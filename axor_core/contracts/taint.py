@@ -75,6 +75,45 @@ def resolve_integrity_default(requested: "str | None", *, strict: bool) -> str:
     return requested
 
 
+# Which TrustedOrigins may clear a value at an integrity sink.
+# "request-only": only values the request itself fixed (plus operator config,
+#   which the attacker cannot author either and is not a read).
+# "any-trusted": any registered trusted origin, including a trusted tool's
+#   output — that is, a value that legitimately arrived through a read.
+INTEGRITY_ORIGIN_MODES = frozenset({"request-only", "any-trusted"})
+
+
+def resolve_integrity_origins(requested: "str | None", *, strict: bool) -> str:
+    """The integrity-origin mode a governed session runs with.
+
+    ``None`` means the mode's default. NOTE: the default is deliberately
+    ``"any-trusted"`` in both modes for now, so that turning this knob on does
+    not silently change results measured before it existed. Flipping STRICT to
+    ``"request-only"`` is a separate, explicit decision.
+    """
+    if requested is None:
+        return "any-trusted"
+    if requested not in INTEGRITY_ORIGIN_MODES:
+        raise ValueError(
+            f"integrity_origins must be one of {sorted(INTEGRITY_ORIGIN_MODES)}, "
+            f"got {requested!r}"
+        )
+    return requested
+
+
+def integrity_origins_for(mode: str) -> "frozenset[TrustedOrigin]":
+    """The TrustedOrigins that clear a value at an integrity sink under ``mode``.
+
+    ``request-only`` admits TASK (the request) and OPERATOR (operator config —
+    not attacker-authorable and not a read); it deliberately excludes TOOL (a
+    value that arrived through a read) and ENDORSED (a governance release, which
+    must not relax the strict mode). ``any-trusted`` admits every origin.
+    """
+    if mode == "request-only":
+        return frozenset({TrustedOrigin.TASK, TrustedOrigin.OPERATOR})
+    return frozenset(TrustedOrigin)
+
+
 class TaintSource(str, Enum):
     """Origin of an external input that triggered a taint propagation."""
     WEB = "web"
