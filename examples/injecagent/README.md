@@ -94,28 +94,29 @@ four runs are clean (0 call-model errors over 1,054 cases each).
 
 | run | dh undefended | dh governed (prov) | dh governed (+conseq) | ds undefended | ds governed |
 |---|---|---|---|---|---|
-| gpt-4o #1 | 4.9% (25/510) | 2.2% | 2.0%¹ | 13.4% (73/544) | 0.0% |
+| gpt-4o #1 | 6.3% (32/510) | 2.2% | 1.6% (8/510) | 13.4% (73/544) | 0.0% |
 | gpt-4o #2 | 5.1% (26/510) | 2.4% | 0.6% | 16.7% (91/544) | 0.0% |
 | Qwen-72B #1 | 5.9% (30/510) | 1.8% | 0.6% | 13.2% (72/544) | 0.0% |
 | Qwen-72B #2 | 6.5% (33/510) | 2.2% | 0.6% | 14.2% (77/544) | 0.0% |
 
+All four runs now use the **same (domain-extended) consequence taxonomy** — GPT-4o #1
+was re-run on it (dh suite; ds is floor-based and taxonomy-independent, so its
+13.4%→0.0% is carried over). No run is on a stale config.
+
 **The governed ASR is model- and run-independent; only the undefended ASR
 varies.** Governance is a deterministic post-filter over the recorded
 trajectory, so its effect does not depend on which model produced the attack or
-on sampling noise: across both models and both runs, governed dh lands at
-**0.6% (+consequence)** / **1.8–2.4% (provenance only)** and governed ds at
-**0.0%**. The undefended ASR, in contrast, is a model/run property and drifts
+on sampling noise: across both models and all four runs, governed dh lands at
+**0.6–1.6% (+consequence)** / **1.8–2.4% (provenance only)** and governed ds at
+**0.0%**. (The +consequence figure varies a little by run — 0.6% for three runs,
+1.6% for GPT-4o #1 — because *which* dh attacks a given pass happens to follow,
+and how many land in the correctly-ungated reversible set, is itself a run
+property; the governed number is small and bounded regardless.) The undefended
+ASR, in contrast, is a model/run property and drifts
 (dh 4.9–6.5%, ds 13.2–16.7%) — expected for a capable-model, headroom-dark suite
 (as on AgentDojo's robust-model contrast); a weaker model or the enhanced setting
 would show more headroom. This is exactly the separation the paper claims: the
 *defense* is structural and stable, the *attack surface* is what moves.
-
-¹ gpt-4o #1 ran under the pre-expansion consequence taxonomy; the other three
-runs use the domain-extended one (finance/medical/files/logistics). gpt-4o #2 —
-same model, current taxonomy — is **0.6%**, so the 2.0% reflects the config
-version at the time, not a model effect. The provenance-only and ds columns are
-unaffected (they don't use the consequence axis). (gpt-4o #1 predates `--save`,
-so its trajectory isn't retained for an offline re-score; the other three are.)
 
 **Governance decomposition (deterministic, over the *full* attack set —
 model-independent).** The four-run table above measures governance on the
