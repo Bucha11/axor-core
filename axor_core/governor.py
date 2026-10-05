@@ -27,7 +27,11 @@ from typing import Any
 from axor_core.contracts.anomaly import NormalizedIntent
 from axor_core.contracts.canonical import ConsequenceClass
 from axor_core.contracts.intent import Intent, IntentKind
-from axor_core.contracts.taint import TrustedOrigin, resolve_integrity_default
+from axor_core.contracts.taint import (
+    TrustedOrigin,
+    resolve_integrity_default,
+    resolve_integrity_origins,
+)
 from axor_core.policy.normalizer import IntentNormalizer
 from axor_core.contracts.trace import (
     IntentDeniedEvent,
@@ -159,6 +163,8 @@ class ToolCallGovernor:
         require_egress_allowlist: bool = False,
         require_tool_roles: bool = False,
         integrity_default: "str | None" = None,
+        integrity_origins: "str | None" = None,
+        trace: bool = True,
         node_id: str = "",
     ) -> None:
         self._positional_sinks = frozenset(positional_sinks or ())
@@ -214,6 +220,9 @@ class ToolCallGovernor:
         resolved_integrity = resolve_integrity_default(
             integrity_default, strict=require_egress_allowlist or require_tool_roles,
         )
+        resolved_origins = resolve_integrity_origins(
+            integrity_origins, strict=require_egress_allowlist or require_tool_roles,
+        )
         if require_egress_allowlist:
             errors = validate_egress_allowlists(self._egress_sinks, self._value_policies)
             errors += validate_driving_arg_allowlists(
@@ -226,7 +235,8 @@ class ToolCallGovernor:
             if errors:
                 raise ValueError("strict egress allowlist: " + "; ".join(errors))
         self._normalizer = IntentNormalizer()
-        self._taint = TaintEngine(node_id=node_id, integrity_default=resolved_integrity)
+        self._taint = TaintEngine(node_id=node_id, integrity_default=resolved_integrity,
+                                  integrity_origins=resolved_origins)
         # Context-default integrity: operator allowlist members are values the
         # attacker cannot author. Seeding them keeps the trusted-origin proof
         # consistent with the enum supersession (T4) those members already carry.
@@ -237,6 +247,13 @@ class ToolCallGovernor:
         # argument back to the read that tainted it.
         self._refs = ValueRefLedger()
         self._node_id = node_id
+        # Trace recording (default on). Each verdict builds a full provenance
+        # payload for replay/audit; that payload — not the gate decision — is the
+        # bulk of per-call latency. trace=False skips it for a latency-sensitive
+        # standalone deployment (the 'thin membrane'): decisions are identical, but
+        # no TraceEvents are emitted, so replay/audit sees no record. The control
+        # plane / replay path keeps the default True.
+        self._trace = trace
         # The SAME TraceEvents the IntentLoop emits. Both are ways of wrapping an
         # agent, so both must feed the one instrumentation path: axor-wrap's
         # trace bridge turns these into kernel-schema Events, and the plane and
@@ -285,18 +302,20 @@ class ToolCallGovernor:
         def _denied(reason: str, category: str) -> GovernanceDecision:
             """EVERY denial goes through here. A denial that returns directly is
             a verdict with no trace: replay sees an intent with no decision, and
-            a consumer never learns the kernel blocked anything."""
-            self._trace_events.append(
-                IntentDeniedEvent(
-                    kind=TraceEventKind.INTENT_DENIED,
-                    node_id=self._node_id,
-                    sequence=len(self._trace_events),
-                    intent_kind=IntentKind.TOOL_CALL.value,
-                    reason=reason,
-                    payload={**self._call_payload(tool_name, args, normalized),
-                             "category": category},
+            a consumer never learns the kernel blocked anything. Skipped when
+            trace is off — the denial verdict is unchanged, only its record."""
+            if self._trace:
+                self._trace_events.append(
+                    IntentDeniedEvent(
+                        kind=TraceEventKind.INTENT_DENIED,
+                        node_id=self._node_id,
+                        sequence=len(self._trace_events),
+                        intent_kind=IntentKind.TOOL_CALL.value,
+                        reason=reason,
+                        payload={**self._call_payload(tool_name, args, normalized),
+                                 "category": category},
+                    )
                 )
-            )
             return GovernanceDecision(
                 allowed=False, reason=reason, category=category,
                 _normalized=normalized,
@@ -376,14 +395,15 @@ class ToolCallGovernor:
         if gd is not None:
             return _deny(gd)
 
-        self._trace_events.append(
-            TraceEvent(
-                kind=TraceEventKind.INTENT_APPROVED,
-                node_id=self._node_id,
-                sequence=len(self._trace_events),
-                payload=self._call_payload(tool_name, args, normalized),
+        if self._trace:
+            self._trace_events.append(
+                TraceEvent(
+                    kind=TraceEventKind.INTENT_APPROVED,
+                    node_id=self._node_id,
+                    sequence=len(self._trace_events),
+                    payload=self._call_payload(tool_name, args, normalized),
+                )
             )
-        )
         return GovernanceDecision(allowed=True, _normalized=normalized)
 
     @property
@@ -443,16 +463,17 @@ class ToolCallGovernor:
                 self._taint.register_trusted(output, TrustedOrigin.TOOL)
             return
         self._taint.register_value(output, root)
-        self._trace_events.append(
-            TaintPropagatedEvent(
-                kind=TraceEventKind.TAINT_PROPAGATED,
-                node_id=self._node_id,
-                sequence=len(self._trace_events),
-                taint_source=",".join(source_tokens(root.sources)),
-                taint_scope="value",
-                payload=result_payload(tool_name, self._refs.mint(output, root), root),
+        if self._trace:
+            self._trace_events.append(
+                TaintPropagatedEvent(
+                    kind=TraceEventKind.TAINT_PROPAGATED,
+                    node_id=self._node_id,
+                    sequence=len(self._trace_events),
+                    taint_source=",".join(source_tokens(root.sources)),
+                    taint_scope="value",
+                    payload=result_payload(tool_name, self._refs.mint(output, root), root),
+                )
             )
-        )
 
     # ── introspection ────────────────────────────────────────────────────────
 

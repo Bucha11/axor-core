@@ -18,14 +18,23 @@ it.
 
 from __future__ import annotations
 
+import functools
 import re
 import unicodedata
 
 from axor_core.taint.causal_root import CausalRoot
 
 
+@functools.lru_cache(maxsize=8192)
 def _normalize(s: str) -> str:
     """Fold Unicode confusion that a substring match would otherwise miss.
+
+    Memoized (bounded): the function is pure, and the same strings are normalized
+    many times per call — the gate derives the driving arg, then the trace payload
+    re-derives every arg, and both sides normalize the same values. The cache only
+    deduplicates identical inputs, so results are byte-identical; a flood of unique
+    strings just evicts and falls back to recompute. Keeps register/derive folding
+    symmetric (both go through here).
 
     NFKC collapses compatibility forms (fullwidth digits/letters, ligatures) to
     their canonical ASCII, and format/zero-width characters (category ``Cf``: ZWSP,
