@@ -119,6 +119,19 @@ artifacts of the length-dependent clean polarity).
 the S2 exfil for all 544 ds cases (a sensitive read arms the floor, the egress is
 refused content-blind), governed ds **0.0%**.
 
+**The two axes are both load-bearing — consequence catches what the origin axis
+cannot.** The consequence gate runs before the origin/taint gate, so it is not
+masked by it. Applying the governor to all 510 dh attacks and asking which axis is
+*necessary*: **60 attacks are consequence-only** — the consequence gate denies them
+and the origin axis *alone* (consequence disabled) would **allow** them. These are
+action-shaped, content-blind harms — `AugustSmartLockUnlockDoor`,
+`…GrantGuestAccess`, and the like: an irreversible physical/security action whose
+driving argument carries no attacker-authored value for the origin axis to flag, so
+only the action-class gate sees it (length- and content-agnostic). This is the
+direct, measurable answer to the "action-shaped harm with no data flow" class
+(cf. PACT): origin provenance handles exfil-shaped attacks, the consequence axis
+handles the irreversible-action ones, and 60/510 fall only to the latter.
+
 **Honest caveat.** InjecAgent is all-attack, so every denial is correct and it
 cannot show context-default's *over-block* cost (legitimate egress whose value is
 model-synthesized rather than a verbatim task span). That false-positive cost is
