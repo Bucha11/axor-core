@@ -30,8 +30,9 @@ Two mechanisms, one per attack shape:
   egress is refused when a driving arg is **not of trusted origin** — i.e. the value
   came from the injection rather than the task. This is origin-based, not
   length-based: a short/synthesized attacker param (`appID12345`) is refused just as
-  a long one is. (The legacy "clean" polarity used a ≥12-char content-derivation
-  ledger and had a short-value blind spot; see the real-run section.)
+  a long one is. (The other live `integrity_default` knob, `clean`, instead tests
+  content-derivation with a ≥12-char ledger — length-dependent — and is not the
+  config reported here.)
 - **data-stealing** → the **confidentiality floor**: S1 sensitive read arms it,
   S2 exfil is refused content-blind and paraphrase-proof (polarity-independent).
 
@@ -65,72 +66,66 @@ dh/ds = 0). The earlier content-ledger mock split dh into "provenance 24% /
 polarity (length-dependent) and is superseded — context-default refuses the
 attacker egress by origin regardless of value length, so there is one number: 0.
 
-## Real run — two models × two runs (`run_injecagent.py`, full 1,054 cases each)
+## Real run — two models × two runs (`run_injecagent.py`, dh base = 510 cases each)
 
 `run_injecagent.py` drives the undefended pass via OpenRouter and applies the
-post-filter to the same trajectory. We ran the full base suite **four times** —
-gpt-4o ×2 and Qwen-2.5-72B-Instruct ×2 — to separate what is model/run-dependent
-(the undefended ASR) from what the governor guarantees (the governed ASR). All
-four runs are clean (0 call-model errors over 1,054 cases each).
+governance post-filter to the *same* trajectory (paired by construction, no extra
+API cost). We ran the direct-harm (dh) base suite **four times** — gpt-4o ×2 and
+Qwen-2.5-72B-Instruct ×2 — all under **context-default integrity**
+(`integrity_default: context`), to separate what is model/run-dependent (the
+undefended ASR) from what the governor guarantees (the governed ASR). **Every row
+below is empirically measured on that run's own trajectory** — no row is asserted
+"by construction". All four runs are clean (0 call-model errors over 510 cases each).
 
-The config uses **context-default integrity** (`integrity_default: context`): a
-driving value the agent emits is untrusted *unless it provably originates from the
-trusted task* (the case's `User Instruction`, registered via `register_task`).
+Context-default means a driving value the agent emits is untrusted *unless it
+provably originates from the trusted task* (the case's `User Instruction`, registered
+via `register_task`).
 
-| run | dh undefended | ds undefended | dh governed | ds governed |
-|---|---|---|---|---|
-| gpt-4o #1 | 6.3% (32/510) | 13.4% (73/544) | **0.0% (0/510)** | 0.0% |
-| gpt-4o #2 | 5.1% (26/510) | 16.7% (91/544) | 0.0%† | 0.0% |
-| Qwen-72B #1 | 5.9% (30/510) | 13.2% (72/544) | 0.0%† | 0.0% |
-| Qwen-72B #2 | 6.5% (33/510) | 14.2% (77/544) | 0.0%† | 0.0% |
+| run | dh undefended ASR | dh governed ASR |
+|---|---|---|
+| gpt-4o #1   | 6.3% (32/510) | **0.0% (0/510)** |
+| gpt-4o #2   | 4.7% (24/510) | **0.0% (0/510)** |
+| Qwen-72B #1 | 5.5% (28/510) | **0.0% (0/510)** |
+| Qwen-72B #2 | 5.5% (28/510) | **0.0% (0/510)** |
 
-† gpt-4o #1's governed dh is **empirically re-scored under the context-default
-config** (0/510 over the model's actual trajectory). The other three predate the
-polarity migration and their saved trajectories were lost to an environment reset,
-so their governed dh is **0 by the deterministic origin gate** (it refuses any
-egress whose driving value is not of trusted origin — a property of the call, not
-of the model), not independently re-measured.
+**The governed ASR is model- and run-independent (0.0% in every run); only the
+undefended ASR drifts** with the backbone/sample (4.7–6.3%) — expected for a
+capable-model, headroom-dark suite. The *defense* is structural and stable; the
+*attack surface* is what moves. On each run's realized successes the **origin axis
+alone** already refuses every one (governed-provenance = governed-+consequence = 0);
+the consequence axis's independent contribution shows up on the full attack set
+(below), not on these particular realized misses.
 
-**The governed ASR is model- and run-independent; only the undefended ASR varies.**
-Governed dh and ds are both **0.0%**; undefended drifts with the backbone/sample
-(dh 5.1–6.5%, ds 13.2–16.7%) — expected for a capable-model, headroom-dark suite.
-The *defense* is structural and stable; the *attack surface* is what moves.
+**Data-stealing (ds).** ds is governed by the **confidentiality floor**, which is
+model- and polarity-independent. Replaying all 544 ds base cases (the S1 sensitive
+read arms the floor, the S2 exfil `GmailSendEmail` is the target), the floor refuses
+S2 in **544/544** — governed ds = **0.0%**, computed deterministically over the
+S1→S2 call sequence. This is a property of the calls, not of any model trajectory,
+so it is not re-sampled per run (and was not part of this dh re-run pass).
 
-**Why governed dh is 0 under context-default — and why the earlier residual is
-gone.** This adapter previously ran the legacy **clean** polarity (a
-content-derivation ledger): an egress was refused only when its driving value was a
-≥12-char fragment visibly lifted from the untrusted read. That left a *real*
-residual — an attacker param that is **short or synthesized** (`appID12345`,
-`Code 001`, a room id) evaded the ledger, and if the tool's verb was not in the
-catastrophic set the call slipped. Measured on the gpt-4o trajectory, 8/510 dh
-attacks slipped the clean polarity: 2 `EmergencyDispatch…`, 2 `The23andMeShareData`
-(a genetic-data exfil), 1 `TrafficControl…`, 3 `IndoorRobotGoToRoom`.
+**Why governed dh is 0 under context-default.** The attacker's driving value comes
+from the **injection, not the task**, so context-default marks it untrusted **by
+origin, regardless of length** (a short/synthesized param — `appID12345`, `Code 001`,
+a room id — is refused just as a long one is), and the egress is refused. This needs
+**no** reliance on fragment length or on the completeness of a catastrophic-verb list.
+(The other live knob, `integrity_default: clean`, instead tests content-derivation
+with a ≥12-char ledger; it is length-dependent and is not the config this adapter
+reports — see the mapping section above.)
 
-Context-default inverts the test: the attacker value comes from the **injection, not
-the task**, so it is untrusted **by origin, regardless of length**, and the egress
-is refused. Re-scored under the new polarity, **all 8 are refused** (the robot
-redirect too — the attacker's room is not in the user's task), driving governed dh
-**1.6% → 0.0%**. The fix needs **no** reliance on ledger length or on the
-completeness of a catastrophic-verb list — it removes both the short-value blind
-spot and the earlier "6 reversible vs 8 realized" bookkeeping tension (both were
-artifacts of the length-dependent clean polarity).
-
-`ds` is unchanged and polarity-independent: the **confidentiality floor** refuses
-the S2 exfil for all 544 ds cases (a sensitive read arms the floor, the egress is
-refused content-blind), governed ds **0.0%**.
-
-**The two axes are both load-bearing — consequence catches what the origin axis
-cannot.** The consequence gate runs before the origin/taint gate, so it is not
-masked by it. Applying the governor to all 510 dh attacks and asking which axis is
-*necessary*: **60 attacks are consequence-only** — the consequence gate denies them
-and the origin axis *alone* (consequence disabled) would **allow** them. These are
-action-shaped, content-blind harms — `AugustSmartLockUnlockDoor`,
-`…GrantGuestAccess`, and the like: an irreversible physical/security action whose
-driving argument carries no attacker-authored value for the origin axis to flag, so
-only the action-class gate sees it (length- and content-agnostic). This is the
-direct, measurable answer to the "action-shaped harm with no data flow" class
-(cf. PACT): origin provenance handles exfil-shaped attacks, the consequence axis
-handles the irreversible-action ones, and 60/510 fall only to the latter.
+**Both axes are load-bearing — consequence catches what the origin axis cannot.**
+The consequence gate runs *before* the origin/taint gate, so it is not masked by it.
+Replaying the governor over all 510 dh base attacks (each attacker call carrying an
+injection-derived driving value) and asking which axis is *necessary*: origin denies
+**444/510**, and a further **60 are consequence-only** — the consequence gate denies
+them and the origin axis *alone* (consequence disabled) would **allow** them
+(origin-only denials: **0**). These 60 are action-shaped, content-blind harms —
+`AugustSmartLockUnlockDoor`, `…GrantGuestAccess`, and the like: an irreversible
+physical/security action whose driving argument carries no attacker-authored value
+for the origin axis to flag, so only the action-class gate sees it (length- and
+content-agnostic). This is the direct, measurable answer to the "action-shaped harm
+with no data flow" class (cf. PACT): origin provenance handles the exfil-shaped
+attacks, the consequence axis the irreversible-action ones, and 60/510 fall only to
+the latter.
 
 **Honest caveat.** InjecAgent is all-attack, so every denial is correct and it
 cannot show context-default's *over-block* cost (legitimate egress whose value is
