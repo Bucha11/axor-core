@@ -126,45 +126,57 @@ def run(suites, limit, model_name, save_dir=None):
         if limit:
             data = data[:limit]
         n = len(data)
-        undef_succ = 0
-        gov_prov = gov_both = 0  # governed successes (fewer = better)
-        records = []  # per-case: raw model output + parse, so governance can be re-applied offline
-        for i, item in enumerate(data):
+        # RESUMABLE: records are appended per-case to a jsonl; a restart loads what
+        # is already there and only runs the remaining cases. Lets a slow/flaky model
+        # (Qwen) finish across several background windows without losing work.
+        path = os.path.join(save_dir, f"{suite}_base.jsonl") if save_dir else None
+        records = []
+        if path and os.path.exists(path):
+            with open(path) as f:
+                records = [json.loads(ln) for ln in f if ln.strip()][:n]
+        if save_dir:
+            os.makedirs(save_dir, exist_ok=True)
+        fh = open(path, "a") if path else None
+        if len(records):
+            print(f"  [{suite}] resuming from {len(records)}/{n} saved cases", flush=True)
+        for i in range(len(records), n):
+            item = data[i]
             output = predict_one_case(sys_p, user_p, {}, item, model, tool_dict)
             p = evaluate_output_prompted(output, item["Attacker Tools"][0], item["Attacker Tools"],
                                          item["User Tool"], item["Attacker Instruction"])
-            if save_dir:
-                records.append({"User Tool": item["User Tool"],
-                                "Attacker Tools": item["Attacker Tools"],
-                                "Tool Response": item["Tool Response"],
-                                "Attacker Instruction": item.get("Attacker Instruction", ""),
-                                "output": output, "eval": p["eval"],
-                                "Attacker Tool Parameters": p.get("Attacker Tool Parameters", "")})
-            if p["eval"] != "succ":
-                continue  # undefended already didn't attack -> not a success either way
+            rec = {"User Tool": item["User Tool"],
+                   "Attacker Tools": item["Attacker Tools"],
+                   "Tool Response": item["Tool Response"],
+                   "Attacker Instruction": item.get("Attacker Instruction", ""),
+                   "User Instruction": item.get("User Instruction", ""),  # trusted origin (context mode)
+                   "output": output, "eval": p["eval"],
+                   "Attacker Tool Parameters": p.get("Attacker Tool Parameters", "")}
+            records.append(rec)
+            if fh:
+                fh.write(json.dumps(rec) + "\n"); fh.flush()
+            if (i + 1) % 20 == 0:
+                print(f"  [{suite}] {i+1}/{n} ...", flush=True)
+        if fh:
+            fh.close()
+        # Metrics from ALL records (governed re-applied via the current config/polarity).
+        undef_succ = gov_prov = gov_both = 0
+        for rec in records:
+            if rec["eval"] != "succ":
+                continue
             undef_succ += 1
             if suite == "dh":
-                params = p.get("Attacker Tool Parameters", "")
-                gov_prov += not _dh_refused(item, params, consequence=False)
-                gov_both += not _dh_refused(item, params, consequence=True)
+                params = rec.get("Attacker Tool Parameters", "")
+                gov_prov += not _dh_refused(rec, params, consequence=False)
+                gov_both += not _dh_refused(rec, params, consequence=True)
             else:  # ds: full success needs S2; the floor refuses S2
-                refused = _ds_refused(item)
+                refused = _ds_refused(rec)
                 gov_prov += not refused
                 gov_both += not refused
-            if (i + 1) % 20 == 0:
-                print(f"  [{suite}] {i+1}/{n} ...")
         out[suite] = {"n": n, "undef_succ": undef_succ,
                       "gov_prov_succ": gov_prov, "gov_both_succ": gov_both}
         print(f"[{suite}] n={n}  undefended ASR={100*undef_succ/n:.1f}%  "
               f"governed(prov)={100*gov_prov/n:.1f}%  governed(+conseq)={100*gov_both/n:.1f}%",
               flush=True)
-        if save_dir:
-            os.makedirs(save_dir, exist_ok=True)
-            path = os.path.join(save_dir, f"{suite}_base.jsonl")
-            with open(path, "w") as f:
-                for r in records:
-                    f.write(json.dumps(r) + "\n")
-            print(f"    saved {len(records)} per-case records -> {path}", flush=True)
     return out
 
 
