@@ -1,0 +1,57 @@
+# axor STRICT-origin taxonomy for the AgentDojo travel suite — COMPLETE coverage.
+# Ported verbatim from experiments/rope_bridge TRAVEL_ORIGIN (axor-eval). Every one
+# of the 28 travel tools carries an explicit data-flow role; consequence is
+# auto-derived over the full tool universe by the runner (AXOR_BENCH_ORIGIN=1).
+# Run: AXOR_BENCH_CONFIG=travel_origin.yaml AXOR_BENCH_INTEGRITY=context AXOR_BENCH_ORIGIN=1
+mode: strict
+integrity_default: context
+
+egress_sinks:
+  - send_email
+
+# Booking entities and the event title are multi-word natural-language values ROPE
+# pins EXPLICIT; here they are origin-checked — the value must trace to the request.
+integrity_sinks:
+  - reserve_hotel
+  - reserve_restaurant
+  - reserve_car_rental
+  - create_calendar_event
+  - cancel_calendar_event
+
+driving_args:
+  send_email: [recipients]
+  reserve_hotel: [hotel]
+  reserve_restaurant: [restaurant]
+  reserve_car_rental: [company]
+  create_calendar_event: [title, participants]
+  cancel_calendar_event: [event_id]
+
+# Reviews carry the injection.
+untrusted_sources:
+  - get_rating_reviews_for_hotels
+  - get_rating_reviews_for_restaurants
+  - get_rating_reviews_for_car_rental
+
+# User info holds passport/bank PII -> arms the confidentiality floor.
+sensitive_sources:
+  - get_user_information
+
+benign_tools:
+  - get_all_hotels_in_city
+  - get_hotels_prices
+  - get_hotels_address
+  - get_all_restaurants_in_city
+  - get_cuisine_type_for_restaurants
+  - get_restaurants_address
+  - get_dietary_restrictions_for_all_restaurants
+  - get_contact_information_for_restaurants
+  - get_price_for_restaurants
+  - check_restaurant_opening_hours
+  - get_all_car_rental_companies_in_city
+  - get_car_types_available
+  - get_car_fuel_options
+  - get_car_rental_address
+  - get_car_price_per_day
+  - search_calendar_events
+  - get_day_calendar_events
+  - get_flight_information

@@ -1,0 +1,66 @@
+# axor STRICT-origin taxonomy for the AgentDojo banking suite.
+#
+# Mirrors experiments/rope_bridge BANKING_ORIGIN (axor-eval): the sound, no-oracle
+# config that reproduces ROPE's PROMPT marker via the integrity axis.
+#   - integrity_default: context  -> a model-emitted driving value is untrusted
+#     unless it provably traces to a trusted origin (the user's task, via
+#     register_task) — prompt-named values pass, attacker-writable-derived ones
+#     are denied. No ground-truth allowlist anywhere.
+#   - STRICT tool roles (require_tool_roles): every one of the 11 banking tools is
+#     given an explicit data-flow role AND an explicit consequence class, because
+#     STRICT is fail-closed on an unclassified consequence (axor-core fc73b0c).
+#   - integrity_sinks: credential/PII writes whose driving arg must trace to the
+#     request (reproduces ROPE's PROMPT marker on update_password/update_user_info).
+#   - require_egress_allowlist is forced OFF by the runner for origin mode (STRICT
+#     roles without the allowlist obligation — the origin axis decides, not an enum).
+#
+# Run with: AXOR_BENCH_CONFIG=banking_origin.yaml AXOR_BENCH_INTEGRITY=context
+#           AXOR_BENCH_ORIGIN=1  (the last forces require_tool_roles on / allowlist off).
+mode: strict
+
+integrity_default: context
+
+egress_sinks:
+  - send_money
+  - schedule_transaction
+  - update_scheduled_transaction
+
+integrity_sinks:
+  - update_password
+  - update_user_info
+
+driving_args:
+  send_money: [recipient]
+  schedule_transaction: [recipient]
+  update_scheduled_transaction: [recipient]
+  update_password: [password]
+  update_user_info: [first_name, last_name, street, city]
+
+untrusted_sources:
+  - read_file
+  - get_most_recent_transactions
+
+sensitive_sources:
+  - get_user_info
+
+benign_tools:
+  - get_balance
+  - get_iban
+  - get_scheduled_transactions
+
+# Explicit consequence class for EVERY tool (STRICT fail-closed on unclassified).
+# Intrinsic action-class, schema-only: reads = BENIGN; state changes pinned at the
+# default unattended ceiling (CONSEQUENTIAL) so the consequence gate passes and the
+# origin axis (integrity_sinks + context) is what decides.
+consequence_overrides:
+  get_balance: benign
+  get_iban: benign
+  get_most_recent_transactions: benign
+  get_scheduled_transactions: benign
+  read_file: benign
+  get_user_info: benign
+  send_money: consequential
+  schedule_transaction: consequential
+  update_scheduled_transaction: consequential
+  update_password: consequential
+  update_user_info: consequential

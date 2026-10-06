@@ -23,6 +23,7 @@ run more. Requires ANTHROPIC_API_KEY. Uses claude-haiku.
 """
 from __future__ import annotations
 
+import dataclasses
 import os
 import sys
 
@@ -73,7 +74,38 @@ def make_governor() -> ToolCallGovernor:
     # while the suite name still selects the AgentDojo tasks.
     cfg_name = os.environ.get("AXOR_BENCH_CONFIG", f"{SUITE}.yaml")
     cfg = GovernanceConfig.from_yaml(os.path.join(_CONFIG_DIR, cfg_name))
-    return ToolCallGovernor(**cfg.as_governor_kwargs())
+    # AXOR_BENCH_INTEGRITY selects the integrity polarity: "clean" (today's ledger,
+    # default-trust) or "context" (context-default integrity — a model-emitted value
+    # is untrusted unless it provably originates from a trusted source registered on
+    # the governor: the user task, operator config, trusted tools). Under "context"
+    # the executor MUST call governor.register_task(<user prompt>) so prompt-given
+    # driving values are proven trusted; see GovernedToolsExecutor.
+    integrity = os.environ.get("AXOR_BENCH_INTEGRITY")
+    if integrity:
+        cfg = dataclasses.replace(cfg, integrity_default=integrity)
+    kw = cfg.as_governor_kwargs()
+    # AXOR_BENCH_ORIGIN=1 = the rope_bridge "origin" combo: STRICT tool roles
+    # (fail-closed on an unclassified tool/consequence) but NO egress allowlist
+    # obligation, so the integrity/origin axis — not an enum — decides each driving
+    # value. mode:strict alone would also force require_egress_allowlist=True, which
+    # the no-oracle origin config must not carry, so override it here.
+    if os.environ.get("AXOR_BENCH_ORIGIN") == "1":
+        kw["require_tool_roles"] = True
+        kw["require_egress_allowlist"] = False
+        # Auto-derive a COMPLETE per-tool consequence class over the whole suite
+        # tool universe (mirrors rope_bridge AxorOriginBootstrap._consequence):
+        # every tool is BENIGN (observation) unless it is a declared egress/integrity
+        # sink, which is pinned at the default unattended ceiling (CONSEQUENTIAL) so
+        # the consequence gate passes and the origin axis decides. STRICT is
+        # fail-closed on an unclassified consequence, so covering every tool is
+        # required, not optional. An explicit YAML consequence_override still wins.
+        from axor_core.contracts.canonical import ConsequenceClass as _C
+        _sinks = set(kw.get("egress_sinks") or ()) | set(kw.get("integrity_sinks") or ())
+        _auto = {t.name: (_C.CONSEQUENTIAL if t.name in _sinks else _C.BENIGN)
+                 for t in get_suites("v1")[SUITE].tools}
+        _auto.update(kw.get("consequence_overrides") or {})
+        kw["consequence_overrides"] = _auto
+    return ToolCallGovernor(**kw)
 
 
 # Per-suite task slices: a curated set of GENUINELY SERIOUS injection tasks
@@ -131,6 +163,13 @@ if os.environ.get("AXOR_BENCH_ALL_USER_TASKS") == "1" or CAMEL_MODE:
 # pin one headline threat across all user tasks for a feasible full-suite number).
 if os.environ.get("AXOR_BENCH_INJECTIONS"):
     INJECTION_TASKS = os.environ["AXOR_BENCH_INJECTIONS"].split(",")
+
+# AXOR_BENCH_TASK_SLICE="start:end" runs only USER_TASKS[start:end], so a long
+# benign pass (e.g. travel's 20 tasks on a slow model) can be split across two
+# background windows and the raw success counts combined offline.
+if os.environ.get("AXOR_BENCH_TASK_SLICE"):
+    _a, _b = os.environ["AXOR_BENCH_TASK_SLICE"].split(":")
+    USER_TASKS = USER_TASKS[int(_a):int(_b)]
 
 
 def _make_llm():
@@ -239,6 +278,20 @@ def main_camel() -> int:
     # averaging the benign utility-cost over many passes cheaply (ASR is already
     # established at 0 on a robust model).
     benign_only = os.environ.get("AXOR_BENCH_BENIGN_ONLY") == "1"
+    # AXOR_BENCH_CONDITION=undefended|governed runs ONE condition per invocation
+    # (so a slow o4-mini benign pass fits a single background window); default both.
+    condition = os.environ.get("AXOR_BENCH_CONDITION", "both")
+    if benign_only and condition in ("undefended", "governed"):
+        if condition == "undefended":
+            print("BENIGN / UNDEFENDED ...")
+            cu, _ = run_benign(False, suite)
+            print(f"\nundefended  {_pct(cu):.1f}%  ({sum(cu)}/{len(cu)})")
+        else:
+            print("BENIGN / GOVERNED ...")
+            cu, exec_ = run_benign(True, suite)
+            print(f"\ngoverned  {_pct(cu):.1f}%  ({sum(cu)}/{len(cu)})")
+            print(f"benign denials:  {exec_.denied_count} ({exec_.denials})")
+        return 0
     print("BENIGN / UNDEFENDED ...")
     ub_util, _ = run_benign(False, suite)
     print("\nBENIGN / GOVERNED ...")

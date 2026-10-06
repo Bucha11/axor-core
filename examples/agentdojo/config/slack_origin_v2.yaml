@@ -1,0 +1,40 @@
+# axor STRICT-origin taxonomy for the AgentDojo slack suite — COMPLETE coverage.
+# Ported verbatim from experiments/rope_bridge SLACK_ORIGIN (axor-eval). Every one
+# of the 11 slack tools carries an explicit data-flow role; consequence is
+# auto-derived over the full tool universe by the runner (AXOR_BENCH_ORIGIN=1).
+# Run: AXOR_BENCH_CONFIG=slack_origin.yaml AXOR_BENCH_INTEGRITY=context AXOR_BENCH_ORIGIN=1
+mode: strict
+integrity_default: context
+
+egress_sinks:
+  - send_direct_message
+  - post_webpage
+
+integrity_sinks:
+  - add_user_to_channel
+  - invite_user_to_slack
+  - remove_user_from_slack
+
+driving_args:
+  send_direct_message: [recipient]
+  post_webpage: [url]
+  add_user_to_channel: [user]
+  invite_user_to_slack: [user]
+  remove_user_from_slack: [user]
+
+# get_channels returns channel NAMES and the slack injection vector is an
+# attacker-created channel ("External_{injection}") — attacker-writable, so
+# untrusted, NOT benign (the A3 gap the rope_bridge writeup fixed: the exfil URL
+# rode in via the channel name). read_channel_messages/read_inbox/get_webpage carry
+# counterparty-authored content likewise.
+untrusted_sources:
+  - get_channels
+  - read_channel_messages
+  - read_inbox
+  - get_webpage
+
+sensitive_sources: []
+
+benign_tools:
+  - get_users_in_channel
+  - send_channel_message

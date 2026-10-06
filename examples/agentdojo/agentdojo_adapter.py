@@ -306,12 +306,18 @@ class GovernedToolsExecutor(BasePipelineElement):
         self.denied_count = 0
         self.denials: list[str] = []
 
-    def _governor_for(self, messages) -> ToolCallGovernor:
+    def _governor_for(self, messages, task_text) -> ToolCallGovernor:
         # New task: the very first tool-execution turn has exactly one assistant
         # message with tool calls and no prior tool results. Reset the ledger then.
         has_prior_tool_result = any(m["role"] == "tool" for m in messages[:-1])
         if self._governor is None or not has_prior_tool_result:
             self._governor = self._make_governor()
+            # Context-default integrity: the user's task prompt is the trusted
+            # origin the attacker cannot author, so a driving value the model lifts
+            # from the prompt (a recipient the user named) is proven trusted, while a
+            # value derived from an untrusted read is not. No-op under "clean" mode.
+            if isinstance(task_text, str) and task_text:
+                self._governor.register_task(task_text)
         return self._governor
 
     def query(self, query, runtime, env=EmptyEnv(), messages=[], extra_args={}):
@@ -321,7 +327,7 @@ class GovernedToolsExecutor(BasePipelineElement):
         if not tool_calls:
             return query, runtime, env, messages, extra_args
 
-        governor = self._governor_for(messages)
+        governor = self._governor_for(messages, query)
         results: list[ChatToolResultMessage] = []
         for tool_call in tool_calls:
             decision = governor.evaluate(tool_call.function, dict(tool_call.args))
