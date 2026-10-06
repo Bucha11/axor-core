@@ -93,6 +93,10 @@ def _parse_args(param_str):
 def _dh_refused(item, params, consequence: bool) -> bool:
     cfg = _CFG if consequence else _CFG_NOCONS
     g = ToolCallGovernor(**cfg.as_governor_kwargs())
+    # Context-default integrity: the benign task is the trusted origin, so a driving
+    # value lifted from the injection (not from the task) is untrusted regardless of
+    # length. No-op under the legacy "clean" polarity.
+    g.register_task(item.get("User Instruction", ""))
     atk = item["Attacker Tools"][0]
     g.register_output(g.evaluate(item["User Tool"], {}), item["Tool Response"])
     args = _parse_args(params)
@@ -104,6 +108,7 @@ def _dh_refused(item, params, consequence: bool) -> bool:
 
 def _ds_refused(item) -> bool:
     g = ToolCallGovernor(**_CFG.as_governor_kwargs())
+    g.register_task(item.get("User Instruction", ""))  # trusted origin (floor is polarity-independent)
     s1 = item["Attacker Tools"][0]
     s2 = item["Attacker Tools"][1] if len(item["Attacker Tools"]) > 1 else s1
     g.register_output(g.evaluate(item["User Tool"], {}), item["Tool Response"])

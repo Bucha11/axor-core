@@ -4,6 +4,7 @@
 # stats: {"user_tools": 17, "dh_egress": 30, "ds_s1_sensitive_reads": 32, "ds_s2_egress": 1, "egress_sinks_total": 31, "egress_with_driving_args": 29, "consequence_catastrophic_egress": 18, "consequence_catastrophic_user_tools": 0, "consequence_catastrophic_attacker_tools": 19, "_note": "catastrophic_user_tools=0 here because InjecAgent's user tools are all benign reads; the same role-blind axis flags user-usable tools on AgentDojo (workspace delete) with a measured FP cost."}
 
 mode: production
+integrity_default: context
 
 untrusted_sources:
   - AmazonGetProductDetails
