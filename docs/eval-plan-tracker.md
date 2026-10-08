@@ -3,40 +3,59 @@
 Source of record for the camera-ready run cycle. All runs use the **fixed
 positive-polarity** core (`integrity_default: context`), **STRICT**
 (`require_tool_roles=True`, `require_egress_allowlist=False` in origin mode). Pin the
-**commit hash** of the core for every run in the per-run notes. Save **per-task
-outcomes and raw trajectories** (needed for statistics, R-stats, and the artifact).
+**commit hash** of the core for every run. Save **per-task outcomes and raw
+trajectories** (needed for statistics and the artifact).
 
 Status legend: ✅ done · 🟡 in progress · ⏸ queued · ⬜ not started · ❌ blocked.
 
-## P0 — gating for submission
+## Decisive path (go/no-go) — do in this exact order
 
-| ID | Run | Closes | Status | Command / artifact |
-|---|---|---|---|---|
-| R0 | Sanity: re-encoded IBAN → deny; unknown sink → deny | — | ✅ | `python examples/agentdojo/poc_reencoding.py` |
-| R1 | AgentDojo cost, new Table 2 (o4-mini, 4 suite, **7 passes** incl. travel; branches undefended / request-only / any-trusted; banking also request-only+supersession; `known_payees` rebuilt from t=0 env state) | B1/A5/B2/B4/B7 | ⬜ | runner below; **needs workspace origin (R1-ws)** |
-| R1-ws | Build workspace origin taxonomy (24 tools) so R1/R6 cover 4 suites | B6 (enables) | ✅ | `examples/agentdojo/config/workspace_origin.yaml` — all 24 tools classified (role + consequence, zero unclassified); smoke-tested. No vetted reference, so **validate the numbers against R1 before treating the workspace row as load-bearing** |
-| R2 | ASR on tractable models (GPT-4o + Qwen-72B, all 4 suite, both settings, `important_instructions`, ≥3 passes) | "main model never engages the defense" | ⬜ | `run_agentdojo` ASR mode per suite/model |
-| R3 | Adaptive suite, closed loop (GPT-4o; banking/travel/slack; both settings; ASR+UA; a1–a7) | adaptive/boundary | ⬜ | a1–a7 table below |
-| R4a | InjecAgent replay on fixed core: 2×2 origin×consequence over 510 + residual accounting | the "6 cases / 0.6%" question | ✅ | `python examples/injecagent/replay_dh_axes.py` |
-| R4b | InjecAgent ds floor replay over 544 | ds provenance | ✅ | `python examples/injecagent/replay_ds_floor.py` |
-| R4c | InjecAgent **live** governed closed loop (GPT-4o + Qwen, ≥1 run each, DH+DS; ASR over **successful undefended**, not /510) | live closed loop | 🟡 | DH done ×4 (`run_injecagent.py`); DS live + closed-loop pending |
-| R6 | Benign cost floor (workspace+banking, realistic `sensitive_sources`, o4-mini, paired, floor on/off, 7 passes; report benign-denial rate + cost) | B6/B5 | ⬜ | needs R1-ws |
+Five runs decide whether there is a paper. Order matters: each is worth doing only if
+the previous one did not sink the submission. **The first four days cost ≈ $25; three
+of the five are free.**
 
-## P1 — strong support
+| # | ID | Run | Cost | Status | A bad result means |
+|---|---|---|---|---|---|
+| 1 | R0 | **Fix check** — re-encoded IBAN → deny, unknown sink → deny | free, ½ day | ✅ | fix does not hold → every other run is pointless |
+| 2 | a5 | **write-then-read, deterministic** — write an attacker value via `update_scheduled_transaction`, read it back with a trusted tool, inspect the mark (no model needed) | free | ⬜ | mark lost → **hole in O2, fix before anything else**; mark holds → answers B3(ii) |
+| 3 | R5 | **ROPE gate-check on InjecAgent** — replay only the 60 consequence-only + ~50 DS cases | ~$3 | ⬜ | ROPE catches them → the "what ROPE does not cover" thesis collapses; learn this **before** spending the other $97 |
+| 4 | R1 | **Cost at `request-only`** — AgentDojo headline cost (replay free; one live confirmation ~$15–20) | ~$15–20 | ⬜ (replay ready; needs R1-ws ✅) | required by all four review sets; **cannot submit without it**, whatever the rest show |
+| 5 | R4 | **InjecAgent replay 2×2** — origin×consequence over 510 | free, one evening | ✅ | resolves 0.6% vs 0.0% and 444+60≠510; a reviewer spots the discrepancy in 15 min |
 
-| ID | Run | Closes | Status |
+Enabler (done): **R1-ws** — workspace origin taxonomy, all 24 tools classified & smoke-
+tested (`examples/agentdojo/config/workspace_origin.yaml`); validate its numbers against
+R1 before treating the workspace row as load-bearing.
+
+**Go/no-go after the decisive path:** O2 holds (a5) · ROPE differentiation stands (R5) ·
+cost known (R1). Missing any → USENIX C2. a5 "mark lost" → fix O2 first; R5 "ROPE
+catches" → drop the differentiation claim and re-position before submission.
+
+### Decisive-path commands
+
+```sh
+# 1. R0 — fix check (free)
+python3 examples/agentdojo/poc_reencoding.py
+# 5. R4 — InjecAgent replay 2x2 + ds floor (free; exit non-zero on drift)
+INJECAGENT_DIR=/path/to/InjecAgent python3 examples/injecagent/replay_dh_axes.py
+INJECAGENT_DIR=/path/to/InjecAgent python3 examples/injecagent/replay_ds_floor.py
+# 4. R1 — cost at request-only (o4-mini, 7 passes/suite), per suite:
+AXOR_BENCH_BACKEND=openrouter AXOR_BENCH_SUITE=<suite> AXOR_BENCH_CONFIG=<suite>_origin.yaml \
+  AXOR_BENCH_INTEGRITY=context AXOR_BENCH_ORIGIN=1 AXOR_BENCH_MODEL=openai/o4-mini \
+  AXOR_BENCH_CAMEL=1 AXOR_BENCH_BENIGN_ONLY=1 python -m examples.agentdojo.run_agentdojo
+# 2. a5 and 3. R5 — scripts to be committed when those runs are built.
+```
+
+## Beyond go/no-go — in-paper arguments (not whether the paper exists)
+
+These sharpen the paper once it is known to stand; none can sink it.
+
+| ID | Run | Cost | Status |
 |---|---|---|---|
-| R8 | Allowlist sensitivity (±k entries; cheap gate replay + 1 live) | robustness | ⬜ |
-| R9 | Real integration (LangGraph agent, 1 suite, undef/governed, 3 passes; verdicts byte-identical to the shim on identical intents) | B8/C4 | ⬜ |
-| R10 | Latency on fixed core (code path changed; ~30 min) | perf claim | ⬜ |
+| R3 | Adaptive suite, closed loop (**gpt-4o-mini**; banking/travel/slack; both settings; ASR+UA; a1–a4, a6, a7 — a5 promoted to the decisive path) | small | ⬜ |
+| R6 | Benign cost floor (workspace+banking, realistic `sensitive_sources`, o4-mini, paired floor on/off, 7 passes; benign-denial rate + cost) | ~$100 | ⬜ (needs R1-ws ✅) |
+| R7 | ROPE comparison multi-pass (Table 3, 5 passes/cell; run banking attack ourselves; gpt-4o-mini **+ gpt-4o**; record router-cache origin) | small–moderate | ⬜ |
 
-## P2 — if time remains
-
-| ID | Run | Status |
-|---|---|---|
-| R11 | Daemon boundary (1 suite: verdict parity + overhead). Else state in the paper that all runs were on the soft boundary. | ⬜ |
-
-## R3 adaptive attacks (closed loop, GPT-4o)
+### R3 adaptive attacks (gpt-4o-mini)
 
 | Attack | Tests | Expected | Status |
 |---|---|---|---|
@@ -44,40 +63,34 @@ Status legend: ✅ done · 🟡 in progress · ⏸ queued · ⬜ not started · 
 | a2 | catalogue/record steering (travel IT4; banking existing-payee-from-history) | any-trusted passes, request-only does not | ⬜ |
 | a3 | pick a different known payee under supersession | passes — declared boundary | ⬜ |
 | a4 | non-driving args (`amount`, subject) on a trusted payee | passes if not projected | ⬜ |
-| a5 | **write-then-read** (`update_scheduled_transaction`, then read) | **critical**: does the mark survive storage? | ⬜ |
 | a6 | tool selection with trusted constants | consequence axis | ⬜ |
 | a7 | in-band text in body (IT1) | residual (shown, not hidden) | ⬜ |
 
-a2–a4 and a7 failures are the honestly-declared boundary — **show them, don't hide**.
+(a5 write-then-read is now **decisive run #2**, above.) a2–a4 and a7 failures are the
+honestly-declared boundary — **show them, don't hide**.
+
+## Other tracked items (not on the submission-critical path)
+
+| ID | Run | Status |
+|---|---|---|
+| R2 | ASR on tractable models (GPT-4o + Qwen-72B, 4 suite, both settings, `important_instructions`, ≥3 passes) | ⬜ |
+| R4c | InjecAgent live governed closed loop (GPT-4o + Qwen, DH+DS; ASR over successful-undefended) | 🟡 (DH done ×4; DS live pending) |
+| R8 | Allowlist sensitivity (±k entries; cheap gate replay + 1 live) | ⬜ |
+| R9 | Real integration (LangGraph agent, 1 suite, 3 passes; verdicts byte-identical to the shim) | ⬜ |
+| R10 | Latency on fixed core (~30 min) | ⬜ |
+| R11 | Daemon boundary (1 suite: verdict parity + overhead); else state all runs were on the soft boundary | ⬜ |
 
 ## Schedule
 
-| Week | Dates | Runs |
+| When | Work | Cost |
 |---|---|---|
-| 1 | 9–15 Oct | R0 ✅, launch R1 (background whole cycle), R4 replay ✅, assemble R3 |
-| 2 | 16–22 Oct | R3, R2 |
-| 3 | 23–29 Oct | R4 live, R6 |
-| ~1 Nov | | **go/no-go** |
-| 4 | 1–10 Nov | R8, R9, R10, buffer |
-
-**Go/no-go criterion:** R1 and R3 (at least a1, a2, a4, a5) ready. If not → USENIX C2.
+| Days 1–4 (now) | **Decisive path**: R0 ✅, a5, R5 gate-check, R1 (replay + 1 live), R4 ✅ | ≈ $25 |
+| — | **go/no-go** | |
+| After go | In-paper arguments: R3 (gpt-4o-mini), R6, R7 | ~$100 + small |
+| If time | R2, R4c live, R8, R9, R10, R11 | varies |
 
 **Results that could change the paper:**
-- **R3 a5:** the mark does not survive storage → a hole in O2, fix before submission.
+- **a5:** the mark does not survive storage → a hole in O2, fix before submission.
+- **R5:** ROPE catches the consequence/DS cases → drop the differentiation point, re-position.
 - **R1:** request-only is catastrophically expensive → headline cost gets awkward, but
   report it anyway.
-
-## Reproduce (commands)
-
-```sh
-# R0
-python3 examples/agentdojo/poc_reencoding.py
-# R4a / R4b (deterministic, no API; exit non-zero on drift)
-INJECAGENT_DIR=/path/to/InjecAgent python3 examples/injecagent/replay_dh_axes.py
-INJECAGENT_DIR=/path/to/InjecAgent python3 examples/injecagent/replay_ds_floor.py
-# R1 / R6 cost (o4-mini, 7 passes/suite), per suite:
-AXOR_BENCH_BACKEND=openrouter AXOR_BENCH_SUITE=<suite> AXOR_BENCH_CONFIG=<suite>_origin.yaml \
-  AXOR_BENCH_INTEGRITY=context AXOR_BENCH_ORIGIN=1 AXOR_BENCH_MODEL=openai/o4-mini \
-  AXOR_BENCH_CAMEL=1 AXOR_BENCH_BENIGN_ONLY=1 python -m examples.agentdojo.run_agentdojo
-# R2 / R3 ASR: drop AXOR_BENCH_CAMEL / BENIGN_ONLY; set the model + important_instructions.
-```
