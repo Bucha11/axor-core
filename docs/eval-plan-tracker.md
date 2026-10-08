@@ -17,7 +17,7 @@ one is ≈ $15–20.**
 | # | ID | Run | Cost | Status | A bad result means |
 |---|---|---|---|---|---|
 | 1 | R0 | **Fix check** — re-encoded IBAN → deny, unknown sink → deny | free, ½ day | ✅ | fix does not hold → every other run is pointless |
-| 2 | a5 | **write-then-read, deterministic** — write an attacker value via `update_scheduled_transaction`, read it back with a trusted tool, inspect the mark (no model needed) | free | ⬜ | mark lost → **hole in O2, fix before anything else**; mark holds → answers B3(ii) |
+| 2 | a5 | **write-then-read, deterministic** (`examples/agentdojo/poc_write_then_read.py`) | free | ✅ (hole found + fixed) | **found a real O2 hole, now fixed.** A benign/trusted read seeds its whole output into the trusted index, so reading attacker-written state back through `get_scheduled_transactions` (misclassified benign) laundered a **short** recipient to trusted and the egress was ALLOWED (long values were still caught by the ledger, hiding it). Fix: mutable/attacker-writable reads must be `untrusted_source` — applied to `get_scheduled_transactions`; script now a regression guard. **Follow-up:** audit the same pattern in `travel_origin` (calendar reads benign, vs untrusted in workspace) and `slack_origin` (`get_users_in_channel`). B3(ii) answered. |
 | 3 | R1 | **Cost at `request-only`** — AgentDojo headline cost (replay free; one live confirmation ~$15–20) | ~$15–20 | ⬜ (replay ready; needs R1-ws ✅) | required by all four review sets; **cannot submit without it**, whatever the rest show |
 | 4 | R4 | **InjecAgent replay 2×2** — origin×consequence over 510 | free, one evening | ✅ | resolves 0.6% vs 0.0% and 444+60≠510; a reviewer spots the discrepancy in 15 min |
 
@@ -87,6 +87,9 @@ honestly-declared boundary — **show them, don't hide**.
 | If time | R2, R4c live, R8, R9, R10, R11 | varies |
 
 **Results that could change the paper:**
-- **a5:** the mark does not survive storage → a hole in O2, fix before submission.
+- **a5 (resolved):** the mark did NOT survive storage for short values — a benign read of
+  mutable state laundered attacker values into the trusted index. Fixed by reclassifying
+  such reads as untrusted. Rule for O2: *only attacker-independent reads may be trusted.*
+  Audit travel/slack for the same pattern before their rows are load-bearing.
 - **R1:** request-only is catastrophically expensive → headline cost gets awkward, but
   report it anyway.

@@ -39,14 +39,23 @@ driving_args:
 untrusted_sources:
   - read_file
   - get_most_recent_transactions
+  # get_scheduled_transactions reads MUTABLE, attacker-writable state (a scheduled
+  # recipient an attacker may have seeded/written), so it is NOT attacker-independent
+  # and must be untrusted: a "benign" (trusted) read seeds its whole output into the
+  # trusted-origin index (governor.register_output -> register_trusted TOOL), which
+  # would launder a stored attacker value on read-back. a5 (poc_write_then_read.py)
+  # exploits exactly this with a short/synthesized recipient the content-ledger misses.
+  - get_scheduled_transactions
 
 sensitive_sources:
   - get_user_info
 
+# Only attacker-INDEPENDENT reads may be benign (trusted): the user's own account IBAN
+# and the numeric balance. Any read of mutable state the attacker can influence belongs
+# in untrusted_sources (see get_scheduled_transactions above).
 benign_tools:
   - get_balance
   - get_iban
-  - get_scheduled_transactions
 
 # Explicit consequence class for EVERY tool (STRICT fail-closed on unclassified).
 # Intrinsic action-class, schema-only: reads = BENIGN; state changes pinned at the
