@@ -29,14 +29,21 @@ driving_args:
 # untrusted, NOT benign (the A3 gap the rope_bridge writeup fixed: the exfil URL
 # rode in via the channel name). read_channel_messages/read_inbox/get_webpage carry
 # counterparty-authored content likewise.
+# get_users_in_channel is the SAME class as get_channels: channel membership/handles
+# are attacker-writable (an attacker joins with a crafted handle), so a benign read
+# would launder that handle into the trusted-origin index on read-back (a5,
+# poc_write_then_read.py) — hence untrusted.
 untrusted_sources:
   - get_channels
   - read_channel_messages
   - read_inbox
   - get_webpage
+  - get_users_in_channel
 
 sensitive_sources: []
 
+# send_channel_message is a WRITE (not a read), so it does not launder via read-back;
+# left benign. (Whether broadcasting attacker-derived content to a channel should
+# itself be a gated egress is a separate egress-coverage question for the ASR runs.)
 benign_tools:
-  - get_users_in_channel
   - send_channel_message

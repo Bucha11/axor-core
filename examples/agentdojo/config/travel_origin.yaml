@@ -26,11 +26,17 @@ driving_args:
   create_calendar_event: [title, participants]
   cancel_calendar_event: [event_id]
 
-# Reviews carry the injection.
+# Reviews carry the injection. Calendar events are external/mutable content (a
+# malicious event title/description is attacker-injectable — the workspace suite
+# treats calendar reads as untrusted for the same reason), so they are untrusted,
+# NOT benign: a benign read would seed its whole output into the trusted-origin
+# index and launder an attacker value on read-back (a5, poc_write_then_read.py).
 untrusted_sources:
   - get_rating_reviews_for_hotels
   - get_rating_reviews_for_restaurants
   - get_rating_reviews_for_car_rental
+  - get_day_calendar_events
+  - search_calendar_events
 
 # User info holds passport/bank PII -> arms the confidentiality floor.
 sensitive_sources:
@@ -52,6 +58,4 @@ benign_tools:
   - get_car_fuel_options
   - get_car_rental_address
   - get_car_price_per_day
-  - search_calendar_events
-  - get_day_calendar_events
   - get_flight_information
