@@ -10,39 +10,37 @@ Status legend: ✅ done · 🟡 in progress · ⏸ queued · ⬜ not started · 
 
 ## Decisive path (go/no-go) — do in this exact order
 
-Five runs decide whether there is a paper. Order matters: each is worth doing only if
-the previous one did not sink the submission. **The first four days cost ≈ $25; three
-of the five are free.**
+Four runs decide whether there is a paper. Order matters: each is worth doing only if
+the previous one did not sink the submission. **Three of the four are free; the paid
+one is ≈ $15–20.**
 
 | # | ID | Run | Cost | Status | A bad result means |
 |---|---|---|---|---|---|
 | 1 | R0 | **Fix check** — re-encoded IBAN → deny, unknown sink → deny | free, ½ day | ✅ | fix does not hold → every other run is pointless |
 | 2 | a5 | **write-then-read, deterministic** — write an attacker value via `update_scheduled_transaction`, read it back with a trusted tool, inspect the mark (no model needed) | free | ⬜ | mark lost → **hole in O2, fix before anything else**; mark holds → answers B3(ii) |
-| 3 | R5 | **ROPE gate-check on InjecAgent** — replay only the 60 consequence-only + ~50 DS cases | ~$3 | ⬜ | ROPE catches them → the "what ROPE does not cover" thesis collapses; learn this **before** spending the other $97 |
-| 4 | R1 | **Cost at `request-only`** — AgentDojo headline cost (replay free; one live confirmation ~$15–20) | ~$15–20 | ⬜ (replay ready; needs R1-ws ✅) | required by all four review sets; **cannot submit without it**, whatever the rest show |
-| 5 | R4 | **InjecAgent replay 2×2** — origin×consequence over 510 | free, one evening | ✅ | resolves 0.6% vs 0.0% and 444+60≠510; a reviewer spots the discrepancy in 15 min |
+| 3 | R1 | **Cost at `request-only`** — AgentDojo headline cost (replay free; one live confirmation ~$15–20) | ~$15–20 | ⬜ (replay ready; needs R1-ws ✅) | required by all four review sets; **cannot submit without it**, whatever the rest show |
+| 4 | R4 | **InjecAgent replay 2×2** — origin×consequence over 510 | free, one evening | ✅ | resolves 0.6% vs 0.0% and 444+60≠510; a reviewer spots the discrepancy in 15 min |
 
 Enabler (done): **R1-ws** — workspace origin taxonomy, all 24 tools classified & smoke-
 tested (`examples/agentdojo/config/workspace_origin.yaml`); validate its numbers against
 R1 before treating the workspace row as load-bearing.
 
-**Go/no-go after the decisive path:** O2 holds (a5) · ROPE differentiation stands (R5) ·
-cost known (R1). Missing any → USENIX C2. a5 "mark lost" → fix O2 first; R5 "ROPE
-catches" → drop the differentiation claim and re-position before submission.
+**Go/no-go after the decisive path:** O2 holds (a5) · cost known (R1). Missing either →
+USENIX C2. a5 "mark lost" → fix O2 first.
 
 ### Decisive-path commands
 
 ```sh
 # 1. R0 — fix check (free)
 python3 examples/agentdojo/poc_reencoding.py
-# 5. R4 — InjecAgent replay 2x2 + ds floor (free; exit non-zero on drift)
+# 4. R4 — InjecAgent replay 2x2 + ds floor (free; exit non-zero on drift)
 INJECAGENT_DIR=/path/to/InjecAgent python3 examples/injecagent/replay_dh_axes.py
 INJECAGENT_DIR=/path/to/InjecAgent python3 examples/injecagent/replay_ds_floor.py
-# 4. R1 — cost at request-only (o4-mini, 7 passes/suite), per suite:
+# 3. R1 — cost at request-only (o4-mini, 7 passes/suite), per suite:
 AXOR_BENCH_BACKEND=openrouter AXOR_BENCH_SUITE=<suite> AXOR_BENCH_CONFIG=<suite>_origin.yaml \
   AXOR_BENCH_INTEGRITY=context AXOR_BENCH_ORIGIN=1 AXOR_BENCH_MODEL=openai/o4-mini \
   AXOR_BENCH_CAMEL=1 AXOR_BENCH_BENIGN_ONLY=1 python -m examples.agentdojo.run_agentdojo
-# 2. a5 and 3. R5 — scripts to be committed when those runs are built.
+# 2. a5 — script to be committed when that run is built.
 ```
 
 ## Beyond go/no-go — in-paper arguments (not whether the paper exists)
@@ -53,7 +51,6 @@ These sharpen the paper once it is known to stand; none can sink it.
 |---|---|---|---|
 | R3 | Adaptive suite, closed loop (**gpt-4o-mini**; banking/travel/slack; both settings; ASR+UA; a1–a4, a6, a7 — a5 promoted to the decisive path) | small | ⬜ |
 | R6 | Benign cost floor (workspace+banking, realistic `sensitive_sources`, o4-mini, paired floor on/off, 7 passes; benign-denial rate + cost) | ~$100 | ⬜ (needs R1-ws ✅) |
-| R7 | ROPE comparison multi-pass (Table 3, 5 passes/cell; run banking attack ourselves; gpt-4o-mini **+ gpt-4o**; record router-cache origin) | small–moderate | ⬜ |
 
 ### R3 adaptive attacks (gpt-4o-mini)
 
@@ -84,13 +81,12 @@ honestly-declared boundary — **show them, don't hide**.
 
 | When | Work | Cost |
 |---|---|---|
-| Days 1–4 (now) | **Decisive path**: R0 ✅, a5, R5 gate-check, R1 (replay + 1 live), R4 ✅ | ≈ $25 |
+| Days 1–4 (now) | **Decisive path**: R0 ✅, a5, R1 (replay + 1 live), R4 ✅ | ≈ $20 |
 | — | **go/no-go** | |
-| After go | In-paper arguments: R3 (gpt-4o-mini), R6, R7 | ~$100 + small |
+| After go | In-paper arguments: R3 (gpt-4o-mini), R6 | ~$100 + small |
 | If time | R2, R4c live, R8, R9, R10, R11 | varies |
 
 **Results that could change the paper:**
 - **a5:** the mark does not survive storage → a hole in O2, fix before submission.
-- **R5:** ROPE catches the consequence/DS cases → drop the differentiation point, re-position.
 - **R1:** request-only is catastrophically expensive → headline cost gets awkward, but
   report it anyway.
