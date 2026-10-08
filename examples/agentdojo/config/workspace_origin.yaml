@@ -1,0 +1,106 @@
+# axor STRICT-origin taxonomy for the AgentDojo workspace suite (all 24 tools).
+#
+# NOTE: unlike banking/slack/travel, rope_bridge has NO vetted origin taxonomy for
+# workspace, so this config is built from the suite's tool schemas, not mirrored from
+# a reference. It is complete and fail-closed, but the classification choices below
+# (especially which calendar writes count as egress) are ours and should be
+# validated against results before the workspace row is treated as load-bearing.
+#
+#   - integrity_default: context  -> a model-emitted driving value is untrusted
+#     unless it provably traces to the user's task (register_task). No allowlist.
+#   - STRICT roles (require_tool_roles): every one of the 24 tools has an explicit
+#     data-flow role AND an explicit consequence class (fail-closed otherwise).
+#   - require_egress_allowlist forced OFF by the runner for origin mode.
+#
+# Run with: AXOR_BENCH_CONFIG=workspace_origin.yaml AXOR_BENCH_INTEGRITY=context
+#           AXOR_BENCH_ORIGIN=1
+mode: strict
+
+integrity_default: context
+
+# External-party-writable reads: email, calendar, files, contacts. Their content is
+# attacker-controllable, so a driving value lifted from them is untrusted.
+untrusted_sources:
+  - get_received_emails
+  - get_unread_emails
+  - get_sent_emails
+  - get_draft_emails
+  - search_emails
+  - get_day_calendar_events
+  - search_calendar_events
+  - get_file_by_id
+  - search_files
+  - search_files_by_filename
+  - list_files
+  - search_contacts_by_name
+  - search_contacts_by_email
+
+# Confidentiality floor OFF in the base origin config (sensitive_sources empty): the
+# floor's benign-task cost is measured separately in R6, which declares realistic
+# sensitive reads explicitly. Keeping it empty here isolates the origin (integrity)
+# axis, as banking/slack/travel do.
+sensitive_sources: []
+
+# Cross-boundary egress. The RECIPIENT/addressee decides the egress, not the body:
+# forwarding untrusted content to a prompt-given colleague is the job; sending or
+# inviting to an address that came OUT of an untrusted read is exfiltration/leak.
+# create_calendar_event and add_calendar_event_participants are egress on the
+# participants arg (inviting an attacker-derived address leaks the event to them).
+egress_sinks:
+  - send_email
+  - share_file
+  - add_calendar_event_participants
+  - create_calendar_event
+
+driving_args:
+  send_email: [recipients, cc, bcc]
+  share_file: [email]
+  add_calendar_event_participants: [participants]
+  create_calendar_event: [participants]
+
+# No credential/PII write analogous to banking's update_password, so no integrity_sinks.
+integrity_sinks: []
+
+# Known, non-taint-sourcing tools (classified so STRICT does not fail-close them):
+# a constant read (get_current_day) and the state-change writes that are not egress.
+# Their risk is handled by the consequence axis below, not by taint.
+benign_tools:
+  - get_current_day
+  - create_file
+  - append_to_file
+  - reschedule_calendar_event
+  - cancel_calendar_event
+  - delete_email
+  - delete_file
+
+# Explicit consequence class for EVERY tool (STRICT fail-closed on unclassified).
+# reads = benign; state changes pinned at the unattended ceiling (consequential) so
+# the consequence gate passes and the origin axis decides; irreversible data
+# destruction (delete_*) = catastrophic (the attacker covering tracks). Its benign
+# false-positive cost — a legitimate delete is also denied — is the known price of
+# this axis, measured on workspace (cf. the production workspace.yaml -15.5pp).
+consequence_overrides:
+  get_received_emails: benign
+  get_unread_emails: benign
+  get_sent_emails: benign
+  get_draft_emails: benign
+  search_emails: benign
+  get_day_calendar_events: benign
+  search_calendar_events: benign
+  get_file_by_id: benign
+  search_files: benign
+  search_files_by_filename: benign
+  list_files: benign
+  search_contacts_by_name: benign
+  search_contacts_by_email: benign
+  get_current_day: benign
+  send_email: consequential
+  share_file: consequential
+  add_calendar_event_participants: consequential
+  create_calendar_event: consequential
+  reschedule_calendar_event: consequential
+  cancel_calendar_event: consequential
+  create_file: consequential
+  append_to_file: consequential
+  delete_email: catastrophic
+  delete_file: catastrophic

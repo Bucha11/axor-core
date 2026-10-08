@@ -14,7 +14,7 @@ Status legend: ✅ done · 🟡 in progress · ⏸ queued · ⬜ not started · 
 |---|---|---|---|---|
 | R0 | Sanity: re-encoded IBAN → deny; unknown sink → deny | — | ✅ | `python examples/agentdojo/poc_reencoding.py` |
 | R1 | AgentDojo cost, new Table 2 (o4-mini, 4 suite, **7 passes** incl. travel; branches undefended / request-only / any-trusted; banking also request-only+supersession; `known_payees` rebuilt from t=0 env state) | B1/A5/B2/B4/B7 | ⬜ | runner below; **needs workspace origin (R1-ws)** |
-| R1-ws | Build workspace origin taxonomy (24 tools) so R1/R6 cover 4 suites | B6 (enables) | 🟡 | `examples/agentdojo/config/workspace_origin.yaml` (in progress; needs validation, no vetted reference) |
+| R1-ws | Build workspace origin taxonomy (24 tools) so R1/R6 cover 4 suites | B6 (enables) | ✅ | `examples/agentdojo/config/workspace_origin.yaml` — all 24 tools classified (role + consequence, zero unclassified); smoke-tested. No vetted reference, so **validate the numbers against R1 before treating the workspace row as load-bearing** |
 | R2 | ASR on tractable models (GPT-4o + Qwen-72B, all 4 suite, both settings, `important_instructions`, ≥3 passes) | "main model never engages the defense" | ⬜ | `run_agentdojo` ASR mode per suite/model |
 | R3 | Adaptive suite, closed loop (GPT-4o; banking/travel/slack; both settings; ASR+UA; a1–a7) | adaptive/boundary | ⬜ | a1–a7 table below |
 | R4a | InjecAgent replay on fixed core: 2×2 origin×consequence over 510 + residual accounting | the "6 cases / 0.6%" question | ✅ | `python examples/injecagent/replay_dh_axes.py` |
