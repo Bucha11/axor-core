@@ -58,6 +58,35 @@ MODEL = os.environ.get(
 ATTACK = os.environ.get("AXOR_BENCH_ATTACK", "important_instructions")
 SUITE = os.environ.get("AXOR_BENCH_SUITE", "banking")
 
+# Trust setting for the governed (origin) runs — the R1 branch axis:
+#   request_only (default): only the user's request (register_task) is a trusted
+#     origin; this is ROPE's AxorOriginBootstrap exactly.
+#   any_trusted: ALSO trust identifiers already established in the PRE-TASK (t=0)
+#     environment — the user's existing payees, which the attacker cannot author —
+#     seeded OPERATOR-trusted (NOT a ground-truth oracle). Mirrors rope_bridge's
+#     `established` set from build_oracle_allowlists, minus the ground-truth leak.
+# The two settings share one undefended trajectory and differ ONLY by these extra
+# register_trusted calls, so the sole verdict delta is a driving-arg origin decision.
+TRUST = os.environ.get("AXOR_BENCH_TRUST", "request_only")
+
+
+def _established_trusted_values(suite) -> list[str]:
+    """Identifiers in the user's t=0 environment the attacker cannot author (the
+    any-trusted seed). Empty for a suite with no vetted t=0 identifier set, where
+    any-trusted therefore collapses to request-only (reported as such)."""
+    vals: set[str] = set()
+    try:
+        env = suite.load_and_inject_default_environment({})
+    except Exception:
+        return []
+    bank = getattr(env, "bank_account", None)  # banking: existing payees
+    for coll in ("scheduled_transactions", "transactions"):
+        for t in getattr(bank, coll, []) or []:
+            r = getattr(t, "recipient", None)
+            if isinstance(r, str) and r:
+                vals.add(r)
+    return sorted(vals)
+
 
 # ── axor taxonomy per suite — declarative, from YAML ────────────────────────────
 #
@@ -194,10 +223,12 @@ else:
     _MODEL_NAME_TOKEN = "claude-3-5-sonnet-20241022"
 
 
-def build_pipeline(governed: bool):
+def build_pipeline(governed: bool, suite=None):
     llm = _make_llm()
     if governed:
-        tools_executor = GovernedToolsExecutor(make_governor)
+        seed = (_established_trusted_values(suite)
+                if (suite is not None and TRUST == "any_trusted") else [])
+        tools_executor = GovernedToolsExecutor(make_governor, trusted_seed=seed)
     else:
         tools_executor = ToolsExecutor()
     loop = ToolsExecutionLoop([tools_executor, llm])
@@ -212,7 +243,7 @@ def build_pipeline(governed: bool):
 
 
 def run_condition(governed: bool, suite, attack_name: str):
-    pipeline, tools_executor = build_pipeline(governed)
+    pipeline, tools_executor = build_pipeline(governed, suite)
     attack = load_attack(attack_name, suite, pipeline)
 
     utilities: list[bool] = []
@@ -242,7 +273,7 @@ def run_condition(governed: bool, suite, attack_name: str):
 def run_benign(governed: bool, suite):
     """All user tasks, NO attack — the utility axis on its own. The cost of the
     defense is whatever legitimate work the governed condition can no longer do."""
-    pipeline, tools_executor = build_pipeline(governed)
+    pipeline, tools_executor = build_pipeline(governed, suite)
     utilities: list[bool] = []
     label = "GOVERNED " if governed else "UNDEFENDED"
     for ut_id in USER_TASKS:

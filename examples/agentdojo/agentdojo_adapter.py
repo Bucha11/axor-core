@@ -39,6 +39,7 @@ from agentdojo.types import (
 )
 
 from axor_core.governor import ToolCallGovernor
+from axor_core.contracts.taint import TrustedOrigin
 
 _API_URL = "https://api.anthropic.com/v1/messages"
 _API_VERSION = "2023-06-01"
@@ -299,8 +300,15 @@ class GovernedToolsExecutor(BasePipelineElement):
     message list resetting to its first tool turn).
     """
 
-    def __init__(self, governor_factory) -> None:
+    def __init__(self, governor_factory, trusted_seed=()) -> None:
         self._make_governor = governor_factory
+        # any-trusted seed: identifiers already in the user's PRE-TASK (t=0)
+        # environment — established payees the attacker cannot author. Registered as
+        # OPERATOR-trusted IN ADDITION to the request (register_task). Empty => the
+        # request-only setting (only the task prompt is trusted). This is the ONLY
+        # difference between the two settings, so the sole verdict delta is a
+        # driving-arg origin decision; the taxonomy is untouched.
+        self._trusted_seed = tuple(trusted_seed)
         self._governor: ToolCallGovernor | None = None
         self._seen_ids: set[str] = set()
         self.denied_count = 0
@@ -318,6 +326,9 @@ class GovernedToolsExecutor(BasePipelineElement):
             # value derived from an untrusted read is not. No-op under "clean" mode.
             if isinstance(task_text, str) and task_text:
                 self._governor.register_task(task_text)
+            # any-trusted: also trust the pre-task established identifiers (OPERATOR).
+            for v in self._trusted_seed:
+                self._governor.register_trusted(v, TrustedOrigin.OPERATOR)
         return self._governor
 
     def query(self, query, runtime, env=EmptyEnv(), messages=[], extra_args={}):
