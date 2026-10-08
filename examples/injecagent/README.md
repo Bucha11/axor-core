@@ -134,6 +134,25 @@ measured on AgentDojo, where the same origin polarity pays a real utility price
 (e.g. the `*_origin.yaml` suites: banking −21.5pp, slack −43.3pp on o4-mini;
 `examples/agentdojo/agentdojo_origin_results.md`).
 
+## Reproduce the deterministic numbers (no API)
+
+The two numbers above that do not come from a model run — ds governed `0/544` and
+the dh axis split `444 / 60 / 0` — are produced by two standalone replay scripts
+(no API key, no model call; they read only the InjecAgent `data/` JSONs and exit
+non-zero if the count drifts from the paper):
+
+```sh
+INJECAGENT_DIR=/path/to/InjecAgent python3 examples/injecagent/replay_ds_floor.py
+# -> ds base: n=544  S2 refused by floor=544  governed ds ASR=0.0%
+
+INJECAGENT_DIR=/path/to/InjecAgent python3 examples/injecagent/replay_dh_axes.py
+# -> origin alone 444 / origin+consequence 504 / consequence-only 60 / origin-only 0
+```
+
+The four per-run dh ASRs in the table come from `run_injecagent.py` (one model pass
+each); the governed `0/510` on each is re-scored deterministically from the saved
+trajectory by the same origin gate these scripts exercise.
+
 > Note: InjecAgent does not run out of the box — `requirements.txt` omits
 > `nltk`/`together`/`tqdm`/`pydantic`, and `src/utils.py` builds an OpenAI client
 > at import (needs `OPENAI_API_KEY` set even to import). Install those and export
