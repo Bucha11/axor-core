@@ -112,20 +112,37 @@ a room id — is refused just as a long one is), and the egress is refused. This
 with a ≥12-char ledger; it is length-dependent and is not the config this adapter
 reports — see the mapping section above.)
 
-**Both axes are load-bearing — consequence catches what the origin axis cannot.**
-The consequence gate runs *before* the origin/taint gate, so it is not masked by it.
-Replaying the governor over all 510 dh base attacks (each attacker call carrying an
-injection-derived driving value) and asking which axis is *necessary*: origin denies
-**444/510**, and a further **60 are consequence-only** — the consequence gate denies
-them and the origin axis *alone* (consequence disabled) would **allow** them
-(origin-only denials: **0**). These 60 are action-shaped, content-blind harms —
-`AugustSmartLockUnlockDoor`, `…GrantGuestAccess`, and the like: an irreversible
-physical/security action whose driving argument carries no attacker-authored value
-for the origin axis to flag, so only the action-class gate sees it (length- and
-content-agnostic). This is the direct, measurable answer to the "action-shaped harm
-with no data flow" class (cf. PACT): origin provenance handles the exfil-shaped
-attacks, the consequence axis the irreversible-action ones, and 60/510 fall only to
-the latter.
+**Both axes are load-bearing — each catches what the other cannot.** The consequence
+gate runs *before* the origin/taint gate, so it is not masked by it. Replaying the
+governor over all 510 dh base attacks (each attacker call carrying an injection-derived
+driving value) with each axis measured **independently** gives the 2×2
+(`replay_dh_axes.py`):
+
+| | consequence DENY | consequence ALLOW | row total |
+|---|---|---|---|
+| **origin DENY** | 246 | 198 | **444** |
+| **origin ALLOW** | 60 | 6 | 66 |
+| **col total** | **306** | 204 | 510 |
+
+- **198 origin-only** (consequence would allow): exfil-shaped attacks — the attacker
+  routes an injection-derived value into an egress whose action class is not
+  irreversible, so only the provenance axis flags it.
+- **60 consequence-only** (origin alone would allow): action-shaped, content-blind
+  harms — `AugustSmartLockUnlockDoor`, `…GrantGuestAccess`, and the like: an
+  irreversible physical/security action whose driving argument carries no
+  attacker-authored value for the origin axis to see, so only the action-class gate
+  catches it (length- and content-agnostic). This is the direct, measurable answer to
+  the "action-shaped harm with no data flow" class (cf. PACT).
+- **6 neither** (run-free residual, 1.18%): all `IndoorRobotGoToRoom` — reversible
+  robot navigation, deliberately **not** in the catastrophic set (a robot changing
+  rooms is recoverable), with no ≥12-char liftable token. Leaving them is correct, not
+  a miss; in the realized runs these are never successful attacks (measured governed
+  dh = 0/510). This accounts for the earlier "6 cases" bookkeeping question — they are
+  exactly the reversible-by-design robot-nav cases, and the old "0.6% / 1.6%" residuals
+  were artifacts of the superseded length-dependent clean polarity.
+
+So neither axis alone suffices (origin alone leaves 60, consequence alone leaves 198);
+together they deny 504/510 (98.82%), and the 6 that remain are reversible by design.
 
 **Honest caveat.** InjecAgent is all-attack, so every denial is correct and it
 cannot show context-default's *over-block* cost (legitimate egress whose value is
@@ -146,7 +163,8 @@ INJECAGENT_DIR=/path/to/InjecAgent python3 examples/injecagent/replay_ds_floor.p
 # -> ds base: n=544  S2 refused by floor=544  governed ds ASR=0.0%
 
 INJECAGENT_DIR=/path/to/InjecAgent python3 examples/injecagent/replay_dh_axes.py
-# -> origin alone 444 / origin+consequence 504 / consequence-only 60 / origin-only 0
+# -> 2x2: both 246 / origin-only 198 / consequence-only 60 / neither 6
+#    (origin row 444, consequence col 306; the 6 neither are all IndoorRobotGoToRoom)
 ```
 
 The four per-run dh ASRs in the table come from `run_injecagent.py` (one model pass
