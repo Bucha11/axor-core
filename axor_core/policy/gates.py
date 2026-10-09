@@ -229,6 +229,67 @@ def integrity_superseded_by_decidable(
     return all(d in args and d in enum_covered for d in drivers)
 
 
+def is_exfil(
+    tool_name: str,
+    normalized: NormalizedIntent,
+    egress_sinks: frozenset[str] | set[str] = frozenset(),
+) -> bool:
+    """Whether this call egresses data out of the trust boundary.
+
+    Two independent grounds, and the asymmetry between them is load-bearing:
+
+    * ``tool_name in egress_sinks`` — the OPERATOR's declaration. Content-blind,
+      attacker-independent: the attacker influences a call's arguments, never
+      which tools the deployment declared egress.
+    * ``normalized.destination_kind in EXFIL_DESTINATIONS`` — the normalizer's
+      structural guess, read off the call's own ``url`` / ``command`` / ``cmd``
+      arguments, which a model (hence an attacker steering it) writes. It can
+      only ever ADD exfil-ness: it fails to ``destination_kind == "none"``
+      whenever it cannot see a destination (an endpoint under any other argument
+      name), and :func:`IntentNormalizer._classify_url_target` returns the FIRST
+      matched URL's class, so a command that opens with a benign
+      ``http://localhost/`` classifies as ``localhost`` — outside
+      ``EXFIL_DESTINATIONS`` and outside :func:`ssrf_gate`.
+
+    So this is a best-effort WIDENING of the egress set, never a backstop for it.
+    A confidentiality guarantee stated over this predicate holds for a tool the
+    operator declared; for an undeclared one it is subject to the normalizer's
+    recognition of the destination, which is a rich-syntax residual (docs/
+    floor-dependencies.md, rows D1/D2).
+    """
+    return (
+        tool_name in egress_sinks
+        or normalized.destination_kind in EXFIL_DESTINATIONS
+    )
+
+
+def confidentiality_risk(
+    tool_name: str,
+    normalized: NormalizedIntent,
+    floor_active: bool,
+    egress_sinks: frozenset[str] | set[str] = frozenset(),
+) -> bool:
+    """The confidentiality axis of :func:`taint_gate`, as its own predicate.
+
+    ``confidentiality_risk = is_exfil ∧ floor_active``. Note the signature: it
+    does NOT take ``driving_root``. That is the whole of claim C2 for the
+    confidentiality axis — the decision is not a function of the integrity
+    labeler's output, so no error the labeler can make (in either direction, on
+    any value) can change it. The floor is armed on the FACT of a declared
+    secret read (``TaintEngine.register_value`` → ``_outstanding``, keyed by a
+    whole-content fingerprint) and lifted only by an unforgeable
+    ``GovernanceAuthority``; neither path consults ``derive_value``.
+
+    Exposed separately from the gate because the verdict is the wrong thing to
+    measure the claim on: integrity and confidentiality are checked in the SAME
+    gate, so a call that both axes refuse is recorded under the integrity axis,
+    and a counterfactual that silences integrity makes the SAME call surface as a
+    confidentiality denial. Counting denials per axis therefore moves under
+    labeler fault injection while C2 holds; the predicate does not.
+    """
+    return floor_active and is_exfil(tool_name, normalized, egress_sinks)
+
+
 def taint_gate(
     tool_name: str,
     normalized: NormalizedIntent,
@@ -250,10 +311,7 @@ def taint_gate(
 
     ``integrity_sinks`` are operator-declared state-changing sinks (a password or
     profile update, a role grant): integrity only, never the floor."""
-    exfil = (
-        tool_name in egress_sinks
-        or normalized.destination_kind in EXFIL_DESTINATIONS
-    )
+    exfil = is_exfil(tool_name, normalized, egress_sinks)
     # An integrity sink is operator-declared: a state-changing call whose driving
     # args the attacker must not choose (a password, an address, a role). It gets
     # the integrity check only — no confidentiality floor, nothing leaves.
@@ -263,13 +321,17 @@ def taint_gate(
         or exfil
         or tool_name in integrity_sinks
     )
-    confidentiality_risk = exfil and floor_active
-    if not (integrity_risk or confidentiality_risk):
+    # Same predicate as the module-level `confidentiality_risk` — spelled through
+    # it so the gate and the C2 witness cannot drift.
+    conf_risk = confidentiality_risk(
+        tool_name, normalized, floor_active, egress_sinks
+    )
+    if not (integrity_risk or conf_risk):
         return None
     axis = (
         "confidentiality (egress under the sound floor — a secret read is "
         "outstanding; release requires governance endorsement)"
-        if confidentiality_risk
+        if conf_risk
         else "integrity (untrusted-derived value into a high-risk operation)"
     )
     return GateDecision(

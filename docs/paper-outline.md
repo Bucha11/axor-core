@@ -793,6 +793,28 @@ the honest price. Agents should not self-govern execution.
      tried all failed." Anchor: the floor logic in `policy/gates.py` (`floor_active` →
      deny) and `taint/engine.py` (`confidentiality_floor_active`, armed on a
      `sensitive`-rooted read).
+
+     **Extended to C2 (labeler independence), the same way — by signature.**
+     `policy/gates.py::confidentiality_risk(tool_name, normalized, floor_active,
+     egress_sinks)` takes **no `CausalRoot` at all**, so the integrity labeler's output is
+     not in the decision's domain: no error it can make, in either direction, on any value,
+     changes a floor refusal. (`driving_root.sensitive` is likewise not an enforcement input
+     anywhere in the kernel — every gate reads `is_tainted` and `floor_active` only.) Arming
+     is keyed on the **tool name** against the operator's `sensitive_sources` at the read
+     boundary (`policy/provenance.py::output_root`); the secret's fingerprint is the
+     registry key for *release*, never the predicate for arming, which is what keeps the
+     floor and the per-value ledger from consulting each other at all. The **trusted
+     dependency set, the two attacker-reachable residuals it deliberately excludes (D1
+     `destination_kind`, D2 the structural arming fallback), and the scope rows
+     (saturation; own-secrets-only across the federation boundary; transitivity within a
+     trust domain) are tabulated in `docs/floor-dependencies.md`** — that table is the
+     per-guarantee dependency list the central thesis promises, for this guarantee. The
+     labeler-fault-injection replay (`kernel/labeler_fault.py`, five arms) is the
+     **regression** for the argument, not the argument; it belongs in the A crosswalk, not
+     in §5, and its invariant is stated over the *predicate per call*, never over denial
+     counts or categories (those legitimately move: `carrier_gate` reads the labeler and
+     runs first, so silencing the labeler re-surfaces the same call as a confidentiality
+     denial).
   2. **The illustration (a unit-level demonstration, *not* evidence of the property).** On
      the travel taxonomy, deterministically: a `get_user_information` read arms the floor →
      `send_email` is refused with the floor reason; the **same email with the secret

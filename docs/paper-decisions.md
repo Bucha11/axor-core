@@ -24,7 +24,13 @@ questions for Haoyu. Nothing here goes into the paper verbatim except where mark
 3. **Pin the missing citations:** the exact nested/recursive-injection follow-up to
    Greshake et al. (§6.5), and the IFC ancestors for the §7 lineage bullet
    (Sabelfeld & Myers JSAC 2003; Zdancewic & Myers robust declassification; DLM).
-4. **Build the Appendix E integration-cost table** (per framework: normalizer LOC,
+4. **Reconcile the fault-injection mode names with `docs/floor-dependencies.md` §3.**
+   The code now implements five arms (`NONE` control, `ALL_TRUSTED`, `ALL_TAINTED`,
+   `INVERTED`, `FLIP_BY_REF`) in `axor_core/kernel/labeler_fault.py`. If the paper's table
+   names them otherwise, rename in the code — the invariant quantifies over
+   `tuple(LabelerFault)`, so renaming or adding an arm costs nothing. Also note there:
+   C2 is asserted for **declared** `sensitive_sources` only; rows D1/D2 are residuals.
+5. **Build the Appendix E integration-cost table** (per framework: normalizer LOC,
    agent-loop changes = 0, policy changes = 0) — it turns §6.5's adoption claim from
    assertion into data.
 

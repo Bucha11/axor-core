@@ -211,6 +211,43 @@ class GovernanceConfig:
         }
 
 
+    def as_kernel_config(self, **over: Any) -> "Any":
+        """The same declaration, projected for the replay kernel.
+
+        ``KernelConfig`` is the subset of this config the pure gates consume, so a
+        counterfactual is "same trace, different KernelConfig" — including a
+        labeler-fault arm (``labeler_fault=``, ``labeler_fault_seed=``) passed
+        through ``over``.
+
+        Deliberately narrow: ``allowed_tools`` and the budget caps are a
+        *session's* capability table and spend, not part of the declaration, so
+        they stay unset (``allowed_tools=None`` means "capability not
+        evaluated") unless a caller names them. The unattended-consequence
+        ceiling likewise rides on the execution envelope's policy, not on this
+        declaration, so it keeps ``KernelConfig``'s default. ``untrusted_sources`` /
+        ``sensitive_sources`` / ``benign_tools`` are arming roles consumed at
+        READ time by ``policy.provenance.output_root``; replay folds the roots the
+        producer already recorded, so they have no gate to feed here.
+
+        Imported locally: ``axor_core.kernel`` may not import this module
+        (Ring 0), and at module scope this import would invert that edge.
+        """
+        from axor_core.kernel.replay import KernelConfig
+
+        fields: dict[str, Any] = {
+            "egress_sinks": frozenset(self.egress_sinks),
+            "imperative_sinks": frozenset(self.imperative_sinks),
+            "integrity_sinks": frozenset(self.integrity_sinks),
+            "positional_sinks": frozenset(self.positional_sinks),
+            "value_policies": dict(self.value_policies),
+            "driving_args": {k: frozenset(v) for k, v in self.driving_args.items()},
+            "consequence_overrides": dict(self.consequence_overrides),
+            "strict_consequence": self.mode is ExecutionMode.STRICT,
+        }
+        fields.update(over)
+        return KernelConfig(**fields)
+
+
 # ── parsing helpers (each fails closed on a malformed entry) ─────────────────────
 
 def _as_set(value: Any, field_name: str) -> frozenset[str]:

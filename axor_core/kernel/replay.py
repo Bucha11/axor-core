@@ -50,6 +50,7 @@ from axor_core.kernel.events import (
 from axor_core.kernel.errors import SchemaVersionError
 from axor_core.kernel.messaging import fold_carried_root
 from axor_core.kernel.state import GovernanceState
+from axor_core.kernel.labeler_fault import LabelerFault, apply as apply_labeler_fault
 from axor_core.policy.from_record import (
     IncompleteRecord,
     context_driving_root,
@@ -58,6 +59,7 @@ from axor_core.policy.from_record import (
 from axor_core.policy.gates import (
     GateDecision,
     carrier_gate,
+    confidentiality_risk,
     consequence_gate,
     driving_subset,
     integrity_superseded_by_decidable,
@@ -109,6 +111,15 @@ class KernelConfig:
     default_tool_weight: float = 1.0
     # Counterfactual: these value refs arrive tainted at registration.
     synthetic_taint_refs: frozenset[str] = frozenset()
+    # Counterfactual in the OTHER direction: fault-inject the integrity labeler,
+    # replacing its verdict on every re-gated call's driving value
+    # (axor_core.kernel.labeler_fault). Integrity-only by contract — a fault can
+    # never reach `sensitive`, so the confidentiality floor stays armed exactly
+    # as the trace recorded it, which is what makes the C2 invariant measurable
+    # rather than vacuous. `labeler_fault_seed` names the arm for the per-ref
+    # mode; it is pure input, so replay stays bit-reproducible.
+    labeler_fault: LabelerFault = LabelerFault.NONE
+    labeler_fault_seed: str = ""
     # STRICT consequence axis: a sink with no explicit class is CATASTROPHIC,
     # exactly as the runtime gate treats it under STRICT.
     strict_consequence: bool = False
@@ -126,6 +137,14 @@ class ReplayStep:
     reevaluated_verdict: Verdict | None
     deny: GateDecision | None
     hypothetical: bool
+    # The confidentiality axis as a PREDICATE, not as the verdict's category.
+    # `carrier_gate` reads the integrity label and runs BEFORE `taint_gate`, so a
+    # call it refuses is categorised `carrier_gate`; silence the labeler and the
+    # same call falls through to the floor and is reported as a confidentiality
+    # denial. Per-axis denial counts therefore move under labeler fault injection
+    # while the guarantee holds — only this predicate is the C2 invariant. None
+    # for a non-TOOL_CALL step and in scrubber mode (no config: nothing re-gated).
+    confidentiality_risk: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -200,6 +219,19 @@ def _derive_driving_root(
         record, payload.get("args") or {}, drivers,
         carried=refs_root, extra_context=state.context_root,
     )
+
+
+def _fault_ref(payload: dict, tool: str) -> str:
+    """A stable per-value identity for the per-ref fault mode.
+
+    The first recorded ``arg_refs`` ref when the producer bound any (so the same
+    value draws the same coin everywhere it is used), else the tool name — a call
+    with no refs has no finer identity in the trace.
+    """
+    arg_refs = payload.get("arg_refs") or {}
+    for _arg, ref in sorted(arg_refs.items()):
+        return str(ref)
+    return tool
 
 
 def _refs_root(
@@ -356,6 +388,7 @@ def replay(
         recorded = event.verdict
         reevaluated: Verdict | None = None
         deny: GateDecision | None = None
+        conf_risk: bool | None = None
 
         if event.kind is EventKind.TOOL_CALL and config is not None:
             tool = str(event.payload.get("tool", ""))
@@ -363,6 +396,19 @@ def replay(
             normalized = normalized_from_payload(tool, event.payload)
             driving_root = _derive_driving_root(event.payload, state, config)
             floor = state.floor_active or bool(event.payload.get("floor_active"))
+            # Labeler fault injection sits HERE and nowhere else: the integrity
+            # label the gates decide on is replaced, while `floor` above — read
+            # off the fold's recorded secret reads — is untouched. That placement
+            # IS the experiment's contract (see kernel/labeler_fault.py).
+            driving_root = apply_labeler_fault(
+                config.labeler_fault,
+                driving_root,
+                ref=_fault_ref(event.payload, tool),
+                seed=config.labeler_fault_seed,
+            )
+            conf_risk = confidentiality_risk(
+                tool, normalized, floor, config.egress_sinks
+            )
             deny = evaluate_call(
                 tool, args, normalized, driving_root, floor, config, state
             )
@@ -450,6 +496,7 @@ def replay(
                 hypothetical=(
                     first_divergence is not None and len(steps) > first_divergence
                 ),
+                confidentiality_risk=conf_risk,
             )
         )
 
