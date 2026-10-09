@@ -899,8 +899,27 @@ class IntentLoop:
             )
         )
 
-        # approved or transformed
-        effective_args = decision.transformed_payload or tool_args
+        # Executed == checked. The gate cascade above decided on `tool_args`, so
+        # executing anything else would break that identity with no re-gate in
+        # between: a TRANSFORM payload would reach the handler having passed no
+        # gate at all. No gate in this kernel produces TRANSFORM today (the enum
+        # member and this plumbing predate the per-value gates), so this refuses an
+        # unreachable path rather than changing behaviour — and it keeps it
+        # unreachable. A future producer must re-run the cascade on its payload and
+        # make THAT the checked intent; it must not remove this guard.
+        if decision.transformed_payload is not None:
+            reason = (
+                "transform decision rejected: a transformed payload has passed no "
+                "gate — the cascade decided on the original arguments. Re-gate the "
+                "transformed payload and approve that instead."
+            )
+            self._record_denial(intent, reason, envelope, "capability")
+            denial_resp = _make_denial_response(reason)
+            return ResolvedIntent(
+                intent=intent, approved=False, reason=reason,
+                result=denial_resp.to_tool_result(),
+            )
+        effective_args = tool_args
         effective_intent = Intent(
             kind=IntentKind.TOOL_CALL,
             payload={"tool": tool_name, "args": effective_args},

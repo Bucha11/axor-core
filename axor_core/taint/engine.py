@@ -349,7 +349,19 @@ class TaintEngine:
         # another secret's floor; a sub-threshold secret the ledger never stored is
         # still releasable here. This is what keeps the floor and the ledger from
         # desynchronising — the floor is released by identity, not by derive().
-        self._outstanding.pop(content_fingerprint(content), None)
+        #
+        # One endorsement releases ONE read occurrence, so the count is decremented
+        # rather than dropped. `_outstanding` counts un-released reads of the same
+        # secret (`register_value` increments it per read), and clearing the whole
+        # entry made a single endorsement lift a floor armed by N reads — governance
+        # named one value and silently released every outstanding read of it. The
+        # counter only means something if the release respects it.
+        fp = content_fingerprint(content)
+        remaining = self._outstanding.get(fp, 0) - 1
+        if remaining > 0:
+            self._outstanding[fp] = remaining
+        else:
+            self._outstanding.pop(fp, None)
         removed = self._ledger.unregister(content)
         # Context mode: endorsement is positive declassification — the endorsed
         # value becomes a trusted value, so a later sink carrying it is not tainted
