@@ -113,6 +113,49 @@ def test_agentdojo_suite_configs_load_and_build_governors():
         assert governor is not None
 
 
+def test_require_egress_allowlist_is_declarable_on_its_own():
+    """STRICT's two obligations are separable, and the YAML can say so.
+
+    The origin posture is STRICT tool roles WITHOUT the enum-allowlist obligation:
+    the integrity/origin axis decides each driving value, and declaring an enum
+    there would be a different control (a closed codomain triggers decidable
+    supersession, skipping the integrity check the posture exists to measure).
+    That used to live only as an imperative override in the benchmark runner, so
+    `as_governor_kwargs()` built a configuration nobody runs — which is exactly
+    how the four origin taxonomies came to fail
+    `test_agentdojo_suite_configs_load_and_build_governors`.
+    """
+    origin = GovernanceConfig.from_dict({
+        "mode": "strict",
+        "egress_sinks": ["send"],
+        "require_egress_allowlist": False,
+    })
+    kwargs = origin.as_governor_kwargs()
+    assert kwargs["require_tool_roles"] is True       # STRICT's other obligation stays
+    assert kwargs["require_egress_allowlist"] is False
+
+    # production can opt IN, too — the flag is a declaration, not a mode alias.
+    opted_in = GovernanceConfig.from_dict({
+        "mode": "production",
+        "egress_sinks": ["send"],
+        "require_egress_allowlist": True,
+    })
+    assert opted_in.as_governor_kwargs()["require_egress_allowlist"] is True
+
+    # omitted = the mode's default
+    assert GovernanceConfig.from_dict({
+        "mode": "strict", "egress_sinks": ["send"],
+        "value_policies": {"send": [{"arg": "to", "kind": "enum", "allowed": ["a@b.c"]}]},
+    }).as_governor_kwargs()["require_egress_allowlist"] is True
+
+
+def test_require_egress_allowlist_rejects_a_non_boolean():
+    import pytest as _pytest
+
+    with _pytest.raises(ValueError, match="require_egress_allowlist"):
+        GovernanceConfig.from_dict({"mode": "strict", "require_egress_allowlist": "no"})
+
+
 def test_as_governor_kwargs_strict_maps_to_allowlist_obligation():
     strict = GovernanceConfig.from_dict({
         "mode": "strict",

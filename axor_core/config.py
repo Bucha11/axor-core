@@ -40,6 +40,7 @@ _KNOWN_KEYS = frozenset({
     "driving_args",
     "integrity_default",
     "integrity_origins",
+    "require_egress_allowlist",
     "federation",
 })
 _CONSEQUENCE_BY_NAME = {c.name.lower(): c for c in ConsequenceClass}
@@ -79,6 +80,20 @@ class GovernanceConfig:
     integrity_default: "str | None" = None
     # Which TrustedOrigins clear a value at an integrity sink; resolved downstream.
     integrity_origins: str = "any-trusted"
+    # STRICT's enum-allowlist obligation on egress sinks, as its own declaration.
+    # ``None`` = the mode's default (on under STRICT, off otherwise).
+    #
+    # STRICT bundles two obligations: fail-closed tool roles and an enum allowlist
+    # on every egress sink. The origin posture wants the first without the second —
+    # the integrity/origin axis is what decides each driving value, and declaring an
+    # allowlist there would be a different control (a closed codomain triggers
+    # decidable supersession, which SKIPS the integrity check it is meant to
+    # measure). That posture existed only as an imperative override in the
+    # benchmark runner, so the YAML could not say what the deployment meant and
+    # `as_governor_kwargs()` reproduced a configuration nobody runs. Splitting the
+    # obligation out makes the taxonomy the single source of truth, and its hash in
+    # a run manifest then records the posture.
+    require_egress_allowlist: "bool | None" = None
     # Built opt-in A2A objects (None when no `federation:` section). The gateway is
     # the receive side (which peer values to trust); the identity is the send side
     # (used by a transport adapter to mint our outgoing receipts).
@@ -109,6 +124,12 @@ class GovernanceConfig:
                 f"{[m.value for m in ExecutionMode]}"
             )
 
+        require_allowlist = data.get("require_egress_allowlist")
+        if require_allowlist is not None and not isinstance(require_allowlist, bool):
+            raise ValueError(
+                "require_egress_allowlist must be a boolean, got "
+                f"{type(require_allowlist).__name__}"
+            )
         integrity_default = data.get("integrity_default")
         if integrity_default is not None and integrity_default not in INTEGRITY_DEFAULTS:
             raise ValueError(
@@ -126,6 +147,7 @@ class GovernanceConfig:
         return cls(
             mode=mode,
             integrity_default=integrity_default,
+            require_egress_allowlist=require_allowlist,
             integrity_origins=integrity_origins,
             workspace=data.get("workspace"),
             profile=data.get("profile"),
@@ -204,7 +226,11 @@ class GovernanceConfig:
             "value_policies": dict(self.value_policies),
             "driving_args": dict(self.driving_args),
             "consequence_overrides": dict(self.consequence_overrides),
-            "require_egress_allowlist": self.mode is ExecutionMode.STRICT,
+            "require_egress_allowlist": (
+                self.mode is ExecutionMode.STRICT
+                if self.require_egress_allowlist is None
+                else self.require_egress_allowlist
+            ),
             "require_tool_roles": self.mode is ExecutionMode.STRICT,
             "integrity_default": self.integrity_default,
             "integrity_origins": self.integrity_origins,

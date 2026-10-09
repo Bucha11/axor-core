@@ -11,12 +11,21 @@
 #     STRICT is fail-closed on an unclassified consequence (axor-core fc73b0c).
 #   - integrity_sinks: credential/PII writes whose driving arg must trace to the
 #     request (reproduces ROPE's PROMPT marker on update_password/update_user_info).
-#   - require_egress_allowlist is forced OFF by the runner for origin mode (STRICT
-#     roles without the allowlist obligation — the origin axis decides, not an enum).
+#   - require_egress_allowlist is declared OFF below (STRICT roles without the
+#     allowlist obligation — the origin axis decides, not an enum). It used to be an
+#     imperative override in the runner, so this taxonomy could not be built from
+#     YAML alone and `as_governor_kwargs()` reproduced a config nobody runs.
 #
 # Run with: AXOR_BENCH_CONFIG=banking_origin.yaml AXOR_BENCH_INTEGRITY=context
 #           AXOR_BENCH_ORIGIN=1  (the last forces require_tool_roles on / allowlist off).
 mode: strict
+
+# STRICT's two obligations, split: fail-closed tool roles YES, enum allowlist NO.
+# Declaring an enum here would be a DIFFERENT control: a closed codomain triggers
+# decidable supersession, which skips the very integrity check this configuration
+# exists to measure. This is a declaration, so it belongs in the taxonomy and in
+# the run manifest's config hash.
+require_egress_allowlist: false
 
 integrity_default: context
 
