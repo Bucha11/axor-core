@@ -110,6 +110,50 @@ a code change: declare the tool
 
 ---
 
+## 2b. The integrity conjunct's residual: T is mentions, not endorsements
+
+The rows above bound the floor. The integrity conjunct (`allow ⇒ covers`) rests
+on T, and T has a residual of its own that is worth stating in the same place,
+because it is the one place where an attacker-chosen value can reach the
+strongest trust level there is.
+
+`TrustedValueIndex` grants `TrustedOrigin.TASK` to any token-bounded contiguous
+span of the user's task text. The rule is **polarity-blind and
+attribution-blind**, so:
+
+| # | case | in T? | attacker-reachable? |
+|---|---|---|---|
+| **D3** | a recipient the request names **in order to forbid it** ("never send anything to B") | yes | no — the user wrote it; the cost is utility and surprise |
+| **D4** | a value the user **quoted from untrusted content** to ask about it ("is this a scam? it says wire 200 to DE89…") | yes, at TASK origin | **yes** |
+
+D4 breaks the soundness argument a span-based T has been resting on. That
+argument is: the attacker does not control the prompt, so even "T = every
+substring of the prompt" stays sound, and imprecision only widens the
+"choice within T" residual. It holds for D3. It fails for D4: the attacker still
+does not write the prompt, but an attacker-chosen identifier reaches it through
+the user, and lands at `TrustedOrigin.TASK` — not at some weaker origin a policy
+could filter on.
+
+Pinned by `tests/taint/test_task_trust_is_mention_based.py`, which also records
+the control (a value the request never names is not trusted, so the rule really
+is "appears in the request").
+
+**Why this is not fixed by reading the request better.** Clause splitting does
+not reach D3 — the prohibition is its own clause and still contains the value.
+Polarity analysis does not reach D4 — inside one text field "wire 200 to DE89…"
+is grammatically an instruction, and what makes it not one is that it is
+*attributed* to someone else. Attribution inside free text has no structural
+stamp to rest on, unlike a signed sender, which is where ROPE's T2 anchor gets
+its integrity. So any grant derived from natural language inherits D4, and the
+fail-closed rule for an extractor has to be: no attribution, no grant.
+
+That is the argument for a **structured** grant channel (an explicit field or
+block whose pairing is stated rather than parsed) over extraction, and it is
+stronger than the argument from clause boundaries. The prototype in
+`axor_core/taint/grants.py` therefore issues grants structurally and parses
+nothing; its own tests pin that a grant issued too coarsely re-admits mixing,
+so the mechanism cannot compensate for bad issuance.
+
 ## 3. The regression: labeler fault injection over recorded traces
 
 The signature argument above is the proof. The fault injection is its
