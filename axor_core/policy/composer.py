@@ -85,7 +85,14 @@ class PolicyComposer:
         escalation profile) therefore cannot widen a narrower per-task policy."""
         changes: dict = {}
         if self._consequence_ceiling is not None:
-            changes["max_unattended_consequence"] = self._consequence_ceiling
+            # Ceiling semantics: lower is stricter, so the overlay takes the MEET
+            # with the per-task value. A direct assignment here would let a looser
+            # operator profile (e.g. "balanced" = CONSEQUENTIAL) widen a stricter
+            # per-task policy (REVERSIBLE) — the one authority field that escaped
+            # the narrowing rule this method documents.
+            changes["max_unattended_consequence"] = min(
+                policy.max_unattended_consequence, self._consequence_ceiling
+            )
         if self._overlay_escalation is not None:
             changes["escalation_policy"] = _intersect_escalation(
                 policy.escalation_policy, self._overlay_escalation
@@ -229,6 +236,16 @@ class PolicyComposer:
             child_policy.allow_model_switch and parent_policy.allow_model_switch
         )
 
+        # consequence ceiling: a child cannot run unattended at a higher
+        # irreversibility class than its parent. Lower is stricter, so the meet is
+        # min(). Without this a classifier-selected child (which carries the
+        # dataclass default, CONSEQUENTIAL) would silently out-rank a parent
+        # pinned to REVERSIBLE and skip the governance gate the parent requires.
+        max_unattended_consequence = min(
+            child_policy.max_unattended_consequence,
+            parent_policy.max_unattended_consequence,
+        )
+
         # allowed_paths: child cannot widen the parent's filesystem ceiling.
         allowed_paths = _restrict_allowed_paths(
             child_policy.allowed_paths, parent_policy.allowed_paths
@@ -253,6 +270,7 @@ class PolicyComposer:
             allow_model_switch=allow_model_switch,
             allowed_paths=allowed_paths,
             escalation_policy=escalation_policy,
+            max_unattended_consequence=max_unattended_consequence,
         )
 
 

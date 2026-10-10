@@ -76,6 +76,14 @@ def _validate_child_policy(
             f"child export_mode={child_policy.export_mode.value!r} is less restrictive "
             f"than parent export_mode={parent_policy.export_mode.value!r}"
         )
+    # consequence ceiling: child cannot run unattended at a higher
+    # irreversibility class than the parent (lower is stricter).
+    if child_policy.max_unattended_consequence > parent_policy.max_unattended_consequence:
+        raise SpawnValidationError(
+            f"child max_unattended_consequence="
+            f"{child_policy.max_unattended_consequence.name!r} exceeds parent "
+            f"{parent_policy.max_unattended_consequence.name!r}"
+        )
     # child depth < parent remaining depth
     if child_depth > parent_policy.max_child_depth:
         raise SpawnValidationError(
