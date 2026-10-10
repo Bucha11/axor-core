@@ -25,7 +25,7 @@ from axor_core.kernel.decidability import (
     classify,
     is_decidable,
 )
-from axor_core.policy.value_policy import ValuePredicate
+from axor_core.policy.value_policy import ValuePredicate, closed_allowlist_args
 
 # Each value-predicate kind implies the projection it consumes. Both are in the
 # DECIDABLE class by construction; this map is what `validate_value_policies`
@@ -34,6 +34,13 @@ from axor_core.policy.value_policy import ValuePredicate
 _PREDICATE_PROJECTION: dict[str, tuple[CodomainKind, ConsumptionMode]] = {
     "numeric_range": (CodomainKind.BOUNDED_NUMERIC, ConsumptionMode.NUMERIC),
     "enum": (CodomainKind.ENUM, ConsumptionMode.CASE_SPLIT),
+    # Relational kinds. A tuple of enum-valued args is still a finite enum
+    # consumed as a case-split — the codomain is the declared tuple set.
+    "tuple_enum": (CodomainKind.ENUM, ConsumptionMode.CASE_SPLIT),
+    # keyed_range consumes TWO projections: a case-split on the key, then a
+    # bounded-numeric comparison inside the selected branch. Both are in the
+    # decidable set, so the pair is decidable; the entry names the outer one.
+    "keyed_range": (CodomainKind.ENUM, ConsumptionMode.CASE_SPLIT),
 }
 
 
@@ -100,11 +107,13 @@ def validate_egress_allowlists(
         # Require a NON-EMPTY enum: an enum with an empty allowlist denies every
         # value, so it would satisfy a presence-only check while permanently
         # blocking the sink — structure without substance is not an allowlist.
-        if not any(p.kind == "enum" and len(p.allowed) > 0 for p in preds):
+        if not closed_allowlist_args(preds):
             errors.append(
-                f"egress sink {sink!r} has no allowlist: STRICT mode requires an "
-                f"enum value_policy with at least one allowed destination (the sound, "
-                f"paraphrase-proof control); content-derivation alone is not enough"
+                f"egress sink {sink!r} has no allowlist: STRICT mode requires a "
+                f"value_policy with a closed destination codomain — enum, "
+                f"tuple_enum or keyed_range with at least one allowed destination "
+                f"(the sound, paraphrase-proof control); content-derivation alone "
+                f"is not enough"
             )
     return errors
 
@@ -168,9 +177,7 @@ def validate_driving_arg_allowlists(
         drivers = frozenset(da.get(sink, ()) or ())
         if not drivers:
             continue  # whole-blob: presence is validated by validate_egress_allowlists
-        enum_args = {
-            p.arg for p in pol.get(sink, ()) if p.kind == "enum" and len(p.allowed) > 0
-        }
+        enum_args = closed_allowlist_args(pol.get(sink, ()))
         if not (enum_args & drivers):
             errors.append(
                 f"egress sink {sink!r} narrows its taint check to driving args "

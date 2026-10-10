@@ -27,7 +27,7 @@ from axor_core.contracts.canonical import ConsequenceClass
 from axor_core.contracts.taint import Carrier
 from axor_core.policy.consequence import consequence_class, is_consequence_classified
 from axor_core.policy.sinks import is_imperative_sink
-from axor_core.policy.value_policy import check_value_policies
+from axor_core.policy.value_policy import check_value_policies, closed_allowlist_args
 from axor_core.security.carrier import classify_carrier
 from axor_core.taint.causal_root import CausalRoot
 
@@ -219,13 +219,11 @@ def integrity_superseded_by_decidable(
     if not drivers:
         return False
     preds = (value_policies or {}).get(tool_name) or []
-    # Only `enum` (closed trusted codomain) is admissible; `numeric_range` (open
-    # codomain the attacker can satisfy) is deliberately excluded — see docstring.
-    enum_covered = {
-        getattr(p, "arg", None)
-        for p in preds
-        if getattr(p, "kind", None) == "enum"
-    }
+    # Only a CLOSED, operator-declared codomain is admissible; `numeric_range`
+    # (open codomain the attacker can satisfy) is deliberately excluded, and a
+    # `keyed_range` counts for its key only. One classifier for all three callers:
+    # axor_core.policy.value_policy.closed_allowlist_args.
+    enum_covered = closed_allowlist_args(preds)
     return all(d in args and d in enum_covered for d in drivers)
 
 

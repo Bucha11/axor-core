@@ -416,6 +416,31 @@ its tools. The operator declares their roles so the kernel can govern them:
   of egress / outside-workspace write / exec, so the integrity gate never looked
   at them in any mode.
 - **`positional_sinks`**, **`value_policies`** — as in §3 and the gate sequence.
+  Predicates come in two shapes. A **per-argument** one (`enum`, `numeric_range`)
+  constrains one field; a set of them constrains the *product* of their codomains,
+  so an allowlisted recipient and an in-range amount are admitted in **any**
+  pairing. A **relational** one (`tuple_enum`, `keyed_range`) constrains the tuple
+  jointly, making the pairing itself policy. Both stay in the decidable fraction
+  (a tuple enum is a case-split over a finite set of tuples; a keyed range is a
+  case-split on the key followed by a numeric comparison), so
+  `validate_value_policies` accepts them and
+  `integrity_superseded_by_decidable` honours a relational allowlist — for a
+  `keyed_range`, on its **key** only, since the value side is an open interval the
+  attacker can satisfy. One classifier answers "is this codomain closed?" for all
+  three callers: `axor_core/policy/value_policy.py::closed_allowlist_args`. A
+  relational predicate fails **closed** on a partially-present tuple: with part of
+  the tuple missing the relation is unverifiable, and passing it would admit
+  exactly the pairing the predicate exists to forbid.
+- **Effect signature and coverage** (`axor_core/policy/effect.py`). A decidable
+  projection makes each check sound; it does not make the policy a *description of
+  the effect*. `effect_signature` names the arguments that decide what happens
+  (the sink's `driving_args`, falling back to every present argument),
+  `effect_digest` hashes them into the equality key an authorisation is bound to
+  (§9), and `validate_effect_coverage` reports what the registered predicates do
+  not pin: a signature argument no predicate constrains, and — under
+  `require_relational` — a multi-argument signature constrained only per argument,
+  i.e. the product-versus-relation gap above. It is advisory: it reports, and never
+  relaxes a gate.
 - **`driving_args`** — per sink, the argument(s) the integrity taint check keys on.
   By default the *whole* argument blob drives the decision, so untrusted *content*
   (a summarised document) sent to a *trusted* recipient is over-blocked. Declare the
