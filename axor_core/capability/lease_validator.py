@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hmac
 import time
 import uuid
 from typing import Sequence
@@ -57,22 +56,34 @@ class LeaseValidator:
             return True
         return path_matches_allowlist(path, lease.allowed_paths)
 
-    def check_effect_allowed(self, lease: CapabilityLease, effect_digest: str) -> bool:
-        """For an effect-bound lease, whether it was issued for THIS effect.
+    def delegation_ceiling(self, policy: ExecutionPolicy) -> frozenset[str]:
+        """The tools a grant may ever cover: what is available NOW, plus what the
+        operator declared grantable.
 
-        An unbound (class-scoped) lease admits any call within its other bounds —
-        the pre-existing semantics. A bound one is an extra conjunct, never a
-        widening: the digest must match exactly. Compared with
-        ``hmac.compare_digest`` out of habit rather than need (both sides are local
-        values, but a digest comparison is the one place where habit is free)."""
-        if not lease.is_valid:
-            return False
-        if not lease.bound_effect:
-            return True
-        return bool(effect_digest) and hmac.compare_digest(
-            lease.bound_effect, effect_digest
+        Three sets, deliberately distinct (see
+        [governance-model](../../docs/governance-model.md) §2, "What an approval is
+        authority *over*"):
+
+          * ``A₀`` — available now: ``CapabilityResolver.resolve(policy)``. A tool
+            in ``grantable_tools`` is NOT in it, so it cannot be called before a
+            grant exists;
+          * ``G``  — grantable: ``escalation_policy.grantable_tools``, the
+            operator's delegation ceiling. Parent and deployment composition
+            narrow it like every other authority field, so it is bounded by the
+            trusted ceiling ``B``;
+          * ``A_t`` — in force now: ``A₀`` plus whatever active grants add, which
+            is what a lease may cover and why the check below is against
+            ``A₀ ∪ G`` rather than ``A₀``.
+
+        Keeping ``G`` out of ``resolve`` is the point: adding it there would make
+        every potentially-grantable tool immediately callable.
+        """
+        available = _resolver.resolve(policy).allowed_tools
+        grantable = frozenset(
+            getattr(getattr(policy, "escalation_policy", None), "grantable_tools", ())
+            or ()
         )
-
+        return frozenset(available) | grantable
 
     def validate_against_policy_ceiling(
         self,
@@ -82,12 +93,18 @@ class LeaseValidator:
         """
         Validate that the lease does not exceed the parent policy ceiling.
 
+        The tool ceiling is the DELEGATION ceiling (``A₀ ∪ G``), not the current
+        capability set: a lease exists precisely to put a grantable tool in force
+        for a bounded while. Every other bound (paths, TTL, uses) is unchanged.
+
         Returns None if valid, or an error reason string if it would exceed the ceiling.
         """
-        parent_caps = _resolver.resolve(parent_policy)
-        excess = lease.allowed_tools - parent_caps.allowed_tools
+        excess = lease.allowed_tools - self.delegation_ceiling(parent_policy)
         if excess:
-            return f"lease grants tools outside parent ceiling: {excess}"
+            return (
+                f"lease grants tools outside the delegation ceiling "
+                f"(available ∪ grantable): {excess}"
+            )
         # Path ceiling: when the parent policy restricts paths, the lease may not
         # grant access to paths outside that ceiling.
         parent_paths = getattr(parent_policy, "allowed_paths", ()) or ()
@@ -110,7 +127,6 @@ class LeaseValidator:
         max_uses: int = 10,
         reason_code: str = "",
         audit_id: str = "",
-        bound_effect: str = "",
     ) -> tuple[CapabilityLease, str | None]:
         """
         Create a new CapabilityLease bounded by the parent policy ceiling.
@@ -135,7 +151,6 @@ class LeaseValidator:
             max_uses=max_uses,
             used_count=0,
             non_transitive=True,
-            bound_effect=bound_effect,
             parent_policy_ceiling_ref=getattr(parent_policy, "name", ""),
             reason_code=reason_code,
             audit_id=audit_id,

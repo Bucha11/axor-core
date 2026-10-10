@@ -11,7 +11,7 @@ else:
     lease, behind the policy's flood guard and human-approval hook;
   • :meth:`covers` — the consequence gate's "is there a governance gate for this
     tool?" query;
-  • :meth:`grant_for_effect` — the just-in-time path: one approved call becomes a
+  • :meth:`grant_for_call` — the just-in-time path: one approved call becomes a
     one-shot grant bound to that call's effect digest.
 
 Scope is explicit on every grant (:class:`~axor_core.contracts.approval.AuthorityScope`).
@@ -44,7 +44,7 @@ from axor_core.contracts.lease import LeaseAuthorityType
 from axor_core.contracts.policy import PolicyDecision, PolicyDecisionKind
 from axor_core.contracts.result import ExecutorEvent
 from axor_core.contracts.envelope import ExecutionEnvelope
-from axor_core.policy.effect import effect_digest, effect_signature
+from axor_core.policy.effect import call_digest, effect_signature
 from axor_core.contracts.trace import (
     EscalationDeniedEvent,
     EscalationGrantedEvent,
@@ -62,7 +62,7 @@ def adapt_escalation_callback(cb):
 
     The legacy shape cannot express an effect-scoped question (it has nowhere to
     put the arguments), so an adapted callback is only ever asked CLASS-scoped
-    questions — :meth:`EscalationManager.grant_for_effect` refuses to put an
+    questions — :meth:`EscalationManager.grant_for_call` refuses to put an
     effect request to one rather than silently downgrading it to a class answer.
     """
     if cb is None:
@@ -106,12 +106,24 @@ def _safe_int(value: object, default: int) -> int:
 
 @dataclass
 class _GrantedEscalation:
+    """CLASS-scoped authority: the tool, within bounds, for N ops."""
     tool: str
     paths: list[str]  # empty = no path restriction
     ops_remaining: int
-    # Empty = CLASS scope (any call of the tool within bounds). Set = EFFECT
-    # scope: only a call whose effect digest equals this.
-    effect_digest: str = ""
+
+
+@dataclass
+class _CallEvidence:
+    """CALL-scoped authority: one approved call, not yet spent.
+
+    Keyed by call digest rather than by tool, so two different calls of the same
+    tool cannot overwrite each other's authorisation, and ``claimed`` makes
+    spending it single-use: the claim and the decision to execute happen with no
+    await in between, so two concurrent calls cannot both spend one approval.
+    """
+    tool: str
+    digest: str
+    claimed: bool = False
 
 
 @dataclass
@@ -150,40 +162,85 @@ class EscalationManager:
             k: tuple(v) for k, v in (driving_args or {}).items()
         }
         self._granted_escalations: dict[str, _GrantedEscalation] = {}
+        # CALL authority, keyed by call digest: one approved call each, spent once.
+        self._call_evidence: dict[str, _CallEvidence] = {}
+        # Digests with an approval question outstanding — a second concurrent call
+        # for the same digest is refused rather than asked a second time.
+        self._inflight_calls: set[str] = set()
         self._capability_leases: dict[str, "CapabilityLease"] = {}
         self._lease_validator = LeaseValidator()
         self._escalation_count = 0
         self._flood_guard = EscalationFloodGuard()
         self._escalation_callback = adapt_escalation_callback(escalation_callback)
 
-    def covers(self, tool_name: str, tool_args: dict | None = None) -> bool:
-        """True if an active grant or lease covers this call — the governance gate
+    def covers(
+        self, tool_name: str, tool_args: dict | None = None, *, scope: str = ""
+    ) -> bool:
+        """True if an active authorisation covers this call — the governance gate
         the consequence axis accepts for an over-ceiling sink.
 
-        A CLASS-scoped grant/lease covers every call of the tool. An EFFECT-bound
-        one covers only the call it was issued for, so the digest must match;
-        without ``tool_args`` (no call in hand) only class-scoped authority counts.
+        CLASS authority (a grant or lease) covers every call of the tool. CALL
+        authority covers only the call it was issued for and only while unspent,
+        so the digest must match; without ``tool_args`` (no call in hand) only
+        class authority counts.
         """
-        grant = self._granted_escalations.get(tool_name)
-        lease = self._capability_leases.get(tool_name)
-        candidates = [c for c in (grant, lease) if c is not None]
-        if not candidates:
-            return False
-        bindings = [
-            getattr(c, "effect_digest", "") or getattr(c, "bound_effect", "")
-            for c in candidates
-        ]
-        if any(b == "" for b in bindings):
-            return True  # at least one class-scoped authority
+        if (
+            tool_name in self._granted_escalations
+            or tool_name in self._capability_leases
+        ):
+            return True
         if tool_args is None:
             return False
-        digest = effect_digest(tool_name, tool_args)
-        return any(b == digest for b in bindings)
+        ev = self._call_evidence.get(
+            call_digest(tool_name, tool_args, scope=scope)
+        )
+        return ev is not None and ev.tool == tool_name and not ev.claimed
+
+    def claim_call(
+        self, tool_name: str, tool_args: dict, *, scope: str = ""
+    ) -> bool | None:
+        """Spend the CALL authorisation for this call, atomically.
+
+        Returns ``None`` when no call authorisation is involved (nothing to
+        spend), ``True`` when this caller got it, and ``False`` when evidence for
+        this call exists but is already spent — a second concurrent claimant, which
+        must be denied rather than executed.
+
+        There is no await between the check and the mutation, so this is atomic
+        with respect to the loop: exactly one caller can win.
+        """
+        ev = self._call_evidence.get(
+            call_digest(tool_name, tool_args, scope=scope)
+        )
+        if ev is None or ev.tool != tool_name:
+            return None
+        if ev.claimed:
+            return False
+        ev.claimed = True
+        # Kept, not deleted: a second claimant must be able to learn that the
+        # authorisation was already spent (and a repeat of the same call then asks
+        # a fresh question, which overwrites this record).
+        return True
+
+    def revoke_call(
+        self, tool_name: str, tool_args: dict, *, scope: str = ""
+    ) -> None:
+        """Discard an unspent CALL authorisation.
+
+        An approval that cannot be used *now* is not banked: if the state-dependent
+        re-check after the answer denies the call, the evidence is dropped rather
+        than left for a later attempt under conditions nobody approved.
+        """
+        digest = call_digest(tool_name, tool_args, scope=scope)
+        ev = self._call_evidence.get(digest)
+        if ev is not None and not ev.claimed:
+            del self._call_evidence[digest]
 
     def evaluate(
-        self, tool_name: str, tool_args: dict
+        self, tool_name: str, tool_args: dict, *, scope: str = ""
     ) -> tuple[PolicyDecision | None, "_PendingConsumption | None"]:
-        """The lease/grant branch of policy resolution — decided WITHOUT consuming.
+        """The lease/grant/call-authority branch of policy resolution — decided
+        WITHOUT consuming.
 
         Returns ``(decision, pending)``:
           • ``decision`` is a DENY on an expired/exhausted lease or a path violation
@@ -212,23 +269,9 @@ class EscalationManager:
                     kind=PolicyDecisionKind.DENY,
                     reason=f"lease for '{tool_name}' restricts to paths {lease.allowed_paths!r}",
                 ), None
-            # An effect-bound lease is evidence for ONE call. A different call of
-            # the same tool is simply not covered by it — it falls through to the
-            # ordinary policy rather than being denied, because a bound
-            # authorisation is additive evidence for its own effect, never a new
-            # restriction on the tool.
-            if lease.bound_effect and not self._lease_validator.check_effect_allowed(
-                lease, effect_digest(tool_name, tool_args)
-            ):
-                lease = None
-            else:
-                pending_lease = lease  # consume on commit, not now
+            pending_lease = lease  # consume on commit, not now
 
         grant = self._granted_escalations.get(tool_name)
-        if grant is not None and grant.effect_digest and (
-            grant.effect_digest != effect_digest(tool_name, tool_args)
-        ):
-            grant = None  # bound to another effect — not evidence for this call
         if grant is not None:
             if grant.paths and not lease:
                 tool_path = extract_path_arg(tool_args)
@@ -253,6 +296,20 @@ class EscalationManager:
                 manager=self, lease=pending_lease, grant=None, grant_tool=None
             )
 
+        # CALL authority: an unspent approval for exactly this call. It is what
+        # lets a tool in `grantable_tools` but NOT in the current capability set be
+        # reached at all — and only for the one call it was issued for. It is NOT
+        # consumed here: the spend happens at :meth:`claim_call`, atomically with
+        # the decision to execute, after the state-dependent re-check.
+        ev = self._call_evidence.get(
+            call_digest(tool_name, tool_args, scope=scope)
+        )
+        if ev is not None and ev.tool == tool_name and not ev.claimed:
+            return PolicyDecision(
+                kind=PolicyDecisionKind.APPROVE,
+                reason="approved via call authorisation (one use, bound to this call)",
+            ), None
+
         return None, None
 
     async def grant_from_intent(
@@ -273,10 +330,14 @@ class EscalationManager:
         # about a concrete call instead of a tool-wide class, and nothing else can
         # be spent on the grant. Omitted (the original shape) → CLASS scope.
         intended = args.get("args")
-        effect_bound = isinstance(intended, dict)
-        digest = effect_digest(tool, intended) if effect_bound else ""
-        scope = AuthorityScope.EFFECT if effect_bound else AuthorityScope.CLASS
-        max_ops = 1 if effect_bound else min(
+        call_bound = isinstance(intended, dict)
+        # The digest binds the sink, the authority scope (this node) and EVERY
+        # argument of the named call.
+        digest = (
+            call_digest(tool, intended, scope=envelope.node_id) if call_bound else ""
+        )
+        scope = AuthorityScope.CALL if call_bound else AuthorityScope.CLASS
+        max_ops = 1 if call_bound else min(
             _safe_int(args.get("max_ops", 10), default=10),
             envelope.policy.escalation_policy.max_ops_per_grant,
         )
@@ -334,11 +395,11 @@ class EscalationManager:
                 paths=tuple(paths),
                 max_ops=max_ops,
                 reason=reason,
-                args=intended if effect_bound else {},
-                effect_digest=digest,
+                args=intended if call_bound else {},
+                call_digest=digest,
                 effect_signature=(
                     effect_signature(tool, intended, self._driving_args)
-                    if effect_bound else ()
+                    if call_bound else ()
                 ),
             )
             try:
@@ -368,18 +429,23 @@ class EscalationManager:
             ttl_seconds=300.0,
             max_uses=max_ops,
             reason_code=reason,
-            bound_effect=digest,
         )
         if lease_err is not None:
             return _deny(f"escalation rejected: lease creation failed ({lease_err})")
 
-        self._capability_leases[tool] = lease
-        self._granted_escalations[tool] = _GrantedEscalation(
-            tool=tool,
-            paths=paths,
-            ops_remaining=max_ops,
-            effect_digest=digest,
-        )
+        if call_bound:
+            # CALL authority: one approved call, spent once, keyed by its digest.
+            # The lease above was created only to validate the ceiling (a lease
+            # stored for a one-shot authority would, once exhausted, deny the NEXT
+            # call of the tool instead of letting it be asked about afresh).
+            self._call_evidence[digest] = _CallEvidence(tool=tool, digest=digest)
+        else:
+            self._capability_leases[tool] = lease
+            self._granted_escalations[tool] = _GrantedEscalation(
+                tool=tool,
+                paths=paths,
+                ops_remaining=max_ops,
+            )
         self._escalation_count += 1
         self._flood_guard.record_approval()
 
@@ -394,7 +460,7 @@ class EscalationManager:
                 reason=reason,
                 auto_approved=auto_approved,
                 scope=scope.value,
-                effect_digest=digest,
+                call_digest=digest,
             )
         )
         return {
@@ -403,10 +469,10 @@ class EscalationManager:
             "max_ops": max_ops,
             "paths": paths,
             "scope": scope.value,
-            "effect_digest": digest,
+            "call_digest": digest,
         }
 
-    async def grant_for_effect(
+    async def grant_for_call(
         self,
         *,
         tool: str,
@@ -416,6 +482,7 @@ class EscalationManager:
         consequence: str,
         denial_reason: str,
         trace_events: list,
+        scope: str = "",
     ) -> str | None:
         """Just-in-time, effect-bound approval for ONE call.
 
@@ -449,26 +516,26 @@ class EscalationManager:
             )
             return reason
 
-        if not ep.effect_approval:
+        if not ep.call_approval:
             return denial_reason  # feature off: the consequence denial stands as-is
         if not ep.allow_escalation:
-            return _deny(f"{denial_reason} (effect approval: escalation not allowed by policy)")
+            return _deny(f"{denial_reason} (call approval: escalation not allowed by policy)")
         if tool not in ep.grantable_tools:
-            return _deny(f"{denial_reason} (effect approval: '{tool}' is not in grantable_tools)")
+            return _deny(f"{denial_reason} (call approval: '{tool}' is not in grantable_tools)")
         if self._escalation_count >= ep.max_escalations:
             return _deny(
-                f"{denial_reason} (effect approval: max escalations reached "
+                f"{denial_reason} (call approval: max escalations reached "
                 f"({ep.max_escalations}))"
             )
         if self._escalation_callback is None:
-            return _deny(f"{denial_reason} (effect approval: no approval callback configured)")
+            return _deny(f"{denial_reason} (call approval: no approval callback configured)")
         if getattr(self._escalation_callback, "__axor_legacy_callback__", False):
             # A legacy 4-arg callback has nowhere to receive the call's arguments,
             # so it cannot answer "did the principal order THIS". Downgrading the
             # question to a class-scoped one would take a tool-wide answer as
             # authority for this effect — refuse instead.
             return _deny(
-                f"{denial_reason} (effect approval: the configured callback uses the "
+                f"{denial_reason} (call approval: the configured callback uses the "
                 f"legacy signature and cannot be asked about a specific call)"
             )
 
@@ -480,35 +547,50 @@ class EscalationManager:
             node_id=envelope.node_id,
         )
         if flood_denial is not None:
-            return _deny(f"{denial_reason} (effect approval: {flood_denial})")
+            return _deny(f"{denial_reason} (call approval: {flood_denial})")
 
-        digest = effect_digest(tool, tool_args)
+        digest = call_digest(tool, tool_args, scope=scope)
+        existing = self._call_evidence.get(digest)
+        if existing is not None and not existing.claimed:
+            return None  # already authorised and unspent — ask nobody twice
+        if digest in self._inflight_calls:
+            # A concurrent call with the identical digest is already being asked
+            # about. Asking again would put the same question to the approver
+            # twice and could mint two authorisations for one call.
+            return _deny(
+                f"{denial_reason} (call approval: an approval for this exact call "
+                f"is already outstanding)"
+            )
         request = ApprovalRequest(
             tool_use_id=tool_use_id,
             tool=tool,
-            scope=AuthorityScope.EFFECT,
+            scope=AuthorityScope.CALL,
             max_ops=1,
             reason=denial_reason,
             args=tool_args,
-            effect_digest=digest,
+            call_digest=digest,
             effect_signature=effect_signature(tool, tool_args, self._driving_args),
             consequence=consequence,
         )
+        self._inflight_calls.add(digest)
         try:
             approved = await self._escalation_callback(request)
         except Exception:
             _log.exception(
-                "effect approval callback raised for tool %r — denying", tool
+                "call approval callback raised for tool %r — denying", tool
             )
-            return _deny(f"{denial_reason} (effect approval: approval callback failed)")
+            return _deny(f"{denial_reason} (call approval: approval callback failed)")
+        finally:
+            self._inflight_calls.discard(digest)
         if not approved:
-            return _deny(f"{denial_reason} (effect approval: not approved)")
+            return _deny(f"{denial_reason} (call approval: not approved)")
 
-        # Validate against the policy ceiling the same way a requested escalation
-        # does — then DISCARD the lease and keep only the grant. A one-shot
-        # authority consumed in this same call needs no TTL or use counter, and an
-        # exhausted lease left in the table would deny the NEXT call of the tool
-        # ("lease expired or exhausted") instead of asking about it afresh.
+        # Validate against the delegation ceiling the same way a requested
+        # escalation does — then DISCARD the lease and keep only the call evidence.
+        # A one-shot authority consumed in this same call needs no TTL or use
+        # counter, and an exhausted lease left in the table would deny the NEXT
+        # call of the tool ("lease expired or exhausted") instead of letting it be
+        # asked about afresh.
         _lease, lease_err = self._lease_validator.create_lease(
             granted_by="operator",
             authority_type=LeaseAuthorityType.HUMAN_OPERATOR,
@@ -517,18 +599,15 @@ class EscalationManager:
             allowed_paths=(),
             ttl_seconds=300.0,
             max_uses=1,
-            reason_code=f"effect_approval:{consequence}",
-            bound_effect=digest,
+            reason_code=f"call_approval:{consequence}",
         )
         if lease_err is not None:
             return _deny(
-                f"{denial_reason} (effect approval: outside the policy ceiling "
+                f"{denial_reason} (call approval: outside the policy ceiling "
                 f"({lease_err}))"
             )
 
-        self._granted_escalations[tool] = _GrantedEscalation(
-            tool=tool, paths=[], ops_remaining=1, effect_digest=digest
-        )
+        self._call_evidence[digest] = _CallEvidence(tool=tool, digest=digest)
         self._escalation_count += 1
         self._flood_guard.record_approval()
         trace_events.append(
@@ -539,10 +618,10 @@ class EscalationManager:
                 tool=tool,
                 paths=(),
                 max_ops=1,
-                reason=f"effect_approval:{consequence}",
+                reason=f"call_approval:{consequence}",
                 auto_approved=False,
-                scope=AuthorityScope.EFFECT.value,
-                effect_digest=digest,
+                scope=AuthorityScope.CALL.value,
+                call_digest=digest,
             )
         )
         return None

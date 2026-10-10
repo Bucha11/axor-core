@@ -1,31 +1,33 @@
-"""Effect signature and effect digest — which arguments make the effect WHAT IT IS.
+"""Two separate mechanisms, deliberately not one.
 
-A value predicate constrains an argument. An *effect* is the tuple of arguments
-that decides what actually happens: a transfer is not "some recipient" plus "some
-amount", it is this recipient receiving this amount. Two things in the kernel need
-that tuple named rather than implied:
+**The call digest** (:func:`call_digest`) answers *"is this the call that was
+authorised?"* It covers the sink, the authority scope it was issued in, and
+**every** argument of the call — not the declared signature below, so a
+mis-declared declaration cannot widen what an authorisation covers. It is
+emphatically a binding to one *call representation*, not to an effect: the same
+call made against changed external state can produce a different effect, which is
+why the kernel re-checks the state-dependent gates after an approval and consumes
+the authorisation atomically with execution (see
+:meth:`axor_core.node.escalation.EscalationManager.grant_for_call`). The digest is
+never an input to a gate — only an equality key between an authorisation and the
+call it was issued for.
 
-  * **Binding an approval to an effect.** A grant keyed on the sink (or on the
-    projection hash) covers a *class*: the canonicalizer deliberately strips raw
-    strings, so two transfers to different recipients share a projection and a
-    class-scoped approval would authorise either. Binding needs a digest over the
-    values that define the effect, so an approval of one call cannot be spent on
-    another (see :mod:`axor_core.capability.approvals`).
-  * **Saying how precisely a policy describes an effect.** An ``enum`` of
-    recipients and a range of amounts constrain the PRODUCT
-    ``R × [lo, hi]`` — not the relation between them. A policy can be fully
-    decidable and still not pin the effect; :func:`validate_effect_coverage`
-    reports that gap instead of leaving it to be discovered.
+**The effect signature** (:func:`effect_signature`, :func:`validate_effect_coverage`)
+answers a different question: *which parameters determine the effect this sink
+produces, and how completely does the policy constrain them?* An ``enum`` of
+recipients and a range of amounts constrain the PRODUCT ``R × [lo, hi]`` — not the
+relation between them. A policy can be fully decidable and still not pin the
+effect; the coverage check reports that instead of leaving it to be discovered.
+The signature is reported to an approver (as the operator's statement of what
+matters for this sink) and used for nothing else.
 
 The signature is not a new operator knob: it is ``driving_args``, the per-sink
 declaration the integrity and carrier gates already key on
-([governance-model](../../docs/governance-model.md) §12). Undeclared, the
-signature falls back to *every* argument present in the call — the fail-closed
-direction, since over-binding only narrows what an approval covers.
+([governance-model](../../docs/governance-model.md) §12). Undeclared, it falls
+back to every argument present in the call.
 
-Nothing here reads provenance or content semantics: the digest is a hash of
-values, not an interpretation of them, and it is never an input to a gate — only
-an equality key between an authorisation and the call it was issued for.
+Nothing here reads provenance or content semantics: a digest is a hash of values,
+not an interpretation of them.
 """
 
 from __future__ import annotations
@@ -76,22 +78,39 @@ def _canonical(value: object) -> object:
     return ["repr", repr(value)]
 
 
-def effect_digest(
+def call_digest(
     tool: str,
     args: Mapping[str, object] | None,
+    *,
+    scope: str = "",
     driving_args: Mapping[str, Iterable[str]] | None = None,
 ) -> str:
-    """A deterministic digest of (sink, signature, the signature's values).
+    """A deterministic digest of (sink, authority scope, every argument).
 
-    Equality of digests means "the same effect was authorised"; nothing else is
-    inferred from it. The signature itself is hashed too, so changing a sink's
-    ``driving_args`` invalidates authorisations issued under the old declaration
-    rather than silently widening them.
+    Equality of digests means "this is the call that was authorised" — nothing
+    more is inferred from it, and in particular not "the same effect will
+    happen": external state moves, so the authorisation's *currency* is a
+    separate obligation (re-check + atomic consumption), not something a hash can
+    carry.
+
+    ``scope`` binds the authorisation to the context it was issued in (the
+    session / node), so evidence cannot travel to another session even if the same
+    call is made there. Callers pass the session or node identity; an empty scope
+    is a process-local authorisation and is only correct where no other scope can
+    reach the grant table.
+
+    Every argument is covered, including ones outside the declared
+    ``driving_args``: over-binding only narrows what an authorisation covers, and
+    it removes any dependence on the declaration being right. ``driving_args`` is
+    accepted only for the deliberately NARROWER digest used in tests and tooling
+    that want the signature-scoped key; it is not what authorisations are bound
+    with.
     """
     names = effect_signature(tool, args, driving_args)
     a = args or {}
     payload = {
         "tool": tool,
+        "scope": scope,
         "signature": list(names),
         "values": {n: _canonical(a[n]) if n in a else _ABSENT for n in names},
     }

@@ -203,9 +203,9 @@ class EscalationGrantedEvent(TraceEvent):
     reason: str = ""
     auto_approved: bool = True
     # "class" (the tool within bounds, max_ops uses) or "effect" (one call, bound
-    # to effect_digest). See axor_core.contracts.approval.AuthorityScope.
+    # to call_digest). See axor_core.contracts.approval.AuthorityScope.
     scope: str = "class"
-    effect_digest: str = ""
+    call_digest: str = ""
 
 
 # ── Adapter observability events ───────────────────────────────────────────────

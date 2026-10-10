@@ -41,11 +41,6 @@ class CapabilityLease:
     max_uses: int
     used_count: int = field(default=0)
     non_transitive: bool = True
-    # When set, this lease authorises ONE effect: a call whose effect digest
-    # (axor_core.policy.effect.effect_digest) equals this value. Empty means the
-    # lease is class-scoped — any call of its allowed_tools within its other
-    # bounds. A bound lease never widens: the digest is an extra conjunct.
-    bound_effect: str = ""
     parent_policy_ceiling_ref: str = ""
     reason_code: str = ""
     audit_id: str = ""

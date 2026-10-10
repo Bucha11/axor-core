@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import logging
+import copy
+import dataclasses
 import traceback
 from typing import TYPE_CHECKING, Any, AsyncIterator, Awaitable, Callable
 
@@ -702,7 +704,7 @@ class IntentLoop:
         # off, the denial stands here exactly as before.
         deferred_consequence: str | None = None
         if consequence_denial is not None:
-            if envelope.policy.escalation_policy.effect_approval:
+            if envelope.policy.escalation_policy.call_approval:
                 deferred_consequence = consequence_denial
             else:
                 self._record_denial(intent, consequence_denial, envelope, "consequence_gate")
@@ -890,15 +892,19 @@ class IntentLoop:
                     result=denial_resp.to_tool_result(),
                 )
 
+        # The exact argument set that will execute, frozen here. Everything from
+        # this point — the approval question, the digest it is bound to, the
+        # re-check and the handler call — uses THIS object, so what was approved
+        # and what runs cannot drift apart (including under a TRANSFORM decision).
+        exec_args = copy.deepcopy(dict(decision.transformed_payload or tool_args))
+
         # The consequence axis was the only gate left standing: put THIS call to
-        # the approver (effect-scoped) now that everything else has admitted it.
-        # An approval mints a one-shot grant bound to this call's effect digest and
-        # is burned here, so it cannot be spent on a later call — not even an
-        # identical one, which gets its own question.
+        # the approver now that everything else has admitted it. An approval is
+        # one-shot evidence bound to this call's digest.
         if deferred_consequence is not None:
-            effect_reason = await self._escalation.grant_for_effect(
+            call_reason = await self._escalation.grant_for_call(
                 tool=tool_name,
-                tool_args=tool_args,
+                tool_args=exec_args,
                 envelope=envelope,
                 tool_use_id=intent.payload.get("tool_use_id", ""),
                 consequence=(
@@ -906,18 +912,64 @@ class IntentLoop:
                 ) or "",
                 denial_reason=deferred_consequence,
                 trace_events=self._trace_events,
+                scope=envelope.node_id,
             )
-            if effect_reason is not None:
-                self._record_denial(intent, effect_reason, envelope, "consequence_gate")
-                denial_resp = _make_denial_response(effect_reason, "consequence_gate")
+            if call_reason is not None:
+                self._record_denial(intent, call_reason, envelope, "consequence_gate")
+                denial_resp = _make_denial_response(call_reason, "consequence_gate")
                 self._record_degradation_signal(intent, denial_resp, normalized)
                 return ResolvedIntent(
-                    intent=intent, approved=False, reason=effect_reason,
+                    intent=intent, approved=False, reason=call_reason,
                     result=denial_resp.to_tool_result(),
                 )
-            _jit_decision, jit_pending = self._escalation.evaluate(tool_name, tool_args)
-            if jit_pending is not None:
-                jit_pending.commit()
+            # An approval is not a timestamp-free licence: state moved while the
+            # approver was deciding (a concurrent read can have armed the
+            # confidentiality floor, degradation can have tightened, the budget can
+            # have run out, the run can have been cancelled). Re-check what can
+            # change, and DISCARD the authorisation if it can no longer be used —
+            # an approval that cannot be spent now is not banked for later.
+            stale = self._recheck_volatile_state(
+                tool_name, exec_args, normalized, envelope
+            )
+            if stale is not None:
+                self._escalation.revoke_call(
+                    tool_name, exec_args, scope=envelope.node_id
+                )
+                self._record_denial(intent, stale, envelope, "consequence_gate")
+                denial_resp = _make_denial_response(stale, "consequence_gate")
+                self._record_degradation_signal(intent, denial_resp, normalized)
+                return ResolvedIntent(
+                    intent=intent, approved=False, reason=stale,
+                    result=denial_resp.to_tool_result(),
+                )
+
+        # Is an escalation authority (class grant, lease, or call evidence) what
+        # puts this tool in reach? Asked BEFORE the claim below, because claiming
+        # spends it. This is A_t: the current rights A₀ plus what an active grant
+        # adds — never G, the set of merely grantable tools.
+        escalation_authorised = self._escalation.covers(
+            tool_name, exec_args, scope=envelope.node_id
+        )
+
+        # Spend any call authorisation now, atomically with the decision to
+        # execute: no await separates the claim from the dispatch below, so of two
+        # concurrent calls holding one approval exactly one proceeds. `None` means
+        # no call authorisation is involved (class authority or plain policy).
+        claimed = self._escalation.claim_call(
+            tool_name, exec_args, scope=envelope.node_id
+        )
+        if claimed is False:
+            reason = (
+                f"call authorisation for '{tool_name}' has already been spent "
+                f"(one approval authorises one call)"
+            )
+            self._record_denial(intent, reason, envelope, "consequence_gate")
+            denial_resp = _make_denial_response(reason, "consequence_gate")
+            self._record_degradation_signal(intent, denial_resp, normalized)
+            return ResolvedIntent(
+                intent=intent, approved=False, reason=reason,
+                result=denial_resp.to_tool_result(),
+            )
 
         # Every gate (capability, consequence, value-policy, degradation, ssrf,
         # positional, carrier, taint, adjudicator) has passed: the call is approved
@@ -947,8 +999,9 @@ class IntentLoop:
             )
         )
 
-        # approved or transformed
-        effective_args = decision.transformed_payload or tool_args
+        # approved or transformed — the frozen set, identical to what was
+        # approved and re-checked above.
+        effective_args = exec_args
         effective_intent = Intent(
             kind=IntentKind.TOOL_CALL,
             payload={"tool": tool_name, "args": effective_args},
@@ -956,10 +1009,22 @@ class IntentLoop:
             sequence=self._intent_sequence,
         )
 
-        try:
-            result = await self._executor.execute(
-                effective_intent, envelope.capabilities
+        # The executor re-checks capability independently (complete mediation: the
+        # gates' verdict is not taken on trust). A grant therefore has to be
+        # reflected in the capability set handed to it, or an authorised call to a
+        # grantable-but-not-current tool would be refused at the boundary — which
+        # is what made capability-on-demand unusable. The extension is per-call and
+        # only for the tool the authority names, so A_t ⊆ B still holds: the grant
+        # was validated against the delegation ceiling when it was issued.
+        exec_caps = envelope.capabilities
+        if escalation_authorised and tool_name not in exec_caps.allowed_tools:
+            exec_caps = dataclasses.replace(
+                exec_caps,
+                allowed_tools=frozenset(exec_caps.allowed_tools) | {tool_name},
             )
+
+        try:
+            result = await self._executor.execute(effective_intent, exec_caps)
             # Federation ingress: a tool that delegated to a peer agent returns the
             # result wrapped with the peer's provenance receipt. Decide its trust
             # via the gateway BEFORE it is used or registered. A forged / tampered /
@@ -1074,7 +1139,9 @@ class IntentLoop:
                 ), None
 
         # Lease/grant resolution (authoritative — validates TTL + max_uses + path).
-        escalation_decision, pending = self._escalation.evaluate(tool_name, tool_args)
+        escalation_decision, pending = self._escalation.evaluate(
+            tool_name, tool_args, scope=envelope.node_id
+        )
         if escalation_decision is not None:
             return escalation_decision, pending
 
@@ -1346,6 +1413,82 @@ class IntentLoop:
             )
         )
 
+    def _recheck_volatile_state(
+        self,
+        tool_name: str,
+        tool_args: dict,
+        normalized,
+        envelope: ExecutionEnvelope,
+    ) -> str | None:
+        """Re-run the gates whose inputs are MUTABLE session state. Returns a
+        denial reason, or None if the call is still admissible.
+
+        Needed because an approval is an await: between the question and the
+        answer a concurrent call can read a secret (arming the confidentiality
+        floor), degradation can tighten, the budget can run out, or the run can be
+        cancelled. The structural gates are not re-run — their inputs (the sink,
+        the argument forms, the destination, the policy on this envelope) do not
+        change under an await — and the argument set is frozen by the caller, so
+        what is re-checked here is exactly what can have moved.
+
+        Provenance is re-derived rather than reused: the floor is a fact about the
+        session at the moment of the check, which is the whole point.
+        """
+        if envelope.cancel_token.is_cancelled():
+            return "cancelled while an approval was outstanding"
+
+        if (
+            self._budget_cap_calls is not None
+            and self._budget_spent_calls >= self._budget_cap_calls
+        ):
+            return (
+                f"budget: call cap {self._budget_cap_calls} exhausted while an "
+                f"approval was outstanding ({self._budget_spent_calls} spent)"
+            )
+        if (
+            self._budget_cap_cost is not None
+            and self._budget_spent_cost + self._tool_weight(tool_name)
+            > self._budget_cap_cost
+        ):
+            return (
+                f"budget: cost cap {self._budget_cap_cost} exhausted while an "
+                f"approval was outstanding ({self._budget_spent_cost} spent)"
+            )
+
+        if normalized is None:
+            return None
+
+        driving_root = (
+            derive_driving_root(
+                self._taint_engine, tool_args, self._driving_args.get(tool_name),
+                integrity_sink=tool_name in self._integrity_sinks,
+            )
+            if self._taint_engine is not None
+            else None
+        )
+
+        if self._degradation_engine is not None:
+            denial = self._check_degradation_denial(
+                tool_name, normalized, envelope, driving_root=driving_root
+            )
+            if denial is not None:
+                return f"{denial} (tightened while an approval was outstanding)"
+
+        if self._taint_engine is not None and driving_root is not None:
+            gd = taint_gate(
+                tool_name, normalized, driving_root,
+                self._taint_engine.confidentiality_floor_active(),
+                self._egress_sinks,
+                integrity_superseded=integrity_superseded_by_decidable(
+                    tool_name, tool_args, self._driving_args, self._value_policies
+                ),
+                integrity_sinks=self._integrity_sinks,
+            )
+            if gd is not None:
+                return f"{gd.reason} (armed while an approval was outstanding)"
+
+        return None
+
     def _check_consequence(
         self,
         tool_name: str,
@@ -1368,7 +1511,9 @@ class IntentLoop:
         # escalation grant or capability lease for the tool).
         # An effect-bound grant is a governance gate for ITS call only, so the
         # query carries the arguments.
-        has_gate = self._escalation.covers(tool_name, tool_args)
+        has_gate = self._escalation.covers(
+            tool_name, tool_args, scope=getattr(envelope, "node_id", "")
+        )
         gd = consequence_gate(
             tool_name, operation, ceiling, self._consequence_overrides,
             has_governance_gate=has_gate, strict=self._strict,

@@ -29,12 +29,12 @@ def _intersect_escalation(
         max_escalations=min(policy.max_escalations, ceiling.max_escalations),
         max_ops_per_grant=min(policy.max_ops_per_grant, ceiling.max_ops_per_grant),
         require_human=policy.require_human or ceiling.require_human,
-        # effect_approval WIDENS (it turns a denial into a question), so the meet
+        # call_approval WIDENS (it turns a denial into a question), so the meet
         # is `and` — like allow_escalation. Omitting it would also be SAFE (the
         # field defaults to the strict value, which is why the ceiling sweep does
         # not catch its absence); it is set explicitly so a deployment that opts
         # in on both sides does not silently lose the knob.
-        effect_approval=policy.effect_approval and ceiling.effect_approval,
+        call_approval=policy.call_approval and ceiling.call_approval,
     )
 
 
@@ -399,5 +399,5 @@ def _restrict_escalation(
         max_escalations=min(child.max_escalations, parent.max_escalations),
         max_ops_per_grant=min(child.max_ops_per_grant, parent.max_ops_per_grant),
         require_human=child.require_human or parent.require_human,
-        effect_approval=child.effect_approval and parent.effect_approval,
+        call_approval=child.call_approval and parent.call_approval,
     )

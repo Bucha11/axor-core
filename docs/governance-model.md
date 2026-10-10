@@ -122,51 +122,96 @@ from *other agents* — see §8.
 
 The gate above accepts "a human/operator gate" as authority for an over-ceiling
 sink. That gate has a **scope**
-(`axor_core/contracts/approval.py::AuthorityScope`), and the distinction is the
-difference between an allowlist and an instruction:
+(`axor_core/contracts/approval.py::AuthorityScope`):
 
 - **CLASS** — "grant this tool, under these path roots, for N ops". The original
   shape, and the only one a request made *before* the call exists can produce (an
   `ESCALATE_POLICY` intent naming no arguments). A human answering it authorised a
   **class** of calls: they cannot have authorised *this* transfer, because neither
   the recipient nor the amount was in the question.
-- **EFFECT** — "allow THIS call". The request carries the arguments and an
-  `effect_digest` (`axor_core/policy/effect.py`), and the resulting grant is
-  one-shot and matches only a call with that digest. A different recipient or
-  amount is a different effect and is not covered; a *repeat* of the same call
-  gets its own question.
+- **CALL** — "allow THIS call". The request carries the arguments, and the
+  resulting evidence is bound by `call_digest` (`axor_core/policy/effect.py`) —
+  the sink, the **authority scope** it was issued in, and **every** argument —
+  and is spent once. A different recipient or amount is a different call and is
+  not covered; a *repeat* of the same call gets its own question.
 
 Binding on the projection hash would not do: the canonicalizer strips raw strings
 precisely so the decision cannot read them, so two transfers to different
-recipients share a projection. The digest therefore covers **every** argument of
-the call, not just the declared `driving_args` — so a mis-declared signature
-cannot widen what an approval covers (the declared signature is *reported* to the
-approver, not used for binding).
+recipients share a projection. Nor is the digest over the declared `driving_args`:
+it covers every argument, so a mis-declared signature cannot widen what an
+authorisation covers (the signature is *reported* to the approver as the
+operator's statement of what matters, and used for nothing else).
 
-Two ways to reach EFFECT scope:
+**It is a binding to a call, not to an effect.** The same call against changed
+external state can produce a different effect, so being one-shot is not enough to
+keep an authorisation current. Three further obligations do:
+
+1. **Re-check after the answer.** An approval is an await. While the approver
+   decides, a concurrent read can arm the confidentiality floor, degradation can
+   tighten, the budget can run out, the run can be cancelled. Those gates are
+   re-run on the way back (`IntentLoop._recheck_volatile_state`); the structural
+   gates are not, because their inputs cannot move under an await. An approval
+   that cannot be used **now** is discarded, not banked for later.
+2. **Atomic spend.** The evidence is claimed with no await between the check and
+   the mutation, immediately before dispatch, so of two concurrent calls holding
+   one approval exactly one executes and the other is refused. A second
+   *question* about an identical in-flight call is refused rather than asked
+   twice.
+3. **The approved arguments are the executed arguments.** The set is frozen (deep
+   copied) before the question and is what the handler receives — including under
+   a TRANSFORM decision, so what was shown and what runs cannot drift apart.
+
+**What an approval buys.** A CALL approval is a one-shot ground to pass the
+*consequence* axis for that call, plus — where the authority names a tool that is
+grantable but not currently in force — the capability for that one call. It is
+**not** authority over the other axes: taint, carrier, SSRF, value policies and
+the policy's own ceilings all still have to pass on their own, before the question
+is asked. Standing rules about which argument *combinations* are permissible are a
+policy matter (`tuple_enum` / `keyed_range`, §12), and an approval neither needs
+nor replaces them.
+
+Two ways to reach CALL scope:
 
 1. the agent names the call in its `ESCALATE_POLICY` intent (`args`) — a pure
    narrowing of the existing path, no operator opt-in needed;
-2. `escalation_policy.effect_approval` (opt-in, default off): a call the
-   consequence gate would deny for lack of a gate is put to the approver as an
-   effect-scoped question. It is opt-in because it turns a denial into a
-   *question* — strictly narrower than the class grant the agent could already
-   request, but a posture change nonetheless.
+2. `escalation_policy.call_approval` (opt-in, default off): a call the consequence
+   gate would deny for lack of a gate is put to the approver as a call-scoped
+   question. Opt-in because it turns a denial into a *question* — strictly
+   narrower than the class grant the agent could already request, but a posture
+   change nonetheless.
 
-The question is asked **last**, after every other gate has admitted the call. An
-approver has to render the arguments to answer "did the principal order this", and
-those arguments are untrusted content: asking last means an approver is never
-shown a call that a structural gate would have refused, and an approval can only
-ever satisfy the consequence axis — never substitute for taint, carrier, SSRF or
-capability. Every ceiling that bounds a requested escalation bounds this path too
-(`allow_escalation`, `grantable_tools`, the flood guard, `max_escalations`, the
-policy ceiling), so it reaches no further than an escalation the agent could have
-asked for itself.
+The question is asked **last**. An approver has to render the arguments to answer
+"did the principal order this", and those arguments are untrusted content: asking
+last means an approver is never shown a call a structural gate would have refused.
+Quoting helps a human read them as data; it does not prove they will not act on
+text inside them. **A human approver is a trusted party in the issuing of
+authority** — that is a premise of this mechanism, not something it establishes.
 
 An approver takes one `ApprovalRequest`. The legacy four-argument callback still
 works (adapted, with a `DeprecationWarning`) but has nowhere to receive the
-arguments, so it can only be asked class-scoped questions — an effect-scoped
-request to one is **refused**, never downgraded into a tool-wide answer.
+arguments, so it can only be asked class-scoped questions — a call-scoped request
+to one is **refused**, never downgraded into a tool-wide answer.
+
+### Three tool sets, kept apart
+
+Capability-on-demand only means anything if "callable now" and "may be granted"
+are different sets:
+
+| | What it is | Where it lives |
+|---|---|---|
+| `A₀` | callable now | `CapabilityResolver.resolve(policy)` |
+| `G` | may be granted | `escalation_policy.grantable_tools` |
+| `A_t` | in force now | `A₀` plus what active grants add |
+| `B` | the trusted ceiling | `A₀ ∪ G` after parent/deployment composition |
+
+`G` is deliberately **not** in `resolve`: putting it there would make every
+potentially-grantable tool immediately callable. A grant is validated against the
+delegation ceiling `A₀ ∪ G` (`LeaseValidator.delegation_ceiling`) — not against
+`A₀`, which is what used to make a grant for a grantable tool fail outright — and
+an authorised call is dispatched with `A₀ ∪ {that tool}` so the executor's own
+capability check (complete mediation: the gates' verdict is not taken on trust)
+admits it. The extension is per-call and per-tool, so `A_t ⊆ B` holds throughout,
+and once the authority is spent the tool is out of reach again.
 
 ---
 
@@ -467,9 +512,9 @@ its tools. The operator declares their roles so the kernel can govern them:
   every integrity sink, as for egress sinks. Before this role such calls were none
   of egress / outside-workspace write / exec, so the integrity gate never looked
   at them in any mode.
-- **`escalation_policy.effect_approval`** — opt-in (default off). Lets the
-  consequence gate put an otherwise-denied call to the approver as an
-  effect-scoped question; see "What an approval is authority *over*" in §2.
+- **`escalation_policy.call_approval`** — opt-in (default off). Lets the
+  consequence gate put an otherwise-denied call to the approver as a
+  call-scoped question; see "What an approval is authority *over*" in §2.
 - **`positional_sinks`**, **`value_policies`** — as in §3 and the gate sequence.
   Predicates come in two shapes. A **per-argument** one (`enum`, `numeric_range`)
   constrains one field; a set of them constrains the *product* of their codomains,
@@ -490,7 +535,7 @@ its tools. The operator declares their roles so the kernel can govern them:
   projection makes each check sound; it does not make the policy a *description of
   the effect*. `effect_signature` names the arguments that decide what happens
   (the sink's `driving_args`, falling back to every present argument),
-  `effect_digest` hashes them into the equality key an authorisation is bound to
+  `call_digest` hashes them into the equality key an authorisation is bound to
   (§9), and `validate_effect_coverage` reports what the registered predicates do
   not pin: a signature argument no predicate constrains, and — under
   `require_relational` — a multi-argument signature constrained only per argument,

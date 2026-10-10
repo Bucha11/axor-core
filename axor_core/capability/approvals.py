@@ -15,7 +15,7 @@ The request carries its :class:`~axor_core.contracts.approval.AuthorityScope`:
 * CLASS — "grant this tool, under these path roots, for N ops". The answer is
   authority over a *class* of calls, which is all a request made before the call
   exists can be.
-* EFFECT — "allow THIS call", with its arguments and an ``effect_digest``. The
+* EFFECT — "allow THIS call", with its arguments and an ``call_digest``. The
   resulting grant is one-shot and matches only a call with that digest.
 
 An EFFECT request's ``args`` are raw, attacker-influenceable values: an approver
@@ -108,13 +108,13 @@ class AllowlistEscalationApprover:
         self._unconfined_tools = frozenset(unconfined_tools)
 
     async def __call__(self, request: ApprovalRequest) -> bool:
-        if request.is_effect_scoped:
-            return self._approve_effect(request)
+        if request.is_call_scoped:
+            return self._approve_call(request)
         return self._approve_class(
             request.tool, list(request.paths), request.max_ops
         )
 
-    def _approve_effect(self, request: ApprovalRequest) -> bool:
+    def _approve_call(self, request: ApprovalRequest) -> bool:
         """One concrete call. The path confinement is checked against the call's
         OWN path argument — strictly more precise than a class-scoped grant, where
         only the requested roots are known."""
@@ -148,7 +148,7 @@ class AllowlistEscalationApprover:
                 return False
         log.info(
             "effect approval granted by allowlist: tool %r effect %s (signature %s)",
-            tool, request.effect_digest[:12], list(request.effect_signature),
+            tool, request.call_digest[:12], list(request.effect_signature),
         )
         return True
 
@@ -221,7 +221,7 @@ async def console_escalation_callback(request: ApprovalRequest) -> bool:
         )
         return False
 
-    if request.is_effect_scoped:
+    if request.is_call_scoped:
         # The arguments are untrusted content. They are printed with !r so the
         # human sees them as data (quoted, escaped) rather than as a line of text
         # that could imitate the prompt itself.
@@ -231,7 +231,7 @@ async def console_escalation_callback(request: ApprovalRequest) -> bool:
             f"       tool:   {tool!r}"
             + (f"  (class: {request.consequence})" if request.consequence else "")
             + f"\n       args:   {shown}\n"
-            f"       effect: {request.effect_digest[:16]} (one use only)\n"
+            f"       effect: {request.call_digest[:16]} (one use only)\n"
             f"  [y/N] "
         )
     else:

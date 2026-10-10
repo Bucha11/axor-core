@@ -22,7 +22,7 @@ from axor_core.contracts.result import ExecutorEvent, ExecutorEventKind
 from axor_core.contracts.policy import EscalationPolicy
 from axor_core.contracts.approval import ApprovalRequest, AuthorityScope
 from axor_core.node.escalation import EscalationManager, adapt_escalation_callback
-from axor_core.policy.effect import effect_digest
+from axor_core.policy.effect import call_digest
 
 
 def _class_req(tool: str, paths: list[str], max_ops: int) -> ApprovalRequest:
@@ -33,11 +33,11 @@ def _class_req(tool: str, paths: list[str], max_ops: int) -> ApprovalRequest:
     )
 
 
-def _effect_req(tool: str, args: dict, **kw) -> ApprovalRequest:
+def _call_req(tool: str, args: dict, **kw) -> ApprovalRequest:
     """An EFFECT-scoped question about one concrete call."""
     return ApprovalRequest(
-        tool_use_id="t1", tool=tool, scope=AuthorityScope.EFFECT, max_ops=1,
-        args=args, effect_digest=effect_digest(tool, args), **kw,
+        tool_use_id="t1", tool=tool, scope=AuthorityScope.CALL, max_ops=1,
+        args=args, call_digest=call_digest(tool, args), **kw,
     )
 
 
@@ -292,8 +292,8 @@ async def test_allowlist_approver_denies_out_of_list_escalation(make_envelope):
 @pytest.mark.asyncio
 async def test_effect_request_is_confined_by_the_calls_own_path():
     approver = AllowlistEscalationApprover({"write": 1}, ["/workspace"])
-    assert await approver(_effect_req("write", {"path": "/workspace/a.py"})) is True
-    assert await approver(_effect_req("write", {"path": "/etc/passwd"})) is False
+    assert await approver(_call_req("write", {"path": "/workspace/a.py"})) is True
+    assert await approver(_call_req("write", {"path": "/etc/passwd"})) is False
 
 
 @pytest.mark.asyncio
@@ -301,26 +301,26 @@ async def test_effect_request_without_a_path_denies_under_confinement():
     """Same fail-closed stance as a class grant with no paths: a confined approver
     does not hand out an unconfined authority."""
     approver = AllowlistEscalationApprover({"write": 1}, ["/workspace"])
-    assert await approver(_effect_req("write", {"content": "x"})) is False
+    assert await approver(_call_req("write", {"content": "x"})) is False
 
 
 @pytest.mark.asyncio
 async def test_effect_request_for_an_unconfined_tool_rejects_a_path():
     approver = AllowlistEscalationApprover({"bash": 1}, [], ["bash"])
-    assert await approver(_effect_req("bash", {"command": "ls"})) is True
-    assert await approver(_effect_req("bash", {"path": "/workspace/x"})) is False
+    assert await approver(_call_req("bash", {"command": "ls"})) is True
+    assert await approver(_call_req("bash", {"path": "/workspace/x"})) is False
 
 
 @pytest.mark.asyncio
 async def test_effect_request_still_needs_the_tool_in_the_allowlist():
     approver = AllowlistEscalationApprover({"write": 1})
-    assert await approver(_effect_req("bash", {"command": "ls"})) is False
+    assert await approver(_call_req("bash", {"command": "ls"})) is False
 
 
 @pytest.mark.asyncio
 async def test_unconfined_approver_takes_any_path_but_only_for_listed_tools():
     approver = AllowlistEscalationApprover({"write": 1})
-    assert await approver(_effect_req("write", {"path": "/anywhere/x"})) is True
+    assert await approver(_call_req("write", {"path": "/anywhere/x"})) is True
 
 
 @pytest.mark.asyncio
@@ -336,12 +336,12 @@ async def test_console_effect_prompt_shows_the_call(monkeypatch, capsys):
         return "y"
 
     monkeypatch.setattr("builtins.input", _input)
-    req = _effect_req("send_money", {"recipient": "acme", "amount": 500},
+    req = _call_req("send_money", {"recipient": "acme", "amount": 500},
                       consequence="transfer")
     assert await console_escalation_callback(req) is True
     assert len(seen) == 1
     assert "'acme'" in seen[0] and "500" in seen[0]
-    assert req.effect_digest[:16] in seen[0]
+    assert req.call_digest[:16] in seen[0]
     assert "one use only" in seen[0]
 
 
@@ -372,7 +372,7 @@ async def test_current_protocol_callback_is_not_adapted():
 
 
 @pytest.mark.asyncio
-async def test_effect_approval_refuses_a_legacy_callback(make_envelope):
+async def test_call_approval_refuses_a_legacy_callback(make_envelope):
     """A four-argument callback has nowhere to receive the call's arguments, so it
     cannot answer "did the principal order THIS". Downgrading the question to a
     class-scoped one would take a tool-wide answer as authority for this effect —
@@ -387,13 +387,13 @@ async def test_effect_approval_refuses_a_legacy_callback(make_envelope):
             env.policy,
             escalation_policy=EscalationPolicy(
                 allow_escalation=True, grantable_tools=("read",),
-                require_human=True, effect_approval=True,
+                require_human=True, call_approval=True,
             ),
         ),
     )
     with pytest.warns(DeprecationWarning):
         mgr = EscalationManager(escalation_callback=legacy)
-    reason = await mgr.grant_for_effect(
+    reason = await mgr.grant_for_call(
         tool="read", tool_args={"path": "/w/a"}, envelope=env,
         tool_use_id="t1", consequence="read", denial_reason="over ceiling",
         trace_events=[],
@@ -410,7 +410,7 @@ async def test_effect_approval_refuses_a_legacy_callback(make_envelope):
 # bound. No posture change — the agent opts in by naming the call.
 
 
-def _effect_escalation_event(tool: str, call_args: dict, max_ops: int = 9) -> ExecutorEvent:
+def _call_escalation_event(tool: str, call_args: dict, max_ops: int = 9) -> ExecutorEvent:
     return ExecutorEvent(
         kind=ExecutorEventKind.TOOL_USE,
         payload={
@@ -437,7 +437,7 @@ def _human_env(make_envelope, tool="write"):
 
 
 @pytest.mark.asyncio
-async def test_escalation_naming_a_call_is_effect_scoped_and_one_shot(make_envelope):
+async def test_escalation_naming_a_call_is_call_scoped_and_one_shot(make_envelope):
     seen: list[ApprovalRequest] = []
 
     async def approver(request: ApprovalRequest) -> bool:
@@ -448,20 +448,27 @@ async def test_escalation_naming_a_call_is_effect_scoped_and_one_shot(make_envel
     mgr = EscalationManager(escalation_callback=approver,
                             driving_args={"write": ["path"]})
     result = await mgr.grant_from_intent(
-        _effect_escalation_event("write", call), _human_env(make_envelope), []
+        _call_escalation_event("write", call), _human_env(make_envelope), []
     )
 
     assert result["granted"] is True
-    assert result["scope"] == "effect"
+    assert result["scope"] == "call"
     assert result["max_ops"] == 1                 # one-shot, whatever was asked
-    assert result["effect_digest"] == effect_digest("write", call)
+    assert result["call_digest"] == call_digest(
+        "write", call, scope=_human_env(make_envelope).node_id
+    )
     assert len(seen) == 1
-    assert seen[0].scope is AuthorityScope.EFFECT
+    assert seen[0].scope is AuthorityScope.CALL
     assert dict(seen[0].args) == call
     assert seen[0].effect_signature == ("path",)  # as the operator declared
-    # and it covers that call only
-    assert mgr.covers("write", call) is True
-    assert mgr.covers("write", {"path": "/w/other.py", "content": "x"}) is False
+    # and it covers that call only, in this authority scope only
+    node = _human_env(make_envelope).node_id
+    assert mgr.covers("write", call, scope=node) is True
+    assert mgr.covers("write", {"path": "/w/other.py", "content": "x"}, scope=node) is False
+    assert mgr.covers("write", call, scope="another-node") is False
+    # spent once
+    assert mgr.claim_call("write", call, scope=node) is True
+    assert mgr.claim_call("write", call, scope=node) is False
 
 
 @pytest.mark.asyncio
