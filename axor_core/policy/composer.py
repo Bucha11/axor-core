@@ -105,8 +105,20 @@ class PolicyComposer:
             else:
                 # Confined already → intersect, so a path outside the workspace
                 # cannot survive and the workspace cannot widen the policy.
-                changes["allowed_paths"] = intersect_allowlist(
+                # An empty intersection means the two allowlists are DISJOINT.
+                # Empty is not a deny-all sentinel downstream — every consumer
+                # (the filesystem gate in node/intent_loop, _restrict_allowed_paths,
+                # LeaseValidator.check_path_allowed) reads an empty tuple as "no
+                # path restriction", so returning it here would drop the ceiling
+                # altogether and widen BOTH operands. Fall back to the operator
+                # workspace, mirroring _restrict_allowed_paths' fallback to the
+                # trusted operand: the per-task roots cannot be honoured anyway
+                # (they lie outside the workspace the operator confined us to).
+                intersected = intersect_allowlist(
                     policy_paths, tuple(self._overlay_allowed_paths)
+                )
+                changes["allowed_paths"] = intersected or tuple(
+                    self._overlay_allowed_paths
                 )
         return dataclasses.replace(policy, **changes) if changes else policy
 
