@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hmac
 import time
 import uuid
 from typing import Sequence
@@ -56,6 +57,22 @@ class LeaseValidator:
             return True
         return path_matches_allowlist(path, lease.allowed_paths)
 
+    def check_effect_allowed(self, lease: CapabilityLease, effect_digest: str) -> bool:
+        """For an effect-bound lease, whether it was issued for THIS effect.
+
+        An unbound (class-scoped) lease admits any call within its other bounds —
+        the pre-existing semantics. A bound one is an extra conjunct, never a
+        widening: the digest must match exactly. Compared with
+        ``hmac.compare_digest`` out of habit rather than need (both sides are local
+        values, but a digest comparison is the one place where habit is free)."""
+        if not lease.is_valid:
+            return False
+        if not lease.bound_effect:
+            return True
+        return bool(effect_digest) and hmac.compare_digest(
+            lease.bound_effect, effect_digest
+        )
+
 
     def validate_against_policy_ceiling(
         self,
@@ -93,6 +110,7 @@ class LeaseValidator:
         max_uses: int = 10,
         reason_code: str = "",
         audit_id: str = "",
+        bound_effect: str = "",
     ) -> tuple[CapabilityLease, str | None]:
         """
         Create a new CapabilityLease bounded by the parent policy ceiling.
@@ -117,6 +135,7 @@ class LeaseValidator:
             max_uses=max_uses,
             used_count=0,
             non_transitive=True,
+            bound_effect=bound_effect,
             parent_policy_ceiling_ref=getattr(parent_policy, "name", ""),
             reason_code=reason_code,
             audit_id=audit_id,

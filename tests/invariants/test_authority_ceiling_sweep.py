@@ -114,7 +114,10 @@ def _escalation_no_wider(res: ExecutionPolicy, ref: ExecutionPolicy) -> bool:
     if a.max_ops_per_grant > b.max_ops_per_grant:
         return False
     # dropping a human gate the reference requires is a widening
-    return a.require_human or not b.require_human
+    if b.require_human and not a.require_human:
+        return False
+    # effect_approval turns a denial into a question, so gaining it is a widening
+    return (not a.effect_approval) or b.effect_approval
 
 
 _NO_WIDER: dict[str, callable] = {
@@ -169,6 +172,7 @@ _escalation_policies = st.builds(
     max_escalations=st.integers(min_value=0, max_value=5),
     max_ops_per_grant=st.integers(min_value=0, max_value=20),
     require_human=st.booleans(),
+    effect_approval=st.booleans(),
 )
 
 _policies = st.builds(

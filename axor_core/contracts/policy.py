@@ -119,12 +119,21 @@ class EscalationPolicy:
     max_ops_per_grant: how many tool operations a single grant covers
     require_human:     True = escalation_callback must approve; False = auto-approve
                        when within policy bounds
+    effect_approval:   opt-in. When True, a call the consequence gate would deny
+                       for lack of a governance gate is put to the approver as an
+                       EFFECT-scoped request (after every other gate has passed),
+                       and an approval mints a one-shot grant bound to that call's
+                       effect digest. Default False because it turns a denial into
+                       a question: strictly narrower than the class grant the agent
+                       could already request, but a posture change nonetheless, so
+                       the operator opts in.
     """
     allow_escalation:   bool            = False
     grantable_tools:    tuple[str, ...] = field(default_factory=tuple)
     max_escalations:    int             = 3
     max_ops_per_grant:  int             = 10
     require_human:      bool            = True
+    effect_approval:    bool            = False
 
 
 # ── Tool Policy ────────────────────────────────────────────────────────────────

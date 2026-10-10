@@ -118,6 +118,58 @@ from *other agents* — see §8.
 
 ---
 
+### What an approval is authority *over*
+
+The gate above accepts "a human/operator gate" as authority for an over-ceiling
+sink. That gate has a **scope**
+(`axor_core/contracts/approval.py::AuthorityScope`), and the distinction is the
+difference between an allowlist and an instruction:
+
+- **CLASS** — "grant this tool, under these path roots, for N ops". The original
+  shape, and the only one a request made *before* the call exists can produce (an
+  `ESCALATE_POLICY` intent naming no arguments). A human answering it authorised a
+  **class** of calls: they cannot have authorised *this* transfer, because neither
+  the recipient nor the amount was in the question.
+- **EFFECT** — "allow THIS call". The request carries the arguments and an
+  `effect_digest` (`axor_core/policy/effect.py`), and the resulting grant is
+  one-shot and matches only a call with that digest. A different recipient or
+  amount is a different effect and is not covered; a *repeat* of the same call
+  gets its own question.
+
+Binding on the projection hash would not do: the canonicalizer strips raw strings
+precisely so the decision cannot read them, so two transfers to different
+recipients share a projection. The digest therefore covers **every** argument of
+the call, not just the declared `driving_args` — so a mis-declared signature
+cannot widen what an approval covers (the declared signature is *reported* to the
+approver, not used for binding).
+
+Two ways to reach EFFECT scope:
+
+1. the agent names the call in its `ESCALATE_POLICY` intent (`args`) — a pure
+   narrowing of the existing path, no operator opt-in needed;
+2. `escalation_policy.effect_approval` (opt-in, default off): a call the
+   consequence gate would deny for lack of a gate is put to the approver as an
+   effect-scoped question. It is opt-in because it turns a denial into a
+   *question* — strictly narrower than the class grant the agent could already
+   request, but a posture change nonetheless.
+
+The question is asked **last**, after every other gate has admitted the call. An
+approver has to render the arguments to answer "did the principal order this", and
+those arguments are untrusted content: asking last means an approver is never
+shown a call that a structural gate would have refused, and an approval can only
+ever satisfy the consequence axis — never substitute for taint, carrier, SSRF or
+capability. Every ceiling that bounds a requested escalation bounds this path too
+(`allow_escalation`, `grantable_tools`, the flood guard, `max_escalations`, the
+policy ceiling), so it reaches no further than an escalation the agent could have
+asked for itself.
+
+An approver takes one `ApprovalRequest`. The legacy four-argument callback still
+works (adapted, with a `DeprecationWarning`) but has nowhere to receive the
+arguments, so it can only be asked class-scoped questions — an effect-scoped
+request to one is **refused**, never downgraded into a tool-wide answer.
+
+---
+
 ## 3. Positional admission: trading precision for soundness where it matters
 
 Content-based tracking is sound but incomplete: an in-process model can paraphrase
@@ -415,6 +467,9 @@ its tools. The operator declares their roles so the kernel can govern them:
   every integrity sink, as for egress sinks. Before this role such calls were none
   of egress / outside-workspace write / exec, so the integrity gate never looked
   at them in any mode.
+- **`escalation_policy.effect_approval`** — opt-in (default off). Lets the
+  consequence gate put an otherwise-denied call to the approver as an
+  effect-scoped question; see "What an approval is authority *over*" in §2.
 - **`positional_sinks`**, **`value_policies`** — as in §3 and the gate sequence.
   Predicates come in two shapes. A **per-argument** one (`enum`, `numeric_range`)
   constrains one field; a set of them constrains the *product* of their codomains,

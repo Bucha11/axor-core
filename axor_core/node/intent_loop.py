@@ -8,6 +8,7 @@ from axor_core.capability.executor import CapabilityExecutor
 from axor_core.contracts.anomaly import NormalizedIntent
 from axor_core.contracts.cancel import CancelReason
 from axor_core.contracts.envelope import ExecutionEnvelope
+from axor_core.contracts.approval import ApprovalRequest
 from axor_core.contracts.intent import Intent, IntentKind, ResolvedIntent
 from axor_core.contracts.canonical import ConsequenceClass
 from axor_core.contracts.policy import PolicyDecision, PolicyDecisionKind
@@ -108,9 +109,15 @@ ToolResultCallback = Callable[[str, str, Any, bool], Awaitable[None]]
 # Implemented in wrapper.py — intent_loop stays provider-agnostic.
 SpawnCallback = Callable[[str, str, str], Awaitable[str]]
 
-# Optional callback for ESCALATE_POLICY intents requiring human approval.
-# Signature: (tool_use_id, tool, paths, max_ops) → approved bool
-EscalationCallback = Callable[[str, str, list[str], int], Awaitable[bool]]
+# Optional approval callback. It is asked one question — an ApprovalRequest —
+# and answers yes/no. The request carries its SCOPE: a class-scoped question
+# (this tool, within these bounds, N uses) or an effect-scoped one (this call,
+# bound to its effect digest). See axor_core.contracts.approval.
+#
+# The legacy shape (tool_use_id, tool, paths, max_ops) is still accepted and
+# adapted (axor_core.node.escalation.adapt_escalation_callback) with a
+# DeprecationWarning; it can only be asked class-scoped questions.
+EscalationCallback = Callable[["ApprovalRequest"], Awaitable[bool]]
 
 
 class IntentLoop:
@@ -184,7 +191,10 @@ class IntentLoop:
         self._spawn_callback = spawn_callback
         # Escalation grants + capability leases + flood guard live in their own
         # manager; the loop only asks it to resolve/grant/cover.
-        self._escalation = EscalationManager(escalation_callback=escalation_callback)
+        self._escalation = EscalationManager(
+            escalation_callback=escalation_callback,
+            driving_args=driving_args,
+        )
         # Default to a real engine when none is supplied: the per-value/carrier/
         # taint/floor cascade is guarded on `self._taint_engine is not None`, so a
         # None engine would silently disable the entire data-flow core (fail-open).
@@ -682,19 +692,28 @@ class IntentLoop:
         # a host shutdown or disk wipe). Reads only the sink type + operation enum +
         # policy ceiling.
         consequence_denial = self._check_consequence(
-            tool_name, envelope,
+            tool_name, envelope, tool_args,
             operation=normalized.operation if normalized is not None else None,
         )
+        # Effect approval (opt-in) defers this one denial to the very end: an
+        # approver is only ever asked about a call every OTHER gate admits, so the
+        # arguments it has to render — untrusted content, necessarily — cannot be
+        # used to talk past a gate that would have denied anyway. With the knob
+        # off, the denial stands here exactly as before.
+        deferred_consequence: str | None = None
         if consequence_denial is not None:
-            self._record_denial(intent, consequence_denial, envelope, "consequence_gate")
-            denial_resp = _make_denial_response(consequence_denial, "consequence_gate")
-            self._record_degradation_signal(intent, denial_resp)
-            return ResolvedIntent(
-                intent=intent,
-                approved=False,
-                reason=consequence_denial,
-                result=denial_resp.to_tool_result(),
-            )
+            if envelope.policy.escalation_policy.effect_approval:
+                deferred_consequence = consequence_denial
+            else:
+                self._record_denial(intent, consequence_denial, envelope, "consequence_gate")
+                denial_resp = _make_denial_response(consequence_denial, "consequence_gate")
+                self._record_degradation_signal(intent, denial_resp)
+                return ResolvedIntent(
+                    intent=intent,
+                    approved=False,
+                    reason=consequence_denial,
+                    result=denial_resp.to_tool_result(),
+                )
 
         # value-policy predicates — operator-registered range/enum predicates over
         # an admissible projection of an argument (e.g. transfer(amount) within
@@ -870,6 +889,35 @@ class IntentLoop:
                     intent=intent, approved=False, reason=reason,
                     result=denial_resp.to_tool_result(),
                 )
+
+        # The consequence axis was the only gate left standing: put THIS call to
+        # the approver (effect-scoped) now that everything else has admitted it.
+        # An approval mints a one-shot grant bound to this call's effect digest and
+        # is burned here, so it cannot be spent on a later call — not even an
+        # identical one, which gets its own question.
+        if deferred_consequence is not None:
+            effect_reason = await self._escalation.grant_for_effect(
+                tool=tool_name,
+                tool_args=tool_args,
+                envelope=envelope,
+                tool_use_id=intent.payload.get("tool_use_id", ""),
+                consequence=(
+                    normalized.operation if normalized is not None else ""
+                ) or "",
+                denial_reason=deferred_consequence,
+                trace_events=self._trace_events,
+            )
+            if effect_reason is not None:
+                self._record_denial(intent, effect_reason, envelope, "consequence_gate")
+                denial_resp = _make_denial_response(effect_reason, "consequence_gate")
+                self._record_degradation_signal(intent, denial_resp, normalized)
+                return ResolvedIntent(
+                    intent=intent, approved=False, reason=effect_reason,
+                    result=denial_resp.to_tool_result(),
+                )
+            _jit_decision, jit_pending = self._escalation.evaluate(tool_name, tool_args)
+            if jit_pending is not None:
+                jit_pending.commit()
 
         # Every gate (capability, consequence, value-policy, degradation, ssrf,
         # positional, carrier, taint, adjudicator) has passed: the call is approved
@@ -1302,6 +1350,7 @@ class IntentLoop:
         self,
         tool_name: str,
         envelope: ExecutionEnvelope,
+        tool_args: dict | None = None,
         operation: str | None = None,
     ) -> str | None:
         """Consequence axis gate. Return a denial reason if the sink's
@@ -1317,7 +1366,9 @@ class IntentLoop:
         )
         # over-ceiling is admissible only through a governance gate (an active
         # escalation grant or capability lease for the tool).
-        has_gate = self._escalation.covers(tool_name)
+        # An effect-bound grant is a governance gate for ITS call only, so the
+        # query carries the arguments.
+        has_gate = self._escalation.covers(tool_name, tool_args)
         gd = consequence_gate(
             tool_name, operation, ceiling, self._consequence_overrides,
             has_governance_gate=has_gate, strict=self._strict,
