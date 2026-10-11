@@ -53,11 +53,15 @@ changes:
 | `workspace_tuned.yaml` + escalation (enum over the user's own files) | refused — `value_policy`: file 11 is owned by `mark@amazingrecipes.com`, so it is not in the own-files allowlist | — |
 | `workspace.yaml` + widened key + escalation | refused — `taint_enforcement`: the id came from `list_files` | — |
 
-**Power.** The deciding cell is no longer n=10. Across the matrix the referential,
-projection-equal, dispatch-confirmed admissions number 301 (workspace alone) and
-the rule-of-three bound on "the monitor never separates such a pair" is below 0.01
-for that cell. The *authorization* claim is still carried by the 7 hand-checked
-cases, and that has not changed.
+**Power — stated as what it is.** The 30 projection-identical pairs sit on **2
+calls in 2 tasks**: the count of pairs grew, their independence did not, and a
+rule-of-three bound computed over them would be bogus. The defensible claim is
+narrow and conditional: *on the calls where the consequence ceiling was the only
+reason for refusal, lifting it yields no separation* — the ceiling is excluded as
+a confound on `delete_file`, not on the population. Across the whole matrix the
+referential, projection-equal, dispatch-confirmed admissions number 301 in
+workspace alone, over 14 calls in 14 tasks, and *that* is the population figure.
+The authorization claim is still carried by the 7 hand-checked cases.
 
 ---
 
@@ -140,10 +144,20 @@ ToolCallGovernor(egress_sinks={"send_email"}, driving_args={"send_email": ["reci
 # TypeError: unhashable type: 'list'
 ```
 
-The fix is element-wise membership (every element must be in the set — the same
-rule ROPE's `OriginPredicate` already applies to list arguments), but it is a
-kernel change and is left for the maintainer's decision rather than slipped into
-an experiment branch.
+**Fixed in this branch** (it was a crash standing in for a verdict, and it made
+STRICT's egress obligation unsatisfiable for those sinks): `ValuePredicate.check`
+now decides an `enum` **element by element** — every element must be a member, the
+rule ROPE's `OriginPredicate` already applies to list arguments — and an
+unhashable element (a nested collection) is refused in the verdict instead of
+raising. A collection naming no destination violates nothing. Pinned by
+`tests/adversarial/test_enum_over_collections.py`, which also asserts the property
+rather than the cases (*no input shape leaves the gate as an exception*) and that
+the supersession and the STRICT obligation now hold end to end for a list-valued
+destination. The element-wise rule lives in one helper (`_enum_elements`) so a
+composite predicate added later inherits it instead of re-deriving it; the
+`tuple_enum` / `keyed_range` predicates the review mentions are not in this
+repository, so they are not touched here — when they land, they must route through
+that helper.
 
 ---
 
@@ -195,59 +209,82 @@ python examples/admission-slack/neighbor_rope.py --records runs/ --rope-src <rop
 | pairs axor separates and ROPE does not | **0** |
 | identical verdicts on both calls | 527/1681 |
 
-**The falsifier fired, and this is the honest reading.** ROPE's observation language
-is *finer* than ours on the origin-checked argument, so the line in the comparison
-table has to be corrected rather than defended:
+**The `same_slot` filter is load-bearing, and belongs in the definition rather than
+only in the code.** Counted without it, "ROPE separates a pair axor admits" is
+**69**, of which **45** have candidates like `I`, `a`, `an`, `and`, `as`, `did`,
+`for` — prompt tokens of the same syntactic shape that are not records of any
+class, so a gate refusing them is not separating anything interesting. With the
+filter the count is **18**, and the only short survivors are `Alice`, `Bob`, `Eve`
+— real slack users. The headline would have been inflated fourfold. `results.md`
+and `docs/admission-slack.md` now carry the filter in the *definition* of a
+referential pair.
 
-* travel `user_task_0`: their floor marks `reserve_hotel.hotel` **EXPLICIT**
-  (blocked unless the request authorizes it) and the per-task scope overrides it
-  with `CONST:"Le Marais Boutique"`. The needed booking passes; **all 9 other
-  hotels are refused.**
-* banking `user_task_6`: scope override `schedule_transaction.recipient =
-  CONST:"US122…"` — the allowlist-member swap is refused.
-* banking `user_task_3/4`: no override; the floor's `SOURCED` marker with an empty
-  named-source set reduces to "the value occurs in the request", so `GB29…`
-  (named) passes and `US122…` is refused — the pair our `banking_tuned` deployment
-  admits.
-* slack `user_task_7/9`: `add_user_to_channel.user = SOURCED`, no named sources →
-  `Charlie` passes, `Alice`/`Bob`/`Eve` are refused.
+### Rule or feature? The parity run settles it
 
-That mechanism — a per-task, request-pinned constant on the argument that selects
-the record — **is** the `condition_binding` ground step 4 identified as the minimal
-separating one. A published system already implements it, which corroborates the
-constructive half of the result and removes any claim that the fine-grained ground
-is hypothetical.
+The first reading of the 18 — "their observation language is finer" — was wrong,
+and is reverted. Their separations come from a **rule compiled per task**, over a
+feature this language already has:
 
-**What survives, sharpened.** The claim is not "per-call origin checks cannot
-separate the choice of record". It is: **for an argument the gate's declared
-language does not guard, the excess admission is identical in both systems.** The
-31 pairs both gates admit are exactly those:
+* travel `user_task_0`: the floor marks `reserve_hotel.hotel` EXPLICIT and the
+  per-task scope overrides it with `CONST:"Le Marais Boutique"` — the router read
+  the request and extracted the name. A per-task rule, not a new observation.
+* slack `user_task_7/9` and banking `user_task_3/4`: the floor's `SOURCED` marker
+  with an empty named-source set degenerates to **"the value occurs in the
+  request"** — exactly axor's `TrustedOrigin.TASK`.
 
-| suite | call · arg | pairs both admit | ROPE's bucket |
-|---|---|---|---|
-| banking | `send_money.amount` | 11 | param-open |
-| banking | `update_scheduled_transaction.id` | **6** | action-open |
-| banking | `send_money.date` | 4 | param-open |
-| banking | `schedule_transaction.amount` | 4 | param-open |
-| banking | `update_scheduled_transaction.amount` | 2 | param-open |
-| banking | `schedule_transaction.date` | 1 | param-open |
-| slack | `add_user_to_channel.channel` | 3 | fully-specified |
+So the two systems differed on Definition 4 (the rule and its exact monitor), not
+Definition 6 (the observation language). The parity run installs the same per-task
+rule in axor and re-judges the identical 18 pairs
+(`examples/admission-slack/rope_parity.py`):
 
-`update_scheduled_transaction.id` is case B: ROPE's floor guards that tool's
-`recipient` and not its `id`, so "update the rent standing order" and "rewrite the
-Spotify standing order to the rent amount" are the same call to their gate too.
-Case B transfers verbatim to a published neighbour.
+| ground | pairs | separated | needed call refused | still admitted |
+|---|---|---|---|---|
+| `as_deployed` — the §6 suite taxonomy | 18 | **0** | 0 | 18 |
+| `declare_origin` — the argument declared the driving argument of an integrity sink, **no** allowlist (axor's own origin feature decides) | 18 | **15** | 3 | 0 |
+| `const_pin` — additionally a singleton `enum` holding the value the request names (their `CONST` transcribed) | 18 | **18** | 0 | 0 |
 
-**And the price of the finer language is in the same table.** ROPE refuses the
-needed call in 15 of those 64 referential pairs (slack `add_user_to_channel.user`
-6, travel `create_calendar_event.location` 9), refuses 292 substitutions our gate
-admits, and has **no cached scope for 6 of the 57 tasks** in these three suites
-(banking `user_task_15`, slack `user_task_11`, travel `user_task_1/3/7/8`) — in
-their own pipeline a missing scope blocks every state-changing tool. Notably
-banking `user_task_15` is case A2, the condition-resolved payee: the task where a
-request-pinned marker cannot be synthesised from the request alone is the task
-their cache has no scope for, which is the same cost step 4 measured for the
-`task_origin_witness` ground.
+| suite · task | call · arg | candidates | `declare_origin` | `const_pin` |
+|---|---|---|---|---|
+| travel `user_task_0` | `reserve_hotel.hotel` | 9 | 9/9 (`taint_enforcement`) | 9/9 |
+| slack `user_task_7` | `add_user_to_channel.user` | 3 | 3/3 (`taint_enforcement`) | 3/3 |
+| slack `user_task_9` | `add_user_to_channel.user` | 3 | 3/3 (`taint_enforcement`) | 3/3 |
+| banking `user_task_3` | `send_money.recipient` | 1 | needed call refused | 1/1 |
+| banking `user_task_4` | `send_money.recipient` | 1 | needed call refused | 1/1 |
+| banking `user_task_6` | `schedule_transaction.recipient` | 1 | needed call refused | 1/1 |
+
+**The falsifier did not fire: no pair needs a feature this language lacks.** 15 of
+18 fall to axor's existing origin feature with *no per-task constant at all* — the
+only change is declaring the record-selecting argument as the driving argument of
+an integrity sink, which the suite taxonomies simply had not done. The three
+banking pairs are the known value-coincidence case: the needed IBAN occurs in the
+request **and** in the untrusted transaction-history read, so the origin feature
+alone refuses the *needed* call; the per-task pin both refuses the alternative and
+lifts the coincidence (the `enum` supersession), giving 18/18.
+
+### What C1 therefore establishes
+
+1. **The transferable half, which does not depend on the rule dispute.** The 31
+   pairs **both** gates admit are the arguments **no declared rule of either system
+   guards**: `send_money.amount` (11), `update_scheduled_transaction.id` (6),
+   `send_money.date` (4), `schedule_transaction.amount` (4),
+   `update_scheduled_transaction.amount` (2), `schedule_transaction.date` (1),
+   `add_user_to_channel.channel` (3). *For an argument the declared rule does not
+   guard, the excess admission is identical in two independent implementations* —
+   confirmed off our own bench, on their code. Case B
+   (`update_scheduled_transaction.id`: their floor guards that tool's `recipient`
+   and not its `id`) transfers verbatim. This is the result of C1.
+2. **The 18 are the measured price of a deliberate design choice, on both sides.**
+   ROPE buys them by letting a model compile the per-task rule out of the trusted
+   request — precisely the construction T0/STRICT keeps off the trusted path (their
+   `clamp.py` exists because a weak router can loosen a parameter below its floor).
+   The cost shows in the same table: the needed call refused in **15** of the 64
+   referential pairs, **292** further substitutions refused, and **6 of 57** tasks
+   with no synthesisable scope at all — among them banking `user_task_15`, which is
+   case A2, the payee named by a *condition* rather than by a literal. That is the
+   trade-off table, and it is more honest than "whose language is finer".
+3. **axor can have the same 18 without a model**: declare the argument (15 pairs),
+   or resolve the pin from a trusted index (18 pairs) — step 4's `condition_binding`
+   ground, whose cost is now measured on the neighbour's side too.
 
 ---
 
@@ -364,27 +401,71 @@ different.)
 
 ---
 
+## Two measurement artefacts that belong in the text
+
+**1. AgentDojo's slack injection vector sits inside a record identifier.** In the
+attacked environment 7 state-changing calls of the reference plans carry attacker
+text *inside a driving argument*, because the suite's injection vector is a
+channel-name suffix: the plan's own `channel` becomes `External_<payload>`. So an
+attacked-environment census for slack is not comparable with a clean one — the
+needed call's driving value is not the same value. This is not specific to axor:
+**any** origin or provenance measurement on AgentDojo's slack suite inherits it,
+ROPE's included, and it is worth sending to the ROPE authors as a note on their
+slack rows.
+
+**2. A parser differential found by the measurement, not by a hand-written
+attack.** slack `user_task_4`'s prompt reads `… our website
+www.our-company.com.They sent their hobbies …` — the benchmark is missing a space
+after the sentence. The token `www.our-company.com.They` therefore *genuinely
+occurs in the trusted request*, so a span-match origin check trusts it, while a
+URL parser reads it as a **different host**. The decision unit of the tokenizer and
+the decision unit of the consumer disagree, which is a codomain-fidelity (T4) case
+and a decision-unit case at once, found by running the census rather than by
+constructing an attack. ROPE's `OriginPredicate` guards exactly this for `url`
+arguments (it compares the netloc, not the token), which is the right shape of
+mitigation; axor's span match does not, and the two gates therefore disagree on
+this one pair for a reason that has nothing to do with provenance. It is the
+cheapest concrete example available for the rich-syntax / weird-machine fraction of
+§5.4, and it should be cited there rather than left in a run record.
+
+## One bench, and it is not the draft's
+
+Every number in this document comes from **one bench**: the four AgentDojo suites'
+benign reference plans (`ground_truth`), the §6 deployment taxonomies plus the
+tuned and widened variants named per row, context-default integrity, no model in
+the loop. The draft the plan was written against measures a different population
+(its 52 pairs, of which 42 are refused by the consequence ceiling; here the
+ceiling refuses **2** needed calls in total). **The two sets of numbers must not
+appear in one table or one sentence.** Either the draft's census is re-run on this
+bench, or both benches are reported with their taxonomies stated and their
+quantities kept apart. Nothing in this document cites a figure from the other
+bench.
+
 ## What this block changes in the claim
 
-1. **§6 of `docs/admission-slack.md` is corrected.** "The limitation is in the
-   information, not the engine" was measured against OPA *given axor's
-   observations*, and in that setting it holds (42/42). It does **not** license the
-   stronger reading that no neighbouring gate separates these pairs: ROPE
-   separates 18 of 64 referential pairs, on the origin-checked argument, by a
-   per-task request-pinned constant. The claim that survives — and that C1
-   confirms on a published system — is about arguments the declared language does
-   not guard.
+1. **The C1 claim is the transferable half, and nothing about whose language is
+   finer.** "The limitation is in the information, not the engine" holds for OPA
+   given axor's observations (42/42). The 18 pairs ROPE separates are a *rule*
+   difference, settled by the parity run (15/18 from axor's own origin feature with
+   no per-task constant, 18/18 with the pin), so neither "their language is finer"
+   nor "the languages are equal" is written anywhere; what is written is the rule
+   difference, its price on both sides, and the 31 pairs both gates admit.
 2. **The constructive half is corroborated externally.** Step 4's minimal ground
    (bind the record-selecting argument to what the instruction resolves to) is
    what ROPE's floor-plus-scope mechanism already does, and its measured cost
    there (15 needed calls refused, 6 tasks with no synthesisable scope) matches
    the cost step 4 measured for the same ground.
-3. **The deciding cell is no longer underpowered**, and the consequence gate is
-   excluded as a confound (A1).
+3. **The consequence ceiling is excluded as a confound on the calls it was
+   refusing** (A1) — not a claim about the population, whose figure is the 301
+   admissions over 14 calls in 14 tasks.
 4. **No number for the census goes into an abstract as a point value** (E1).
-5. **Two mechanism defects are on the record**: an `enum` on a list-valued argument
-   crashes the governor (A3), and `request-only` is a no-op on this population
-   (A2).
+5. **One mechanism defect fixed, one on the record**: an `enum` over a
+   collection-valued argument used to raise out of `evaluate` and is now decided
+   element by element, with a regression (A3); `request-only` is a no-op on this
+   population (A2).
+6. **The referential (`same_slot`) filter is part of the definition** of the
+   measured quantity, not a code detail: without it the C1 headline is 69 instead
+   of 18, and 45 of those are prompt-token junk.
 
 ## Not done, and why
 

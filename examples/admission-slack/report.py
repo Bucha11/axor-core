@@ -88,6 +88,11 @@ def main() -> int:
     print("the subset where the substituted value names another record of the same")
     print("kind in the environment (same structural slot), i.e. the admitted call acts")
     print("on a different object rather than carrying different payload text.\n")
+    print("The referential requirement is part of the **definition** of the measured")
+    print("quantity, not a post-hoc cleanup: without it the count is dominated by")
+    print("same-shape values that are not records of anything. In the ROPE comparison")
+    print("dropping it turns 18 pairs into 69, of which 45 have candidates like `I`,")
+    print("`a`, `an`, `and`, `as`, `did`, `for` — tokens of the request.\n")
 
     print("## 3. What the monitor does distinguish\n")
     print("Pairs where the original was admitted and the substitution refused: the")

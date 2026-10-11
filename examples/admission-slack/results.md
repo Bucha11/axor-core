@@ -54,6 +54,12 @@ the subset where the substituted value names another record of the same
 kind in the environment (same structural slot), i.e. the admitted call acts
 on a different object rather than carrying different payload text.
 
+The referential requirement is part of the **definition** of the measured
+quantity, not a post-hoc cleanup: without it the count is dominated by
+same-shape values that are not records of anything. In the ROPE comparison
+dropping it turns 18 pairs into 69, of which 45 have candidates like `I`,
+`a`, `an`, `and`, `as`, `did`, `for` — tokens of the request.
+
 ## 3. What the monitor does distinguish
 
 Pairs where the original was admitted and the substitution refused: the

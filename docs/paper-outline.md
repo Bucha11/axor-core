@@ -318,7 +318,15 @@ import-scan test) and **T4** (effective codomain = nominal). T4 splits:
   fuzzing obligation. The weird-machine class is **localized** here. (Anecdotal but
   consistent: the two real bugs found to date — newline-injection in path extraction,
   `../` traversal in lease validation — both lived in this region. Two data points;
-  offer them as consistency with the split, not as validation of it.)
+  offer them as consistency with the split, not as validation of it. A third, found by
+  *running* the admission-slack census rather than by writing an attack, is the
+  cleanest illustration available: a prompt token `www.our-company.com.They` — a
+  benchmark typo — genuinely occurs in the trusted request, so a span-match origin
+  check trusts it while a URL parser reads a **different host**. The tokenizer's
+  decision unit and the consumer's disagree, which is the T4 codomain-fidelity
+  obligation and the decision-unit question in one case
+  (`docs/admission-slack-experiments.md`); ROPE's own `url` predicate compares the
+  netloc rather than the token, which is the right shape of mitigation.)
 
 > The honest one-liner for the paper: **K4 holds outright for the enum/numeric fraction
 > of the perimeter, and conditionally — discharged by fuzzing — for the rich-syntax
@@ -702,16 +710,21 @@ What to report, in this order:
   selecting argument separates 7 of 7 with the needed call still admitted** — at the
   price of a resolver that is inside the TCB (it feeds the kernel's supersession rule a
   singleton).
-- **It transfers (step 5).** The same pairs through **OPA 1.9.0**: handed axor's
-  observations it agrees 42/42 and reproduces every admitted alternative; without them
-  it agrees 33/42 and never separates a pair axor cannot. A second neighbour (**ROPE**,
-  on its own code and published per-task scopes) admits **31 of 64** referential pairs
-  — the arguments neither declared rule guards (`send_money.amount/date`,
-  `update_scheduled_transaction.id`, case B verbatim) — which is the transferable
-  half. It separates the other 18 under its per-task scopes; **do not** write that up
-  as either language being finer until the parity run in
-  `docs/admission-slack-experiments.md` §C1 settles whether that is a feature axor's
-  language lacks or a rule its deployment did not declare.
+- **It transfers (step 5), and the transferable half is the claim.** Through **OPA
+  1.9.0**, handed axor's observations the engine agrees 42/42 and reproduces every
+  admitted alternative; without them 33/42, and it never separates a pair axor cannot.
+  A second neighbour, **ROPE** on its own code and published per-task scopes, admits
+  **31 of 64** referential pairs — the arguments **no declared rule of either system
+  guards** (`send_money.amount/date`, `update_scheduled_transaction.id` = case B
+  verbatim, `add_user_to_channel.channel`). State it exactly that way: *for an
+  argument the declared rule does not guard, the excess admission is identical in two
+  independent implementations.* It separates the other 18, and that is a **rule**
+  difference, settled by a parity run, **not** a finer observation language: the same
+  per-task rule in axor separates 15 of 18 from the origin feature alone and 18 of 18
+  with the pin. Write the 18 as the priced trade-off — ROPE compiles the per-task rule
+  with a model reading the trusted request (what T0 keeps off the trusted path) and
+  pays 15 of those 64 needed calls, 292 further refusals and 6 of 57 tasks with no
+  synthesisable scope. Never as a ranking of languages.
 
 ---
 

@@ -19,6 +19,19 @@ from numbers import Real
 from axor_core.kernel.decidability import verify_bounded_numeric, verify_enum
 
 
+def _enum_elements(value: object) -> "list[object]":
+    """The values an enum predicate must decide for this argument.
+
+    A scalar decides itself; a collection decides element by element (all of them).
+    Kept as one function so every composite predicate added later inherits the same
+    rule instead of re-deriving it — and so a crash can never again stand in for a
+    verdict.
+    """
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return list(value)
+    return [value]
+
+
 @dataclass(frozen=True)
 class ValuePredicate:
     """A predicate over one argument's admissible projection of a sink.
@@ -47,9 +60,29 @@ class ValuePredicate:
                 return f"value policy: arg '{self.arg}'={value!r} fails range [{self.lo}, {self.hi}]"
             return None
         if self.kind == "enum":
-            r = verify_enum(value, self.allowed)
-            if not r.is_pass:
-                return f"value policy: arg '{self.arg}'={value!r} not in {sorted(map(str, self.allowed))}"
+            # A COLLECTION-valued argument names several destinations at once
+            # (`send_email(recipients=[...])`, `share_file(emails=[...])`): EVERY
+            # element must be a member, else an extra destination rides in next to a
+            # legitimate one. Checking the collection as a whole is not an option —
+            # `[a] in {a}` is False, and an unhashable value raised TypeError out of
+            # `evaluate`, which is a gate failure, not a verdict. An empty
+            # collection names no destination and so violates nothing.
+            for element in _enum_elements(value):
+                try:
+                    r = verify_enum(element, self.allowed)
+                except TypeError:
+                    # A nested collection (or any unhashable element) is not a
+                    # scalar an enum codomain can decide: fail closed, loudly, in
+                    # the verdict rather than as an exception.
+                    return (
+                        f"value policy: arg '{self.arg}' element {element!r} is not a "
+                        f"hashable scalar; an enum allowlist decides over scalars only"
+                    )
+                if not r.is_pass:
+                    return (
+                        f"value policy: arg '{self.arg}'={element!r} not in "
+                        f"{sorted(map(str, self.allowed))}"
+                    )
             return None
         # Unknown predicate kind — fail closed.
         return f"value policy: unknown predicate kind {self.kind!r} on '{self.arg}'"

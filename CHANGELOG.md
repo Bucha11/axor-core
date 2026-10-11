@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### Fixed (value policies over collections)
+
+- **An `enum` value policy on a collection-valued argument is decided element by
+  element.** The destination field of a real egress sink is often a list
+  (`send_email(recipients/cc/bcc)`, a share call's `emails`). Declaring the
+  allowlist on such a field used to raise `TypeError: unhashable type: 'list'` out
+  of `ToolCallGovernor.evaluate` — a gate failure in place of a verdict — which
+  also made STRICT's egress-allowlist obligation unsatisfiable for those sinks.
+  Now **every element must be a member** (so an injected extra destination cannot
+  ride in beside a legitimate one), an unhashable element is refused in the
+  verdict instead of raising, a collection naming no destination violates nothing,
+  and the `enum` supersession becomes reachable for list-valued driving args. The
+  element rule lives in one helper so a later composite predicate inherits it.
+  Pinned by `tests/adversarial/test_enum_over_collections.py`, which asserts the
+  property (no input shape leaves the gate as an exception) as well as the cases.
+
 ### Added (integrity sinks)
 
 - **`integrity_sinks`** — operator-declared state-changing sinks (password /

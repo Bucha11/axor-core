@@ -66,6 +66,16 @@ reference plans. It therefore reports **coverage of reference plans**, never
 **Admission slack.** `Slack(M, t, h) = { c : M(c, h) = admit } \ Auth(t)`. The
 experiment exhibits witnessed, executable members of it; it does not compute it.
 
+**Referential alternative (part of the definition, not a code detail).** A measured
+member of the slack counts as *referential* only when the substituted value
+occupies the **same structural slot** of the environment as the needed one — i.e.
+it names another record of the same kind — and the substituted call **dispatches**
+on a fork of that environment. Without that requirement the count is dominated by
+values of the same syntactic shape that are not records of anything: in the ROPE
+comparison, dropping it turns 18 separable pairs into 69, of which 45 have
+candidates like `I`, `a`, `an`, `and`, `as`, `did`, `for` — tokens of the request.
+Every figure in this document and in `results.md` carries the requirement.
+
 ---
 
 ## 2. Theorem 2 (admission closure under indistinguishability)
@@ -273,6 +283,11 @@ the obligation that comes with it:
   filename→id mapping is a strictly weaker assumption than trusting the file's
   text, but it **is** an assumption, and it is the assumption a reviewer should
   be pointed at.
+* **A collection-valued destination is expressible.** `send_email(recipients)` and
+  its kind take the same `enum` as a scalar field: the predicate decides element by
+  element (`tests/adversarial/test_enum_over_collections.py`). Until this branch it
+  raised out of `evaluate`, which both blocked this ground for those sinks and made
+  STRICT's egress obligation unsatisfiable there.
 * **A singleton enum on a driving argument triggers the kernel's existing
   supersession rule (T4).** That is why `bind_and_key` admits needed calls that
   `widen_key` alone refuses — and it means the binding inherits the supersession
@@ -308,16 +323,29 @@ The conclusion is about information, not engines: on these observations the
 excess admission belongs to the class of per-call declarative checks, and the
 binding that removes it is portable to a neighbour as a plain allowlist.
 
-**That is as far as the OPA run licenses.** What a *second* neighbour shows is
-recorded in `docs/admission-slack-experiments.md` §C1 and is deliberately **not**
-summarised as a claim about anyone's observation language until the parity run
-that settles it has been done: ROPE separates 18 of 64 referential pairs under its
-published per-task scopes, and whether that reflects a feature axor's language
-lacks or a rule axor's deployment did not declare is exactly what that run
-decides. What the ROPE run already establishes without any such claim is the 31
-pairs **both** gates admit — the arguments neither declared rule guards
-(`send_money.amount`, `send_money.date`, `update_scheduled_transaction.id`, case B
-verbatim).
+**That is as far as the OPA run licenses; a second neighbour gives the result its
+final shape.** Run on **ROPE**'s own code and published per-task scopes
+(`examples/admission-slack/neighbor_rope.py`), of the 64 referential pairs replayed
+through both gates:
+
+* **31 both gates admit** — the arguments **no declared rule of either system
+  guards**: `send_money.amount`, `send_money.date`,
+  `update_scheduled_transaction.id` (case B verbatim), `schedule_transaction.amount`,
+  `add_user_to_channel.channel`. This is the transferable finding: *for an argument
+  the declared rule does not guard, the excess admission is identical in two
+  independent implementations.*
+* **18 ROPE separates** — and that is a **rule** difference, not a finer
+  observation. A parity run (`rope_parity.py`) installs the same per-task rule in
+  axor: declaring the record-selecting argument as the driving argument of an
+  integrity sink separates **15 of 18** with axor's existing origin feature and no
+  per-task constant at all; adding the singleton pin their scope carries separates
+  **18 of 18** with the needed call still admitted. No pair needs a feature this
+  language lacks. ROPE buys those 18 by letting a model compile the per-task rule
+  out of the trusted request — the construction T0 keeps off the trusted path — and
+  the price is in the same table: the needed call refused in 15 of the 64, 292
+  further substitutions refused, and 6 of 57 tasks with no synthesisable scope.
+
+So the result is a trade-off table, not a ranking of observation languages.
 
 ---
 
