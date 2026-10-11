@@ -358,6 +358,17 @@ Reputation, anomaly, and behavioural-drift signals are **telemetry**. They never
 return an allow/deny decision and never feed the gates above. A poisoned reputation
 score cannot, by itself, cause an action.
 
+**The polarity rule for anything the model carries.** The same separation applies to a
+signal the *model* is asked to transport — a sentinel interleaved into untrusted reads
+(datamarking), a self-declared label, a "this came from the web" annotation. Its
+**presence may deny**; its **absence may never permit**. Evidence the model produces
+against the call it is making costs an attacker nothing to withhold, so an enforcement
+decision cannot rest on not seeing it; and that is exactly why reading it only to deny is
+safe. Such a signal therefore belongs here, in the observe-only/tighten-only layer, and
+never in integrity supersession, the closed-codomain classifier, or `TrustedOrigin`. The
+measured case and its one-round bypass:
+[paper-model-carried-labels](paper-model-carried-labels.md).
+
 The single, opt-in exception: a reputation reading crossing a registered threshold is
 a *decidable fact* (a number compared to a bound), and may **tighten** degradation —
 never loosen it, never allow. It is per-tenant isolated: a poisoned score for one

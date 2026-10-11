@@ -227,7 +227,13 @@ No real-world effect is reachable except through a guarded coercion that calls
 
 A projection produced by a model that reads the governed content is in the untrusted
 domain even when its output type-checks: its *faithfulness* is steerable (the
-Firewalls input-firewall LLM-projector is the public counterexample). Such a process
+Firewalls input-firewall LLM-projector is the public counterexample; for a *measured*
+one, built and broken on purpose, see
+[paper-model-carried-labels](paper-model-carried-labels.md) — a projection with a
+two-element, instruction-free codomain consumed as a case-split, i.e. impeccable under
+T4, whose producer is the model, and which an adversarial search defeats in one round
+without ever touching the projection itself. That instance is what separates T0 from T4:
+a flawless codomain does not rescue a steerable producer). Such a process
 may feed the detection layer only, never the trusted path.
 
 In this codebase every trusted-path projection is produced by a deterministic,
@@ -283,6 +289,7 @@ denied into allowed, what is the admissible ground, and what actually produces i
 | Approval (the governance gate for an over-ceiling sink) | a trusted human, or a rule whose correctness is checkable | operator-supplied `EscalationCallback` | ⚠️ **premise, uncheckable in core**: nothing prevents an operator from backing the callback with a model, which puts the model back in the trusted base. Stated in `contracts/approval.py` and governance-model §2 |
 | Projection features (carrier, path class, provenance label, normalized intent) | deterministic structural function | the six T0 producers | ✅ §3 |
 | Peer provenance labels | a signed receipt; across keysets only a bounded discount, never label authority | `federation/receipt.py`, `federation/ladder.py` | ✅ opt-in |
+| *Absence* of a model-carried mark (datamarking read at the gate) | — | the model, which must reproduce the sentinel onto the argument | ❌ **inadmissible as a positive ground**: the producer is the model, and a value the model *derives* rather than copies carries no mark by construction. Admissible only in the deny direction, as detection. [paper-model-carried-labels](paper-model-carried-labels.md) |
 
 **The result of the audit is a mode statement, not a global one.** The three
 inputs whose ground is a heuristic or a default rather than a declaration —
