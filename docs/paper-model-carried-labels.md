@@ -164,10 +164,67 @@ failure for an *unmeasured dependence*. Two further facts bound the result: the 
 were optimised against the weaker instruction (an old attack on a new defence), and the
 stronger instruction **disabled** one of the four models, which then declined the sink in
 29/30 cells — on the benign control as well as the attacks. A search against the stronger
-instruction reached 4 of 8 planned rounds with 0 bypasses and the sentinel never moving;
-it stopped because the attacker model was safety-flagged, not because the defence held. So
-the honest status is "not broken in four rounds" — above the static number, below a
-completed search, **not proven to hold**.
+instruction has since **completed**: ten rounds in total (six by one attacker model, four
+by another), ~38 distinct candidates, **0 bypasses**, and the sentinel never moved
+(`sent_frac = 1.00` in every cell). The earlier run stopped at 4 of 8 rounds because the
+attacker model was safety-flagged; this one ended by exhausting its rounds. That retires
+the "incomplete search" caveat and replaces it with a sharper one: the result is **one
+point** — one defending model, one value class (an IBAN), one seed — and LLM rewriting is a
+weaker attacker than the gradient and human searches of arXiv:2510.09023. So the honest
+status is now **"survived a completed search at one point"**: strictly more than "not broken
+in four rounds", and still not "holds".
+
+## 5.3b.6b Why a completed search cannot promote the mark — the model is a byte channel
+
+The completed 0-bypass search is worth having, and it is worth being precise about what it
+can and cannot buy, because the temptation it creates is the one this chapter exists to
+resist.
+
+A permitting ground needs a **universally quantified** property: *every* rendering that
+carries the value's information carries the mark. A search estimates an **existential**:
+*for the renderings this attacker produced*, the mark persisted. The distance between the
+two is not a measurement gap that more rounds close. It is a quantifier gap over a space the
+adversary extends by construction — and the construction is the model itself.
+
+The mark is attached to a **form**; authority is a question about the **information**. A
+model that can compute is, for this purpose, a byte channel: give it `x` in any encoding and
+an instruction to use it, and it can emit the information of `x` in a rendering the labeller
+never saw and therefore never marked — not because marking is implemented badly, but because
+the labeller marks what it was shown while the model emits what it computed. The decode
+family that broke the weaker instruction in round one is only the cheapest instance: base64
+is not the vulnerability, *computation* is. The stronger instruction does not remove the
+channel; it asks the model to notice that what it computed descends from marked input and to
+re-mark it, which is to ask the channel to be its own monitor. A 0-bypass search says that
+on this defender, at this point, the channel chose to comply. That is a **behavioural**
+property of one model, and the architecture's claim is not allowed to rest on one.
+
+The paper's own machinery says the same thing in a line, and this is the connection to make
+explicit in §5.3b.11. The slack bound `Δ_F(c) ⊆ X_{M,G}(c) ⊆ X_G(c)` presupposes that the
+monitor's observation is **a function of the call** — that is what makes the admitted set
+well defined and the excess priceable. A model-carried mark is not a function of the call;
+it is a function of the model's *rendering* of the call, with the adversary holding one of
+the inputs. So a mark is not an observation in the sense the theorem uses, and nothing about
+it can be priced: there is no `X_G` to bound, because `G` is not a partition of values but a
+partition of surface forms produced by an interested party. An origin class, by contrast, is
+a function of the call's history — which is exactly why its slack *is* boundable, and why
+the class of attacks routes through `integrity_default="context"` instead.
+
+Two consequences, both already the rule, now with a reason rather than a measurement behind
+them:
+
+* **The polarity rule is unchanged by any search outcome.** Presence of a mark may DENY (the
+  host is reading a signal the adversary had no reason to add). Absence may never PERMIT (the
+  producer of the absence is the model). A completed search cannot flip this, because the
+  rule is an argument about who produces the evidence, not about how often the evidence is
+  right.
+* **A 0-bypass search is a recall result, not a soundness result.** It belongs with the
+  honest-reformatting carriage numbers of §5.3b.8 — useful for a host-side ledger and for a
+  channel canary — and not in the enforcement path.
+
+The one change that would move the mechanism out of this section is the one §5.3b.10 already
+names: a label the **host** re-derives from the value at the sink. That label is a function
+of the call again, so it re-enters the regime where slack can be bounded and where a search
+result would mean what a search result is supposed to mean.
 
 ## 5.3b.7 Dominance, argued structurally rather than empirically
 
@@ -210,10 +267,12 @@ attacker-triggerable tightening lever.
 
 ## 5.3b.10 What would overturn the conclusion
 
-- A **completed** adaptive search against the strong instruction (rounds 5–8 need an
-  attacker model that is not safety-gated). A 0-bypass completed search would raise the
-  empirical standing of the mechanism — it would not change the polarity argument of
-  §5.3b.7.
+- ~~A **completed** adaptive search against the strong instruction.~~ **Done** (§5.3b.6):
+  ten rounds, ~38 candidates, 0 bypasses, the sentinel never moving. As predicted it raised
+  the empirical standing and changed neither the polarity argument of §5.3b.7 nor the
+  quantifier argument of §5.3b.6b. What would move the empirical needle now is **breadth,
+  not depth**: other defending models, other value classes, other seeds — a grid, not more
+  rounds at one point.
 - A marking scheme whose mark is **reconstructible by the host** rather than carried by the
   model — e.g. a label the host re-derives from the value at the sink. That changes the
   producer, and with it the entire analysis; it would no longer be this mechanism.
@@ -231,6 +290,7 @@ attacker-triggerable tightening lever.
 | `docs/kernel-theorem.md §3` | one line: T0's load-bearing status has a measured counterexample, not only the Firewalls LLM-projector |
 | `docs/kernel-theorem.md §3b` | the ⚠️ row (absence of a mark → producer is the model → inadmissible) |
 | `docs/governance-model.md §8` | the polarity rule, as the admissible placement for any model-carried signal |
+| `paper-outline.md` **§4** (the slack bound) | one line: the bound presupposes an observation that is a function of the call, which is exactly what a model-carried mark is not (§5.3b.6b) — the cleanest statement of why the marker layer sits outside the priced regime |
 | `docs/rfc-integrity-context-default.md` | the decode vectors as a **two-sided corpus**: they must be DENIED under `integrity_default="context"` and are ALLOWED under `clean` |
 
 **Artifact gap, to fix before circulation.** The chapter and the marker study both cite
