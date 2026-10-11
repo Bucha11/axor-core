@@ -391,6 +391,53 @@ class DegradationEngine:
 
         return base_policy  # fallback
 
+    def tool_denial(
+        self,
+        tool: str,
+        base_policy: ExecutionPolicy,
+        source_id: str | None = None,
+    ) -> str | None:
+        """Does the current level forbid this tool by name? Reason, or None.
+
+        The level's own rules, as opposed to the policy narrowing
+        :meth:`apply_to_policy` performs: at LOCKED/TERMINAL everything but read
+        and escalate is refused, and at RESTRICTED the write/bash families are
+        refused for a quarantined source. They live here, next to the state they
+        read, so the enforcement path (``IntentLoop._check_degradation_denial``)
+        and the authority probe (``axor_core.node.authority_probe``) cannot hold
+        different ideas of what a level permits.
+
+        Independent of any escalation grant: a grant extends what POLICY allows,
+        and this is not a policy question. A degradation level is the session's
+        own tightening and an authority granted before it does not reopen it.
+        """
+        effective = self.apply_to_policy(base_policy, source_id)
+        level = self._state.level
+        name = tool.lower()
+        if level >= DegradationLevel.LOCKED:
+            if name not in _LOCKED_ALLOWED_TOOLS:
+                return (
+                    f"degradation enforcement: session is {level.name} — "
+                    f"tool '{tool}' is not permitted (only read/escalate allowed)"
+                )
+            return None
+        if level == DegradationLevel.RESTRICTED:
+            if not effective.tool_policy.allow_bash and name in {
+                "bash", "shell", "execute", "run"
+            }:
+                return (
+                    f"degradation enforcement: source '{source_id}' is quarantined — "
+                    f"tool '{tool}' (bash/execute) is restricted"
+                )
+            if not effective.tool_policy.allow_write and name in {
+                "write", "edit", "multiedit"
+            }:
+                return (
+                    f"degradation enforcement: source '{source_id}' is quarantined — "
+                    f"tool '{tool}' (write) is restricted"
+                )
+        return None
+
     def quarantine_source(self, source_id: str, reason: str) -> None:
         """Manually quarantine a source (e.g. from human review)."""
         source = self._state.sources.get(source_id)

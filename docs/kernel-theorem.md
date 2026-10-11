@@ -62,6 +62,82 @@ handling — the fuzzing region, exactly where the split predicts bugs must live
 
 ---
 
+## 1b. The second claim (K5) — authority containment
+
+K4 is about the *first* argument of the decision: raw input reaches it only through
+an admissible projection. It says nothing about the *second* — where the policy
+came from. That is a separate claim, and the one the "untrusted data cannot create
+authority" thesis actually needs:
+
+> **Authority containment.** For every step of a session, on every axis,
+> `A_t ⊆ B`, and the only move that changes `B` is a trusted event.
+
+With three sets kept apart (`axor_core/kernel/authority.py`):
+
+```
+A₀   what the policy makes callable now        (CapabilityResolver.resolve)
+G    what the operator declared grantable      (escalation_policy.grantable_tools)
+B    the trusted ceiling for this turn         (A₀ ∪ G, after parent + overlay composition)
+A_t  what is in force right now                (A₀ plus live authority, minus what the
+                                                degradation level refuses)
+```
+
+**Why it is not "the composition contains no union."** That phrasing cannot
+describe a system with lawful recovery: an escalation legitimately *extends* what
+is in force. The content is a containment invariant plus a closed, typed set of
+moves — `NARROW`, `RESTORE_CLASS`, `RESTORE_CALL`, `SPEND`, `SET_CEILING` — each
+with its own legality condition. A transition is typed by its **cause**, declared
+by the caller and checked against the two states (`authority.check`), because the
+cause is not always visible in the states: a trusted re-assertion of the turn's
+policy is a `SET_CEILING` even when the ceiling value is unchanged. Where no cause
+is available, `authority.classify` infers one and reports an unexplained widening —
+that inference path is the silent-widening detector, not the primary check.
+
+**K5 splits in two, and only the first half is about authority composition:**
+
+```
+  A_t ⊆ B(t)                       authority composition — this claim
+  execute(s, e) ⟹ e ∈ A_t          policy enforcement — the gate sequence + O3
+```
+
+Neither half implies the other. A correct lattice says nothing about a labeller or
+a normalizer admitting an effect outside what is in force; complete mediation says
+nothing about where the ceiling came from.
+
+**Status.** The containment half is machine-checked over random interleavings of
+the real engines (not a model of them: every view is read back through
+`axor_core/node/authority_probe.py` from the policy, the degradation engine, the
+capability resolver and the escalation manager's own tables). The enforcement half
+is O1/O3 above. What is *not* claimed: that the authority a transition restores is
+*appropriate* — only that it stays inside a ceiling the untrusted side cannot
+move; and that the policy's description of an effect is precise enough, which is
+`validate_effect_coverage` and explicitly advisory.
+
+**Two carve-outs, declared rather than assumed:**
+
+- `escalate` / `escalate_policy` are intent kinds the loop handles itself, never
+  governed sinks, and the degradation engine adds them at LOCKED ("everything
+  frozen except read + escalate"). The containment check excludes them —
+  `KERNEL_INTERNAL_INTENTS` — and the state machine asserts that nothing *else*
+  ever appears there, so a real tool riding the exemption fails the build.
+- Authority does not outlive the turn it was granted in: the `IntentLoop`, and
+  with it the `EscalationManager`, is constructed inside `GovernedNode.run`. That
+  is what keeps `A_t ⊆ B` across a ceiling that drops. If authority is ever hoisted
+  to session scope, lowering a ceiling will have to retract authority above it; the
+  state machine already detects that case
+  (`test_a_ceiling_that_drops_under_live_authority_is_caught`).
+
+| Obligation | What it requires | Pinned by |
+|---|---|---|
+| **K5-1** containment | `A_t ⊆ B` on tools, paths and the unattended consequence ceiling, at every step | `tests/invariants/test_authority_transitions.py` (`AuthorityMachine`, invariant after every rule); `axor_core/kernel/authority.py::violations` |
+| **K5-2** typed transitions | every move is one of five kinds and satisfies that kind's condition; an undeclared widening is reported | `authority.check` / `authority.classify`; `tests/invariants/test_authority_transitions.py` (hand-built illegal pairs: restoration of a non-grantable tool, spend that widens, authority with no record) |
+| **K5-3** one step never widens its trusted operand | each composition entry point (parent restriction, deployment overlay, extension overrides) returns no authority wider than its trusted operand, over **every** declared authority field | `tests/invariants/test_authority_ceiling_sweep.py` (field set derived from `AuthorityPolicy`, so a new field without a declared order fails the build) |
+| **K5-4** delegation ≠ availability | `G` is not callable before a grant; a grant is validated against `A₀ ∪ G`; an authorised call is dispatched with `A₀ ∪ {that tool}` and the tool is out of reach again once spent | `tests/capability/test_lease_validator.py` (`delegation_ceiling`); `tests/node/test_call_bound_authority.py::test_a_grantable_tool_is_unreachable_until_granted_and_after_spending` |
+| **K5-5** authority stays current | a call authorisation is bound to one call, re-checked against mutable state after the approval await, spent atomically, and discarded if it cannot be used now | `tests/node/test_call_bound_authority.py` (floor armed / cancelled during the wait, two concurrent claimants, replaced argument) |
+| **K5** scope | the model is read from the live objects, never maintained alongside them | `axor_core/node/authority_probe.py`; `EscalationManager.authority_records`; `DegradationEngine.tool_denial` (one source for what a level permits, read by both the enforcement path and the probe) |
+
+---
+
 ## 2. The three structural obligations (O1 / O2 / O3)
 
 The theorem decomposes into three obligations. Each is a property of the

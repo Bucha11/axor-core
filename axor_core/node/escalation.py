@@ -112,6 +112,15 @@ class _GrantedEscalation:
     ops_remaining: int
 
 
+@dataclass(frozen=True)
+class AuthorityRecords:
+    """What authority a manager holds, as data (see
+    :meth:`EscalationManager.authority_records`)."""
+    class_grants: frozenset[str]
+    unspent_calls: frozenset[tuple[str, str]]
+    spent_calls: frozenset[tuple[str, str]]
+
+
 @dataclass
 class _CallEvidence:
     """CALL-scoped authority: one approved call, not yet spent.
@@ -172,6 +181,33 @@ class EscalationManager:
         self._escalation_count = 0
         self._flood_guard = EscalationFloodGuard()
         self._escalation_callback = adapt_escalation_callback(escalation_callback)
+
+    def authority_records(self) -> "AuthorityRecords":
+        """A read-only snapshot of what authority this manager currently holds.
+
+        Exists so the authority-state probe
+        (:mod:`axor_core.node.authority_probe`) reads the real tables instead of
+        keeping a parallel copy of them. Expired or exhausted leases are left out:
+        they authorise nothing, and counting them would make the state machine
+        believe authority is in force when it is not.
+        """
+        live_leases = frozenset(
+            tool for tool, lease in self._capability_leases.items()
+            if self._lease_validator.is_valid(lease)
+        )
+        return AuthorityRecords(
+            class_grants=frozenset(self._granted_escalations) | live_leases,
+            unspent_calls=frozenset(
+                (ev.tool, digest)
+                for digest, ev in self._call_evidence.items()
+                if not ev.claimed
+            ),
+            spent_calls=frozenset(
+                (ev.tool, digest)
+                for digest, ev in self._call_evidence.items()
+                if ev.claimed
+            ),
+        )
 
     def covers(
         self, tool_name: str, tool_args: dict | None = None, *, scope: str = ""

@@ -1592,28 +1592,12 @@ class IntentLoop:
         if self._degradation_engine is None:
             return None
         source_id = self._degradation_engine.derive_source_id(normalized, driving_root)
-        effective = self._degradation_engine.apply_to_policy(envelope.policy, source_id)
-        # LOCKED/TERMINAL: only read + escalate allowed
-        level = self._degradation_engine.state.level
-        if level >= DegradationLevel.LOCKED:
-            if tool_name.lower() not in _LOCKED_ALLOWED_TOOLS:
-                return (
-                    f"degradation enforcement: session is {level.name} — "
-                    f"tool '{tool_name}' is not permitted (only read/escalate allowed)"
-                )
-        # RESTRICTED: write/bash/export removed for quarantined source
-        elif level == DegradationLevel.RESTRICTED:
-            if not effective.tool_policy.allow_bash and tool_name.lower() in {"bash", "shell", "execute", "run"}:
-                return (
-                    f"degradation enforcement: source '{source_id}' is quarantined — "
-                    f"tool '{tool_name}' (bash/execute) is restricted"
-                )
-            if not effective.tool_policy.allow_write and tool_name.lower() in {"write", "edit", "multiedit"}:
-                return (
-                    f"degradation enforcement: source '{source_id}' is quarantined — "
-                    f"tool '{tool_name}' (write) is restricted"
-                )
-        return None
+        # The level's rules live with the state they read (DegradationEngine), so
+        # this path and the authority probe cannot disagree about what a level
+        # permits.
+        return self._degradation_engine.tool_denial(
+            tool_name, envelope.policy, source_id
+        )
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
