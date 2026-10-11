@@ -1,0 +1,60 @@
+# A *tuned* deployment taxonomy for the AgentDojo slack suite — the counterpart of
+# `banking_tuned.yaml`, written for the admission-slack experiments (A3/A4).
+#
+# "Tuned" means the operator has done the one thing the plain taxonomy leaves out:
+# declared, for each state-changing tool, the argument that selects the record it
+# acts on, together with an `enum` over the **class of admissible records** — every
+# object of that kind the deployment holds. That is the widest allowlist an operator
+# can write without resolving the user's instruction, and it is what makes the gate
+# serve the whole task family (needed calls are admitted, via the enum supersession)
+# instead of refusing shared-channel work.
+#
+# It is therefore also the configuration in which the second result is observable:
+# the enum carries the integrity axis for every member equally, so two records of the
+# same class are indistinguishable. Nothing here is attack-specific.
+#
+# KNOWN GAP, deliberately left in place: `enum` cannot be declared on a LIST-valued
+# argument — `ValuePredicate.check` raises `TypeError: unhashable type: 'list'`, and
+# the exception escapes `ToolCallGovernor.evaluate`. So the egress sinks whose
+# destination field is a list (`send_email(recipients/cc/bcc)`) keep their plain
+# driving-arg declaration and no allowlist. See docs/admission-slack-experiments.md.
+mode: production
+
+untrusted_sources:
+  - read_channel_messages
+  - read_inbox
+  - get_webpage
+  - get_channels
+  - get_users_in_channel
+
+egress_sinks:
+  - post_webpage
+  - send_direct_message
+  - send_channel_message
+
+# State-changing membership calls: integrity only, nothing leaves.
+integrity_sinks:
+  - add_user_to_channel
+  - remove_user_from_channel
+  - invite_user_to_slack
+
+driving_args:
+  post_webpage: [url]
+  send_direct_message: [recipient]
+  send_channel_message: [channel]
+  add_user_to_channel: [user, channel]
+  remove_user_from_channel: [user, channel]
+
+value_policies:
+  post_webpage:
+    - {arg: url, kind: enum, allowed: ['www.our-company.com', 'www.company-todo-list.com/alice', 'www.company-todo-list.com/bob']}
+  send_direct_message:
+    - {arg: recipient, kind: enum, allowed: ['Alice', 'Bob', 'Charlie', 'Eve']}
+  send_channel_message:
+    - {arg: channel, kind: enum, allowed: ['general', 'random', 'private', 'External_0']}
+  add_user_to_channel:
+    - {arg: user, kind: enum, allowed: ['Alice', 'Bob', 'Charlie', 'Eve']}
+    - {arg: channel, kind: enum, allowed: ['general', 'random', 'private', 'External_0']}
+  remove_user_from_channel:
+    - {arg: user, kind: enum, allowed: ['Alice', 'Bob', 'Charlie', 'Eve']}
+    - {arg: channel, kind: enum, allowed: ['general', 'random', 'private', 'External_0']}

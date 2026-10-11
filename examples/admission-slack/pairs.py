@@ -58,6 +58,7 @@ from agentdojo.functions_runtime import FunctionsRuntime  # noqa: E402
 from agentdojo.task_suite.load_suites import get_suites  # noqa: E402
 
 from axor_core.config import GovernanceConfig  # noqa: E402
+from axor_core.contracts.canonical import ConsequenceClass  # noqa: E402
 from axor_core.governor import ToolCallGovernor  # noqa: E402
 
 from harvest import plan_values, pools, prompt_values, shape  # noqa: E402
@@ -123,6 +124,10 @@ class CallRecord:
     driving_sources: list[str]
     arg_origins: dict[str, list[str]]
     floor_active: bool
+    superseded: bool
+    driving_values: dict[str, Any]
+    driving_origins: dict[str, str | None]
+    fragile_occurrence: list[str]
 
 
 @dataclass
@@ -166,10 +171,43 @@ def governor_for(
     *,
     declare_effectful: bool = False,
     suite_obj: Any = None,
+    lift_consequence: "list[str] | None" = None,
+    origins: str | None = None,
+    neutral: bool = False,
 ) -> tuple[ToolCallGovernor, GovernanceConfig]:
+    """Build the deployment under test.
+
+    The knobs exist for the experiment matrix, and each isolates one variable:
+
+    ``lift_consequence``  grant the escalation the consequence gate asks for on
+                          these tools (classify them at the unattended ceiling), so
+                          a needed call refused by the *action-class* gate — a knob
+                          orthogonal to the observation language — stops masking
+                          whatever the language does or does not separate.
+    ``origins``           the integrity-origin mode (``request-only`` admits TASK and
+                          OPERATOR only; ``any-trusted`` is the kernel default).
+    ``neutral``           drop the operator's taxonomy entirely and keep only the
+                          mode: the monitor then runs on the normalizer's name
+                          heuristics, which is the "neutral table" baseline.
+    """
     cfg = GovernanceConfig.from_yaml(os.path.join(_CONFIG_DIR, config or f"{suite}.yaml"))
+    if neutral:
+        cfg = dataclasses.replace(
+            cfg, untrusted_sources=frozenset(), sensitive_sources=frozenset(),
+            egress_sinks=frozenset(), integrity_sinks=frozenset(),
+            positional_sinks=frozenset(), imperative_sinks=frozenset(),
+            benign_tools=frozenset(), value_policies={}, driving_args={},
+            consequence_overrides={},
+        )
     if integrity:
         cfg = dataclasses.replace(cfg, integrity_default=integrity)
+    if origins:
+        cfg = dataclasses.replace(cfg, integrity_origins=origins)
+    if lift_consequence:
+        overrides = dict(cfg.consequence_overrides)
+        for name in lift_consequence:
+            overrides[name] = ConsequenceClass.CONSEQUENTIAL
+        cfg = dataclasses.replace(cfg, consequence_overrides=overrides)
     if declare_effectful and suite_obj is not None:
         tools = {t.name: t for t in suite_obj.tools}
         eff = effectful_tools(suite_obj, cfg)
@@ -315,15 +353,25 @@ def run_suite(
     tasks: list[str] | None = None,
     max_per_arg: int = MAX_PER_ARG,
     declare_effectful: bool = False,
+    lift_consequence: "list[str] | None" = None,
+    origins: str | None = None,
+    neutral: bool = False,
+    occurrence_min_len: int = 5,
     verbose: bool = True,
 ) -> SuiteResult:
     suite_obj = get_suites("v1")[suite_name]
-    _, cfg0 = governor_for(
-        suite_name, config, integrity,
+    knobs = dict(
         declare_effectful=declare_effectful, suite_obj=suite_obj,
+        lift_consequence=lift_consequence, origins=origins, neutral=neutral,
     )
+    _, cfg0 = governor_for(suite_name, config, integrity, **knobs)
     effectful = effectful_tools(suite_obj, cfg0)
-    label = (config or f"{suite_name}.yaml") + ("+declared" if declare_effectful else "")
+    label = (config or f"{suite_name}.yaml") + "".join([
+        "+declared" if declare_effectful else "",
+        "+neutral" if neutral else "",
+        f"+{origins}" if origins else "",
+        "+lifted" if lift_consequence else "",
+    ])
     result = SuiteResult(
         suite=suite_name, config=label, integrity=integrity, max_per_arg=max_per_arg,
     )
@@ -342,10 +390,7 @@ def run_suite(
             result.plan_replay_errors.append(f"{task_id}: ground_truth {type(exc).__name__}: {exc}")
             continue
         runtime = FunctionsRuntime(suite_obj.tools)
-        governor, _ = governor_for(
-            suite_name, config, integrity,
-            declare_effectful=declare_effectful, suite_obj=suite_obj,
-        )
+        governor, _ = governor_for(suite_name, config, integrity, **knobs)
         governor.register_task(task.PROMPT)
         needed = plan_values(plan)
         prompt_candidates = prompt_values(task.PROMPT)
@@ -357,6 +402,7 @@ def run_suite(
                 saw_effect = True
                 orig = decide(governor, tool, args)
                 pi_orig = projection(governor, tool, args)
+                frag = fragile_occurrences(governor, tool, args, min_len=occurrence_min_len)
                 result.calls.append(CallRecord(
                     suite=suite_name, task=task_id, step=step, tool=tool,
                     args={k: _jsonable(v) for k, v in args.items()},
@@ -367,6 +413,13 @@ def run_suite(
                         k: sorted(_sources_of(governor, v)) for k, v in args.items()
                     },
                     floor_active=pi_orig["floor_active"],
+                    superseded=bool(pi_orig["integrity_superseded"]),
+                    driving_values={
+                        a: _jsonable(args[a])
+                        for a in sorted(governor._driving_args.get(tool, ())) if a in args
+                    },
+                    driving_origins=_driving_origins(governor, tool, args),
+                    fragile_occurrence=frag,
                 ))
                 env_pools, env_slots = pools(env)
                 drivers = set(governor._driving_args.get(tool, ()))
@@ -438,6 +491,49 @@ def run_suite(
     return result
 
 
+def _driving_origins(
+    governor: ToolCallGovernor, tool: str, args: dict[str, Any]
+) -> dict[str, str | None]:
+    """The trusted origin of each driving value, as the kernel resolved it."""
+    out: dict[str, str | None] = {}
+    for a in sorted(governor._driving_args.get(tool, ())):
+        if a not in args:
+            continue
+        v = args[a]
+        probe = v[0] if isinstance(v, list) and v else v
+        origin = governor._taint.trusted_origin(probe)
+        out[a] = origin.value if origin is not None else None
+    return out
+
+
+def fragile_occurrences(
+    governor: ToolCallGovernor, tool: str, args: dict[str, Any], *, min_len: int = 5
+) -> list[str]:
+    """Driving arguments whose TASK origin rests on an occurrence that could be
+    accidental.
+
+    Trust under context-default integrity is awarded by a token-bounded *span
+    match* of the value against the user's request. For a short or purely numeric
+    value ("7", "Bob", "general") that match establishes no causal dependence: the
+    token could appear in the request for an unrelated reason. This flags those
+    cases so the census can be recomputed with them withheld (E2); it does not
+    change any verdict by itself.
+    """
+    flagged: list[str] = []
+    for a in sorted(governor._driving_args.get(tool, ())):
+        if a not in args:
+            continue
+        v = args[a]
+        probe = v[0] if isinstance(v, list) and v else v
+        origin = governor._taint.trusted_origin(probe)
+        if origin is None or origin.value != "task":
+            continue
+        text = str(probe).strip()
+        if len(text) < min_len or text.replace(".", "", 1).isdigit():
+            flagged.append(a)
+    return flagged
+
+
 def _sources_of(governor: ToolCallGovernor, value: Any) -> list[str]:
     from axor_core.policy.provenance import source_tokens
 
@@ -469,6 +565,14 @@ def _jsonable(v: Any) -> Any:
     if isinstance(v, dict):
         return {str(k): _jsonable(x) for k, x in v.items()}
     return str(v)
+
+
+def _refusals(res: SuiteResult) -> dict[str, int]:
+    out: dict[str, int] = {}
+    for c in res.calls:
+        if not c.verdict["allowed"]:
+            out[c.verdict["category"]] = out.get(c.verdict["category"], 0) + 1
+    return out
 
 
 def summarise(res: SuiteResult) -> dict[str, Any]:
@@ -518,6 +622,14 @@ def summarise(res: SuiteResult) -> dict[str, Any]:
         "referential_tasks": len({p.task for p in referential}),
         "referential_by_cause": causes,
         "max_per_arg": res.max_per_arg,
+        # A4: how often the enum supersession actually carries the integrity axis.
+        "calls_superseded": sum(1 for c in res.calls if c.superseded),
+        "calls_allowed_superseded": sum(
+            1 for c in res.calls if c.superseded and c.verdict["allowed"]),
+        # E2: verdicts resting on an occurrence that could be accidental.
+        "allowed_calls_on_fragile_occurrence": sum(
+            1 for c in res.calls if c.verdict["allowed"] and c.fragile_occurrence),
+        "refusal_categories": _refusals(res),
         "denied_substitutions_with_allowed_original": sum(
             1 for p in res.pairs if p.bucket == "orig_allowed_sub_denied"),
         "pi_violations": len(res.pi_violations),
@@ -532,6 +644,16 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--integrity", default="context", choices=("context", "clean"))
     ap.add_argument("--task", action="append", help="restrict to these user task ids")
     ap.add_argument("--max-per-arg", type=int, default=MAX_PER_ARG)
+    ap.add_argument("--lift-consequence", help="comma-separated tools to classify at "
+                    "the unattended ceiling (grant the escalation the consequence "
+                    "gate asks for)")
+    ap.add_argument("--origins", choices=("request-only", "any-trusted"),
+                    help="integrity-origin mode")
+    ap.add_argument("--neutral", action="store_true",
+                    help="drop the operator taxonomy entirely (name heuristics only)")
+    ap.add_argument("--occurrence-min-len", type=int, default=5,
+                    help="below this length a TASK-origin span match is flagged as "
+                         "possibly accidental (E2 audit; changes no verdict)")
     ap.add_argument(
         "--declare-effectful", action="store_true",
         help="widen the taxonomy: declare every effectful tool an integrity sink and "
@@ -548,6 +670,9 @@ def main(argv: list[str] | None = None) -> int:
         res = run_suite(
             name, config=args.config, integrity=args.integrity, tasks=args.task,
             max_per_arg=args.max_per_arg, declare_effectful=args.declare_effectful,
+            lift_consequence=[t for t in (args.lift_consequence or "").split(",") if t],
+            origins=args.origins, neutral=args.neutral,
+            occurrence_min_len=args.occurrence_min_len,
         )
         s = summarise(res)
         summaries.append(s)

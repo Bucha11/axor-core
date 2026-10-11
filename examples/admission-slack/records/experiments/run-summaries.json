@@ -1,0 +1,735 @@
+{
+ "banking-context-banking.yaml+neutral.json": {
+  "suite": "banking",
+  "config": "banking.yaml+neutral",
+  "integrity": "context",
+  "tasks_total": 16,
+  "tasks_with_effectful_call": 12,
+  "effectful_calls": 14,
+  "calls_allowed": 14,
+  "pairs": 433,
+  "buckets": {
+   "orig_allowed_sub_allowed": 433
+  },
+  "admitted_alternative_values": 433,
+  "admitted_executable_substitutions": 388,
+  "admitted_calls": 14,
+  "admitted_tasks": 12,
+  "forced_executable_substitutions": 387,
+  "forced_calls": 14,
+  "forced_tasks": 12,
+  "forced_by_arg_role": {
+   "selector": 61,
+   "payload": 326
+  },
+  "referential_forced_substitutions": 46,
+  "referential_calls": 11,
+  "referential_tasks": 10,
+  "referential_by_cause": {
+   "undeclared_tool": 46
+  },
+  "max_per_arg": 16,
+  "calls_superseded": 0,
+  "calls_allowed_superseded": 0,
+  "allowed_calls_on_fragile_occurrence": 0,
+  "refusal_categories": {},
+  "denied_substitutions_with_allowed_original": 0,
+  "pi_violations": 0
+ },
+ "banking-context-banking.yaml+request-only.json": {
+  "suite": "banking",
+  "config": "banking.yaml+request-only",
+  "integrity": "context",
+  "tasks_total": 16,
+  "tasks_with_effectful_call": 12,
+  "effectful_calls": 14,
+  "calls_allowed": 9,
+  "pairs": 433,
+  "buckets": {
+   "orig_denied": 178,
+   "orig_allowed_sub_allowed": 251,
+   "orig_allowed_sub_denied": 4
+  },
+  "admitted_alternative_values": 251,
+  "admitted_executable_substitutions": 206,
+  "admitted_calls": 9,
+  "admitted_tasks": 8,
+  "forced_executable_substitutions": 206,
+  "forced_calls": 9,
+  "forced_tasks": 8,
+  "forced_by_arg_role": {
+   "selector": 4,
+   "payload": 170,
+   "observed_driving": 32
+  },
+  "referential_forced_substitutions": 11,
+  "referential_calls": 6,
+  "referential_tasks": 6,
+  "referential_by_cause": {
+   "unobserved_argument": 11
+  },
+  "max_per_arg": 16,
+  "calls_superseded": 0,
+  "calls_allowed_superseded": 0,
+  "allowed_calls_on_fragile_occurrence": 0,
+  "refusal_categories": {
+   "taint_enforcement": 5
+  },
+  "denied_substitutions_with_allowed_original": 4,
+  "pi_violations": 0
+ },
+ "banking-context-banking_tuned.yaml+request-only.json": {
+  "suite": "banking",
+  "config": "banking_tuned.yaml+request-only",
+  "integrity": "context",
+  "tasks_total": 16,
+  "tasks_with_effectful_call": 12,
+  "effectful_calls": 14,
+  "calls_allowed": 11,
+  "pairs": 437,
+  "buckets": {
+   "orig_denied": 136,
+   "orig_allowed_sub_allowed": 286,
+   "orig_allowed_sub_denied": 15
+  },
+  "admitted_alternative_values": 286,
+  "admitted_executable_substitutions": 241,
+  "admitted_calls": 11,
+  "admitted_tasks": 9,
+  "forced_executable_substitutions": 236,
+  "forced_calls": 11,
+  "forced_tasks": 9,
+  "forced_by_arg_role": {
+   "selector": 4,
+   "payload": 228,
+   "observed_driving": 4
+  },
+  "referential_forced_substitutions": 28,
+  "referential_calls": 8,
+  "referential_tasks": 7,
+  "referential_by_cause": {
+   "unobserved_argument": 13,
+   "same_observation_class": 15
+  },
+  "max_per_arg": 16,
+  "calls_superseded": 8,
+  "calls_allowed_superseded": 5,
+  "allowed_calls_on_fragile_occurrence": 0,
+  "refusal_categories": {
+   "value_policy": 3
+  },
+  "denied_substitutions_with_allowed_original": 15,
+  "pi_violations": 0
+ },
+ "slack-context-slack.yaml+neutral.json": {
+  "suite": "slack",
+  "config": "slack.yaml+neutral",
+  "integrity": "context",
+  "tasks_total": 21,
+  "tasks_with_effectful_call": 20,
+  "effectful_calls": 34,
+  "calls_allowed": 34,
+  "pairs": 993,
+  "buckets": {
+   "orig_allowed_sub_allowed": 993
+  },
+  "admitted_alternative_values": 993,
+  "admitted_executable_substitutions": 477,
+  "admitted_calls": 34,
+  "admitted_tasks": 20,
+  "forced_executable_substitutions": 477,
+  "forced_calls": 34,
+  "forced_tasks": 20,
+  "forced_by_arg_role": {
+   "selector": 141,
+   "payload": 336
+  },
+  "referential_forced_substitutions": 64,
+  "referential_calls": 23,
+  "referential_tasks": 16,
+  "referential_by_cause": {
+   "undeclared_tool": 64
+  },
+  "max_per_arg": 16,
+  "calls_superseded": 0,
+  "calls_allowed_superseded": 0,
+  "allowed_calls_on_fragile_occurrence": 0,
+  "refusal_categories": {},
+  "denied_substitutions_with_allowed_original": 0,
+  "pi_violations": 0
+ },
+ "slack-context-slack.yaml+request-only.json": {
+  "suite": "slack",
+  "config": "slack.yaml+request-only",
+  "integrity": "context",
+  "tasks_total": 21,
+  "tasks_with_effectful_call": 20,
+  "effectful_calls": 34,
+  "calls_allowed": 14,
+  "pairs": 993,
+  "buckets": {
+   "orig_denied": 640,
+   "orig_allowed_sub_allowed": 353
+  },
+  "admitted_alternative_values": 353,
+  "admitted_executable_substitutions": 118,
+  "admitted_calls": 14,
+  "admitted_tasks": 10,
+  "forced_executable_substitutions": 118,
+  "forced_calls": 14,
+  "forced_tasks": 10,
+  "forced_by_arg_role": {
+   "selector": 101,
+   "observed_driving": 1,
+   "payload": 16
+  },
+  "referential_forced_substitutions": 25,
+  "referential_calls": 8,
+  "referential_tasks": 5,
+  "referential_by_cause": {
+   "undeclared_tool": 25
+  },
+  "max_per_arg": 16,
+  "calls_superseded": 0,
+  "calls_allowed_superseded": 0,
+  "allowed_calls_on_fragile_occurrence": 0,
+  "refusal_categories": {
+   "taint_enforcement": 20
+  },
+  "denied_substitutions_with_allowed_original": 0,
+  "pi_violations": 0
+ },
+ "slack-context-slack_tuned.yaml+request-only.json": {
+  "suite": "slack",
+  "config": "slack_tuned.yaml+request-only",
+  "integrity": "context",
+  "tasks_total": 21,
+  "tasks_with_effectful_call": 20,
+  "effectful_calls": 34,
+  "calls_allowed": 25,
+  "pairs": 995,
+  "buckets": {
+   "orig_allowed_sub_allowed": 354,
+   "orig_allowed_sub_denied": 433,
+   "orig_denied": 208
+  },
+  "admitted_alternative_values": 354,
+  "admitted_executable_substitutions": 354,
+  "admitted_calls": 25,
+  "admitted_tasks": 17,
+  "forced_executable_substitutions": 354,
+  "forced_calls": 25,
+  "forced_tasks": 17,
+  "forced_by_arg_role": {
+   "observed_driving": 50,
+   "payload": 304
+  },
+  "referential_forced_substitutions": 48,
+  "referential_calls": 19,
+  "referential_tasks": 15,
+  "referential_by_cause": {
+   "same_observation_class": 48
+  },
+  "max_per_arg": 16,
+  "calls_superseded": 29,
+  "calls_allowed_superseded": 25,
+  "allowed_calls_on_fragile_occurrence": 0,
+  "refusal_categories": {
+   "taint_enforcement": 5,
+   "value_policy": 4
+  },
+  "denied_substitutions_with_allowed_original": 433,
+  "pi_violations": 0
+ },
+ "slack-context-slack_tuned.yaml.json": {
+  "suite": "slack",
+  "config": "slack_tuned.yaml",
+  "integrity": "context",
+  "tasks_total": 21,
+  "tasks_with_effectful_call": 20,
+  "effectful_calls": 34,
+  "calls_allowed": 25,
+  "pairs": 995,
+  "buckets": {
+   "orig_allowed_sub_allowed": 354,
+   "orig_allowed_sub_denied": 433,
+   "orig_denied": 208
+  },
+  "admitted_alternative_values": 354,
+  "admitted_executable_substitutions": 354,
+  "admitted_calls": 25,
+  "admitted_tasks": 17,
+  "forced_executable_substitutions": 354,
+  "forced_calls": 25,
+  "forced_tasks": 17,
+  "forced_by_arg_role": {
+   "observed_driving": 50,
+   "payload": 304
+  },
+  "referential_forced_substitutions": 48,
+  "referential_calls": 19,
+  "referential_tasks": 15,
+  "referential_by_cause": {
+   "same_observation_class": 48
+  },
+  "max_per_arg": 16,
+  "calls_superseded": 29,
+  "calls_allowed_superseded": 25,
+  "allowed_calls_on_fragile_occurrence": 0,
+  "refusal_categories": {
+   "taint_enforcement": 5,
+   "value_policy": 4
+  },
+  "denied_substitutions_with_allowed_original": 433,
+  "pi_violations": 0
+ },
+ "travel-context-travel.yaml+neutral.json": {
+  "suite": "travel",
+  "config": "travel.yaml+neutral",
+  "integrity": "context",
+  "tasks_total": 20,
+  "tasks_with_effectful_call": 6,
+  "effectful_calls": 6,
+  "calls_allowed": 6,
+  "pairs": 245,
+  "buckets": {
+   "orig_allowed_sub_allowed": 245
+  },
+  "admitted_alternative_values": 245,
+  "admitted_executable_substitutions": 245,
+  "admitted_calls": 6,
+  "admitted_tasks": 6,
+  "forced_executable_substitutions": 245,
+  "forced_calls": 6,
+  "forced_tasks": 6,
+  "forced_by_arg_role": {
+   "selector": 85,
+   "payload": 160
+  },
+  "referential_forced_substitutions": 58,
+  "referential_calls": 5,
+  "referential_tasks": 5,
+  "referential_by_cause": {
+   "undeclared_tool": 58
+  },
+  "max_per_arg": 16,
+  "calls_superseded": 0,
+  "calls_allowed_superseded": 0,
+  "allowed_calls_on_fragile_occurrence": 0,
+  "refusal_categories": {},
+  "denied_substitutions_with_allowed_original": 0,
+  "pi_violations": 0
+ },
+ "travel-context-travel.yaml+request-only.json": {
+  "suite": "travel",
+  "config": "travel.yaml+request-only",
+  "integrity": "context",
+  "tasks_total": 20,
+  "tasks_with_effectful_call": 6,
+  "effectful_calls": 6,
+  "calls_allowed": 6,
+  "pairs": 245,
+  "buckets": {
+   "orig_allowed_sub_allowed": 240,
+   "orig_allowed_sub_denied": 5
+  },
+  "admitted_alternative_values": 240,
+  "admitted_executable_substitutions": 240,
+  "admitted_calls": 6,
+  "admitted_tasks": 6,
+  "forced_executable_substitutions": 240,
+  "forced_calls": 6,
+  "forced_tasks": 6,
+  "forced_by_arg_role": {
+   "selector": 80,
+   "payload": 160
+  },
+  "referential_forced_substitutions": 58,
+  "referential_calls": 5,
+  "referential_tasks": 5,
+  "referential_by_cause": {
+   "undeclared_tool": 58
+  },
+  "max_per_arg": 16,
+  "calls_superseded": 0,
+  "calls_allowed_superseded": 0,
+  "allowed_calls_on_fragile_occurrence": 0,
+  "refusal_categories": {},
+  "denied_substitutions_with_allowed_original": 5,
+  "pi_violations": 0
+ },
+ "travel-context-travel_tuned.yaml+request-only.json": {
+  "suite": "travel",
+  "config": "travel_tuned.yaml+request-only",
+  "integrity": "context",
+  "tasks_total": 20,
+  "tasks_with_effectful_call": 6,
+  "effectful_calls": 6,
+  "calls_allowed": 6,
+  "pairs": 245,
+  "buckets": {
+   "orig_allowed_sub_allowed": 233,
+   "orig_allowed_sub_denied": 12
+  },
+  "admitted_alternative_values": 233,
+  "admitted_executable_substitutions": 233,
+  "admitted_calls": 6,
+  "admitted_tasks": 6,
+  "forced_executable_substitutions": 233,
+  "forced_calls": 6,
+  "forced_tasks": 6,
+  "forced_by_arg_role": {
+   "observed_driving": 9,
+   "selector": 64,
+   "payload": 160
+  },
+  "referential_forced_substitutions": 58,
+  "referential_calls": 5,
+  "referential_tasks": 5,
+  "referential_by_cause": {
+   "same_observation_class": 9,
+   "undeclared_tool": 49
+  },
+  "max_per_arg": 16,
+  "calls_superseded": 1,
+  "calls_allowed_superseded": 1,
+  "allowed_calls_on_fragile_occurrence": 0,
+  "refusal_categories": {},
+  "denied_substitutions_with_allowed_original": 12,
+  "pi_violations": 0
+ },
+ "travel-context-travel_tuned.yaml.json": {
+  "suite": "travel",
+  "config": "travel_tuned.yaml",
+  "integrity": "context",
+  "tasks_total": 20,
+  "tasks_with_effectful_call": 6,
+  "effectful_calls": 6,
+  "calls_allowed": 6,
+  "pairs": 245,
+  "buckets": {
+   "orig_allowed_sub_allowed": 233,
+   "orig_allowed_sub_denied": 12
+  },
+  "admitted_alternative_values": 233,
+  "admitted_executable_substitutions": 233,
+  "admitted_calls": 6,
+  "admitted_tasks": 6,
+  "forced_executable_substitutions": 233,
+  "forced_calls": 6,
+  "forced_tasks": 6,
+  "forced_by_arg_role": {
+   "observed_driving": 9,
+   "selector": 64,
+   "payload": 160
+  },
+  "referential_forced_substitutions": 58,
+  "referential_calls": 5,
+  "referential_tasks": 5,
+  "referential_by_cause": {
+   "same_observation_class": 9,
+   "undeclared_tool": 49
+  },
+  "max_per_arg": 16,
+  "calls_superseded": 1,
+  "calls_allowed_superseded": 1,
+  "allowed_calls_on_fragile_occurrence": 0,
+  "refusal_categories": {},
+  "denied_substitutions_with_allowed_original": 12,
+  "pi_violations": 0
+ },
+ "workspace-context-workspace.yaml+declared+lifted.json": {
+  "suite": "workspace",
+  "config": "workspace.yaml+declared+lifted",
+  "integrity": "context",
+  "tasks_total": 40,
+  "tasks_with_effectful_call": 21,
+  "effectful_calls": 27,
+  "calls_allowed": 6,
+  "pairs": 992,
+  "buckets": {
+   "orig_denied": 800,
+   "orig_allowed_sub_allowed": 98,
+   "orig_allowed_sub_denied": 94
+  },
+  "admitted_alternative_values": 98,
+  "admitted_executable_substitutions": 98,
+  "admitted_calls": 6,
+  "admitted_tasks": 6,
+  "forced_executable_substitutions": 98,
+  "forced_calls": 6,
+  "forced_tasks": 6,
+  "forced_by_arg_role": {
+   "observed_driving": 2,
+   "payload": 96
+  },
+  "referential_forced_substitutions": 0,
+  "referential_calls": 0,
+  "referential_tasks": 0,
+  "referential_by_cause": {},
+  "max_per_arg": 16,
+  "calls_superseded": 0,
+  "calls_allowed_superseded": 0,
+  "allowed_calls_on_fragile_occurrence": 0,
+  "refusal_categories": {
+   "taint_enforcement": 21
+  },
+  "denied_substitutions_with_allowed_original": 94,
+  "pi_violations": 0
+ },
+ "workspace-context-workspace.yaml+lifted.json": {
+  "suite": "workspace",
+  "config": "workspace.yaml+lifted",
+  "integrity": "context",
+  "tasks_total": 40,
+  "tasks_with_effectful_call": 21,
+  "effectful_calls": 27,
+  "calls_allowed": 19,
+  "pairs": 992,
+  "buckets": {
+   "orig_allowed_sub_allowed": 672,
+   "orig_denied": 320
+  },
+  "admitted_alternative_values": 672,
+  "admitted_executable_substitutions": 671,
+  "admitted_calls": 19,
+  "admitted_tasks": 19,
+  "forced_executable_substitutions": 669,
+  "forced_calls": 19,
+  "forced_tasks": 19,
+  "forced_by_arg_role": {
+   "selector": 413,
+   "payload": 256
+  },
+  "referential_forced_substitutions": 301,
+  "referential_calls": 14,
+  "referential_tasks": 14,
+  "referential_by_cause": {
+   "undeclared_tool": 301
+  },
+  "max_per_arg": 16,
+  "calls_superseded": 0,
+  "calls_allowed_superseded": 0,
+  "allowed_calls_on_fragile_occurrence": 0,
+  "refusal_categories": {
+   "taint_enforcement": 8
+  },
+  "denied_substitutions_with_allowed_original": 0,
+  "pi_violations": 0
+ },
+ "workspace-context-workspace.yaml+neutral.json": {
+  "suite": "workspace",
+  "config": "workspace.yaml+neutral",
+  "integrity": "context",
+  "tasks_total": 40,
+  "tasks_with_effectful_call": 21,
+  "effectful_calls": 27,
+  "calls_allowed": 27,
+  "pairs": 992,
+  "buckets": {
+   "orig_allowed_sub_allowed": 992
+  },
+  "admitted_alternative_values": 992,
+  "admitted_executable_substitutions": 961,
+  "admitted_calls": 27,
+  "admitted_tasks": 21,
+  "forced_executable_substitutions": 961,
+  "forced_calls": 27,
+  "forced_tasks": 21,
+  "forced_by_arg_role": {
+   "selector": 575,
+   "payload": 386
+  },
+  "referential_forced_substitutions": 418,
+  "referential_calls": 20,
+  "referential_tasks": 18,
+  "referential_by_cause": {
+   "undeclared_tool": 418
+  },
+  "max_per_arg": 16,
+  "calls_superseded": 0,
+  "calls_allowed_superseded": 0,
+  "allowed_calls_on_fragile_occurrence": 0,
+  "refusal_categories": {},
+  "denied_substitutions_with_allowed_original": 0,
+  "pi_violations": 0
+ },
+ "workspace-context-workspace.yaml+request-only.json": {
+  "suite": "workspace",
+  "config": "workspace.yaml+request-only",
+  "integrity": "context",
+  "tasks_total": 40,
+  "tasks_with_effectful_call": 21,
+  "effectful_calls": 27,
+  "calls_allowed": 17,
+  "pairs": 992,
+  "buckets": {
+   "orig_allowed_sub_allowed": 640,
+   "orig_denied": 352
+  },
+  "admitted_alternative_values": 640,
+  "admitted_executable_substitutions": 639,
+  "admitted_calls": 17,
+  "admitted_tasks": 17,
+  "forced_executable_substitutions": 639,
+  "forced_calls": 17,
+  "forced_tasks": 17,
+  "forced_by_arg_role": {
+   "selector": 383,
+   "payload": 256
+  },
+  "referential_forced_substitutions": 271,
+  "referential_calls": 12,
+  "referential_tasks": 12,
+  "referential_by_cause": {
+   "undeclared_tool": 271
+  },
+  "max_per_arg": 16,
+  "calls_superseded": 0,
+  "calls_allowed_superseded": 0,
+  "allowed_calls_on_fragile_occurrence": 0,
+  "refusal_categories": {
+   "consequence_gate": 2,
+   "taint_enforcement": 8
+  },
+  "denied_substitutions_with_allowed_original": 0,
+  "pi_violations": 0
+ },
+ "workspace-context-workspace_tuned.yaml+lifted.json": {
+  "suite": "workspace",
+  "config": "workspace_tuned.yaml+lifted",
+  "integrity": "context",
+  "tasks_total": 40,
+  "tasks_with_effectful_call": 21,
+  "effectful_calls": 27,
+  "calls_allowed": 17,
+  "pairs": 992,
+  "buckets": {
+   "orig_allowed_sub_allowed": 603,
+   "orig_allowed_sub_denied": 37,
+   "orig_denied": 352
+  },
+  "admitted_alternative_values": 603,
+  "admitted_executable_substitutions": 603,
+  "admitted_calls": 17,
+  "admitted_tasks": 17,
+  "forced_executable_substitutions": 603,
+  "forced_calls": 17,
+  "forced_tasks": 17,
+  "forced_by_arg_role": {
+   "selector": 304,
+   "payload": 256,
+   "observed_driving": 43
+  },
+  "referential_forced_substitutions": 235,
+  "referential_calls": 12,
+  "referential_tasks": 12,
+  "referential_by_cause": {
+   "undeclared_tool": 176,
+   "same_observation_class": 43,
+   "unobserved_argument": 16
+  },
+  "max_per_arg": 16,
+  "calls_superseded": 9,
+  "calls_allowed_superseded": 5,
+  "allowed_calls_on_fragile_occurrence": 0,
+  "refusal_categories": {
+   "value_policy": 4,
+   "taint_enforcement": 6
+  },
+  "denied_substitutions_with_allowed_original": 37,
+  "pi_violations": 0
+ },
+ "workspace-context-workspace_tuned.yaml+request-only.json": {
+  "suite": "workspace",
+  "config": "workspace_tuned.yaml+request-only",
+  "integrity": "context",
+  "tasks_total": 40,
+  "tasks_with_effectful_call": 21,
+  "effectful_calls": 27,
+  "calls_allowed": 17,
+  "pairs": 992,
+  "buckets": {
+   "orig_allowed_sub_allowed": 603,
+   "orig_allowed_sub_denied": 37,
+   "orig_denied": 352
+  },
+  "admitted_alternative_values": 603,
+  "admitted_executable_substitutions": 603,
+  "admitted_calls": 17,
+  "admitted_tasks": 17,
+  "forced_executable_substitutions": 603,
+  "forced_calls": 17,
+  "forced_tasks": 17,
+  "forced_by_arg_role": {
+   "selector": 304,
+   "payload": 256,
+   "observed_driving": 43
+  },
+  "referential_forced_substitutions": 235,
+  "referential_calls": 12,
+  "referential_tasks": 12,
+  "referential_by_cause": {
+   "undeclared_tool": 176,
+   "same_observation_class": 43,
+   "unobserved_argument": 16
+  },
+  "max_per_arg": 16,
+  "calls_superseded": 9,
+  "calls_allowed_superseded": 5,
+  "allowed_calls_on_fragile_occurrence": 0,
+  "refusal_categories": {
+   "consequence_gate": 2,
+   "value_policy": 2,
+   "taint_enforcement": 6
+  },
+  "denied_substitutions_with_allowed_original": 37,
+  "pi_violations": 0
+ },
+ "workspace-context-workspace_tuned.yaml.json": {
+  "suite": "workspace",
+  "config": "workspace_tuned.yaml",
+  "integrity": "context",
+  "tasks_total": 40,
+  "tasks_with_effectful_call": 21,
+  "effectful_calls": 27,
+  "calls_allowed": 17,
+  "pairs": 992,
+  "buckets": {
+   "orig_allowed_sub_allowed": 603,
+   "orig_allowed_sub_denied": 37,
+   "orig_denied": 352
+  },
+  "admitted_alternative_values": 603,
+  "admitted_executable_substitutions": 603,
+  "admitted_calls": 17,
+  "admitted_tasks": 17,
+  "forced_executable_substitutions": 603,
+  "forced_calls": 17,
+  "forced_tasks": 17,
+  "forced_by_arg_role": {
+   "selector": 304,
+   "payload": 256,
+   "observed_driving": 43
+  },
+  "referential_forced_substitutions": 235,
+  "referential_calls": 12,
+  "referential_tasks": 12,
+  "referential_by_cause": {
+   "undeclared_tool": 176,
+   "same_observation_class": 43,
+   "unobserved_argument": 16
+  },
+  "max_per_arg": 16,
+  "calls_superseded": 9,
+  "calls_allowed_superseded": 5,
+  "allowed_calls_on_fragile_occurrence": 0,
+  "refusal_categories": {
+   "consequence_gate": 2,
+   "value_policy": 2,
+   "taint_enforcement": 6
+  },
+  "denied_substitutions_with_allowed_original": 37,
+  "pi_violations": 0
+ }
+}

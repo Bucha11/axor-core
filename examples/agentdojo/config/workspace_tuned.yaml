@@ -1,0 +1,75 @@
+# A *tuned* deployment taxonomy for the AgentDojo workspace suite — the counterpart of
+# `banking_tuned.yaml`, written for the admission-slack experiments (A3/A4).
+#
+# "Tuned" means the operator has done the one thing the plain taxonomy leaves out:
+# declared, for each state-changing tool, the argument that selects the record it
+# acts on, together with an `enum` over the **class of admissible records** — every
+# object of that kind the deployment holds. That is the widest allowlist an operator
+# can write without resolving the user's instruction, and it is what makes the gate
+# serve the whole task family (needed calls are admitted, via the enum supersession)
+# instead of refusing shared-channel work.
+#
+# It is therefore also the configuration in which the second result is observable:
+# the enum carries the integrity axis for every member equally, so two records of the
+# same class are indistinguishable. Nothing here is attack-specific.
+#
+# KNOWN GAP, deliberately left in place: `enum` cannot be declared on a LIST-valued
+# argument — `ValuePredicate.check` raises `TypeError: unhashable type: 'list'`, and
+# the exception escapes `ToolCallGovernor.evaluate`. So the egress sinks whose
+# destination field is a list (`send_email(recipients/cc/bcc)`) keep their plain
+# driving-arg declaration and no allowlist. See docs/admission-slack-experiments.md.
+mode: production
+
+untrusted_sources:
+  - get_received_emails
+  - get_unread_emails
+  - get_sent_emails
+  - get_draft_emails
+  - search_emails
+  - get_day_calendar_events
+  - search_calendar_events
+  - get_file_by_id
+  - search_files
+  - search_files_by_filename
+  - list_files
+  - search_contacts_by_name
+  - search_contacts_by_email
+
+egress_sinks:
+  - send_email
+  - share_file
+
+# Record-changing calls, keyed on the identifier of the record they touch.
+integrity_sinks:
+  - append_to_file
+  - delete_file
+  - add_calendar_event_participants
+  - cancel_calendar_event
+
+driving_args:
+  send_email: [recipients, cc, bcc]
+  share_file: [email, file_id]
+  append_to_file: [file_id]
+  delete_file: [file_id]
+  add_calendar_event_participants: [event_id]
+  cancel_calendar_event: [event_id]
+
+value_policies:
+  share_file:
+    - {arg: email, kind: enum, allowed: ['client@abcindustries.com', 'david.smith@bluesparrowtech.com', 'emma.johnson@bluesparrowtech.com', 'hiking-travels-unlimited@homail.com', 'info@best-event-organizers.com', 'james.miller@yahoo.com', 'julie.williams@bluesparrowtech.com', 'katie.brown@bluesparrowtech.com', 'lily.white@gmail.com', 'mark.davies@hotmail.com', 'notifications@netflix.com', 'promotions@traveldeals.com', 'sarah.baker@gmail.com', 'security-facebook-com@gmail.com', 'security@facebook.com', 'support@bluesparrowtech.com', 'support@techservices.com', 'tech-services-password@aol.com']}
+    - {arg: file_id, kind: enum, allowed: ['0', '2', '3', '4', '5', '8', '9', '15', '16', '18', '19', '21', '25']}
+  append_to_file:
+    - {arg: file_id, kind: enum, allowed: ['0', '2', '3', '4', '5', '8', '9', '15', '16', '18', '19', '21', '25']}
+  delete_file:
+    - {arg: file_id, kind: enum, allowed: ['0', '2', '3', '4', '5', '8', '9', '15', '16', '18', '19', '21', '25']}
+  add_calendar_event_participants:
+    - {arg: event_id, kind: enum, allowed: ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12', '13', '14', '15', '16', '17', '18', '19', '20', '21', '22', '23', '24', '25', '26']}
+  cancel_calendar_event:
+    - {arg: event_id, kind: enum, allowed: ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12', '13', '14', '15', '16', '17', '18', '19', '20', '21', '22', '23', '24', '25', '26']}
+
+# The drive's own delete is catastrophic in the paper's taxonomy; the experiments
+# that need the needed call to reach the observation gate pass
+# `--lift-consequence delete_file` rather than weakening it here.
+consequence_overrides:
+  delete_email: catastrophic
+  delete_file: catastrophic

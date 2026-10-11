@@ -1,0 +1,65 @@
+# A *tuned* deployment taxonomy for the AgentDojo travel suite — the counterpart of
+# `banking_tuned.yaml`, written for the admission-slack experiments (A3/A4).
+#
+# "Tuned" means the operator has done the one thing the plain taxonomy leaves out:
+# declared, for each state-changing tool, the argument that selects the record it
+# acts on, together with an `enum` over the **class of admissible records** — every
+# object of that kind the deployment holds. That is the widest allowlist an operator
+# can write without resolving the user's instruction, and it is what makes the gate
+# serve the whole task family (needed calls are admitted, via the enum supersession)
+# instead of refusing shared-channel work.
+#
+# It is therefore also the configuration in which the second result is observable:
+# the enum carries the integrity axis for every member equally, so two records of the
+# same class are indistinguishable. Nothing here is attack-specific.
+#
+# KNOWN GAP, deliberately left in place: `enum` cannot be declared on a LIST-valued
+# argument — `ValuePredicate.check` raises `TypeError: unhashable type: 'list'`, and
+# the exception escapes `ToolCallGovernor.evaluate`. So the egress sinks whose
+# destination field is a list (`send_email(recipients/cc/bcc)`) keep their plain
+# driving-arg declaration and no allowlist. See docs/admission-slack-experiments.md.
+mode: production
+
+untrusted_sources:
+  - get_all_hotels_in_city
+  - get_hotels_address
+  - get_hotels_prices
+  - get_rating_reviews_for_hotels
+  - get_all_restaurants_in_city
+  - get_restaurants_address
+  - get_rating_reviews_for_restaurants
+  - get_price_for_restaurants
+  - get_contact_information_for_restaurants
+  - get_cuisine_type_for_restaurants
+  - get_dietary_restrictions_for_all_restaurants
+  - get_all_car_rental_companies_in_city
+  - get_rating_reviews_for_car_rental
+  - get_flight_information
+  - search_calendar_events
+  - get_day_calendar_events
+
+sensitive_sources:
+  - get_user_information
+
+egress_sinks:
+  - send_email
+
+# Bookings: the record they act on is named by a scalar the operator can enumerate.
+integrity_sinks:
+  - reserve_hotel
+  - reserve_restaurant
+  - reserve_car_rental
+
+driving_args:
+  send_email: [recipients, cc, bcc]
+  reserve_hotel: [hotel]
+  reserve_restaurant: [restaurant]
+  reserve_car_rental: [company]
+
+value_policies:
+  reserve_hotel:
+    - {arg: hotel, kind: enum, allowed: ['Le Marais Boutique', 'City Hub', 'Good Night', 'Luxury Palace', 'Montmartre Suites', 'Cozy Stay', "Mom's Home", 'London Luxury', 'Covent Garden Retreat', 'Riverside View']}
+  reserve_restaurant:
+    - {arg: restaurant, kind: enum, allowed: ['New Israeli Restaurant', 'Breizh Café', 'New Asiaway', 'Le Baratin', 'Bistrot Paul Bert', 'Royal Panda', 'The yard', 'China Garden', 'Miznon', "Chez L'Ami Jean", 'Azabu Ramen', 'House of Sushi', 'Home Kitchen']}
+  reserve_car_rental:
+    - {arg: company, kind: enum, allowed: ['SunSet Rent-A-Car', 'Speedy Rentals', 'LAX Car Rental', 'Green Motion', 'New Car Rental', 'Rent-A-Wreck', 'Prestige Auto Rental', 'Alamo Rent A Car', 'Paris Rent-a-Car', 'Eiffel Tower Car Rental']}
