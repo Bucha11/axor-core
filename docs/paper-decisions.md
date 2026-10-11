@@ -58,6 +58,23 @@ claude-haiku banking 0% → 0% (robust model, expected degeneration).
 Absolute for the own-baseline caveat: CaMeL native-slack 95.2 (vs our undefended 84.8 —
 never compare absolutes).
 
+**Second result — admission slack (source of record: `examples/admission-slack/results.md`,
+generated; statement and scope: `docs/admission-slack.md`).** Numbers that may be cited:
+
+| quantity | value | scope |
+|---|---|---|
+| pairs probed · projection violations | **3100 · 0** | 10 runs, 4 suites, 2 declarations |
+| reference-plan effectful calls · admitted | **81 · 46** | as deployed in §6 (context-default) |
+| referential forced admissions · calls · tasks | **365 · 31 · 28** | as deployed; cause: mostly `undeclared_tool` |
+| same, under the widened declaration | **16 · —** | needed calls admitted drop 46 → 28 |
+| hand-checked unauthorized cases | **7** | `cases.py`, four fields each |
+| grounds that separate 7/7 with the needed call kept | **1** (`bind_and_key`) | `enrichment.py` |
+| OPA agreement with axor's verdicts | **42/42** with axor's labels, **33/42** without | 7 cases × 2 calls × 3 grounds |
+
+Counting discipline, non-negotiable: alternative *values*, executable *substitutions*,
+*calls* and *tasks* are four quantities and are never added together; and the census is
+**coverage of reference plans**, never a utility ceiling for all ways of solving a task.
+
 **Statistics note (do this in the draft):** state once what "±" means (per-pass paired
 std over n passes) and n for every interval; a reviewer will compute the CI of
 +13.4 ± 9.1 (n=7) themselves — pre-empt with the "wide interval, positive in every
@@ -85,6 +102,19 @@ pass" framing.
 - **NNSI 62% undefended** — self-refereed, never load-bearing (see drafting rules).
 - **"workspace not run for axor"** — stale since the 7-pass workspace study; §6 now
   carries all four suites.
+- **"any monitor that performs the task must admit …"** — wrong quantifier for Theorem 2;
+  the subject is *a monitor that admits the original call on this prefix of this
+  reference plan*. Purge the universal phrasing on sight.
+- **"N proven bypasses of axor"** for the admission-slack counts — they are admissions of
+  *unauthorized-but-benign-origin* alternatives on reference plans, not defeats of the
+  integrity gate and not attacks. The attack axis is §6.4.
+- **calling the first census's numbers a utility ceiling** — it is reference-plan
+  coverage. Related: the earlier pass's **91 driving values / 52 executable
+  substitutions on nine tasks** are *not* reproduced by the committed harness and are not
+  cited; the 97-task population is the same and stands.
+- **"(tool, argument, value) is a full effect"** — a triple is one *argument* of one call;
+  a full call and its effect are a different quantity. Keep the three apart in every
+  sentence.
 
 ## 3. Resolved decisions (with rationale)
 
@@ -137,6 +167,17 @@ pass" framing.
   target, not machine-checked)"** (§5.2/§5.6/§8).
 - **Enum-supersession placement:** full statement once in §6.3 + Appendix D; §1/§7/§9
   carry one-line references only (it was previously restated in full ~5 times).
+
+**The second result is positioned as supporting, with its own stated scope (new).**
+It goes beside the main guarantee (§5.7 statement, §6.8 empirics), never instead of it,
+and the write-up says in the same breath that the lemma is one line and that the
+contribution is the characterization plus the confirmed consequences. Three things are
+reported as *separate* findings and never merged: (a) the monitor admits the
+alternative, (b) the alternative is unauthorized (hand-established, 7 cases), (c) the
+alternative is merely absent from the reference plan (census). Causes are likewise kept
+apart — `undeclared_tool` (declaration coverage), `unobserved_argument` (the
+deployment's narrower key), `same_observation_class` (the observation language itself) —
+because only the last is a statement about the class of checks.
 
 ## 4. Open decisions
 

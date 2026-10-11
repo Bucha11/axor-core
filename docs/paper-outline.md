@@ -44,6 +44,17 @@ slack/workspace/travel runs are not yet recorded in `agentdojo_results.md`).**
      over-block on read-derived egress to allowlisted known payees (+25pp gate-level
      upper bound; +13.4 ± 9.1pp realized). Full statement, soundness condition, and
      honest scope in §6.3 / §5.4 / Appendix D. Supporting, not the headline.
+  5. **A second, supporting result: the admission slack the observation language
+     forces.** The same coarseness that makes K4's framing-invariance a theorem also
+     forces the monitor to admit calls that differ from the necessary one only in
+     *which record they act on*. Stated as Theorem 2 (admission closure under
+     indistinguishability), measured on the real governor over the four suites'
+     reference plans, and answered constructively: the additional ground that
+     separates a confirmed pair is a trusted binding of the record-selecting
+     argument to the record the instruction's condition resolves to — priced, and
+     portable to a neighbouring engine (§5.7, §6.8, `docs/admission-slack.md`).
+     **Supporting, not the headline** — the lemma is one line; the contribution is
+     the characterization plus the confirmed consequences.
 - **Novelty arbitration (one headline — a reviewer will ask "which is *the*
   contribution?").** The **single headline novelty is contribution 2's perimeter
   non-interference theorem with the decidability split (§5.4)** — the part that is
@@ -361,6 +372,24 @@ instances, not mechanized over all conforming backends, and the CaMeL backend is
 implemented* (O2 is the inductive content — a Coq/Lean target). Put the obligation→test
 crosswalk table (kernel-theorem §5) in an appendix — it is the paper's credibility anchor.
 
+**5.7 The second result — admission slack (the price of the same coarseness).**
+K4 says an attacker cannot split the fiber of `π`; the mirror-image statement is that
+*nobody* can, the operator included. State it as **Theorem 2 (admission closure under
+indistinguishability)**: fix a history `h`; if a monitor whose verdict factors through
+`π` admits a call `c` on `h`, it admits every `c'` with `π(c', h) = π(c, h)`.
+
+Write it with the exact quantifier and no more. The subject is **a monitor that admits
+the original call on this prefix of this reference plan** — never "any monitor that
+performs the task"; the fiber is taken **at that one history** (the floor boolean and
+the ledger are part of `h`); and `admitted` and `unauthorized` are two separate
+findings, joined only where the authorization analysis does it by hand. The proof is
+one line and is **not** the contribution: the content is which calls share the fiber,
+that some of them are outside what the user's instruction authorizes, and that the tool
+really executes them — all three measured (§6.8). Keep `Δ_F` (what the whole task
+family makes necessary) distinct from `E(p_t)` (the effects of one reference plan): the
+measurements live on `E(p_t)`, so they report coverage of reference plans, never a
+utility ceiling. Full statement, scope and limits: `docs/admission-slack.md`.
+
 ---
 
 ## 6. Evaluation — AgentDojo
@@ -634,6 +663,50 @@ utility/ASR axis; frame as corroborating the gate sequence beyond the injection 
 (Token-economy figures are deliberately omitted — they are not a security result and do
 not belong in this paper.)
 
+**6.8 Admission slack, measured (the second result's empirics; `examples/admission-slack/`).**
+Same four suites, same deployment taxonomies, **no model in the loop**: each suite's own
+reference plans are replayed call by call against a real `ToolCallGovernor`, and at each
+effectful call every substitution — same tool, one argument replaced by another value
+that exists in the environment, the prompt or the operator's allowlist, and that the
+rest of the plan does not need — is judged from the *same* governor state and then
+dispatched on a fork of the environment. Three buckets, three separately-counted
+quantities (alternative values, executable substitutions, calls/tasks), and one
+self-check: equal projections must get equal verdicts (**3100 pairs, 0 violations** —
+the projection in `observation.py` is faithful for this kernel).
+
+What to report, in this order:
+- **The guarantee does its job on its own axis.** Substitutions that change the *origin
+  class* of a driving value are refused (`taint_enforcement`), with the differing
+  observation components named per pair.
+- **What is forced is the choice of object.** Under the deployed taxonomies, 365
+  executable substitutions on 31 calls in 28 tasks are admitted under an identical
+  projection and name another record of the same kind (another standing order, file,
+  channel, allowlisted payee).
+- **Three causes, never summed into one.** Most of those are `undeclared_tool` — the
+  taxonomy declares no role for the tool — which is a *coverage gap in the declaration*,
+  not a limit of the observation language; the rest are `unobserved_argument` and the
+  sharp `same_observation_class`.
+- **Widening the key moves the cost.** Declaring every effectful tool with its
+  record-selecting arguments cuts referential admissions 365 → 16 and the needed calls
+  the monitor admits 46/81 → 28/81.
+- **The sharpest pair is created by contribution #4.** Under the `banking_tuned` enum
+  allowlist (the +13.4 ± 9.1pp recovery), paying a *different allowlisted* payee has the
+  same projection as paying the one the user named, and both are admitted and executed.
+  Report this beside the recovery, not apart from it: supersession buys utility by
+  spending exactly the authorization precision the origin axis had.
+- **The constructive half (step 4).** Of the grounds tried on the real governor, more of
+  the same observation separates 1 of 7 hand-checked cases (and refuses needed calls
+  elsewhere), a class-wide enum separates none, a TASK-origin witness separates 1 and
+  refuses every instruction that *describes* rather than names its object, per-call
+  confirmation separates none unattended; **a per-instruction trusted binding of the
+  selecting argument separates 7 of 7 with the needed call still admitted** — at the
+  price of a resolver that is inside the TCB (it feeds the kernel's supersession rule a
+  singleton).
+- **It transfers (step 5).** The same pairs through **OPA 1.9.0**: handed axor's
+  observations it agrees 42/42 and reproduces every admitted alternative; without them
+  it agrees 33/42 and never separates a pair axor cannot. The limitation is in the
+  information, not the engine.
+
 ---
 
 ## 7. Related work
@@ -721,6 +794,12 @@ Pull together, as first-class content (the kernel-theorem already states these a
   banking/slack/workspace but only **2-pass paired on travel** (its 0 is structural —
   zero denials — so more passes change nothing about the mechanism, but state the n);
   ASR benches go dark on robust models (§6.4).
+- **Admission slack (§5.7/§6.8) is measured on reference plans, not bounded.** No model
+  in the loop; substitutions per argument are capped (16, referential candidates first),
+  so the counts are witnesses rather than totals; authorization is hand-established for
+  7 cases and everything wider is reported as *deviation from the reference plan*, a
+  weaker category; `π` is checked on every pair, not proven complete; and the binding
+  that removes the slack adds a resolver to the TCB.
 - **Confidentiality (sound) axis — shown as a structural property (Appendix A-floor), not
   a benchmark.** The floor is paraphrase-proof *by construction* (the gate reads a session
   boolean, never the egress bytes; §5.5) and is illustrated by a deterministic unit-level
