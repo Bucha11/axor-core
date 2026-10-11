@@ -702,18 +702,16 @@ What to report, in this order:
   selecting argument separates 7 of 7 with the needed call still admitted** — at the
   price of a resolver that is inside the TCB (it feeds the kernel's supersession rule a
   singleton).
-- **It transfers, with one correction (step 5 + C1).** Through **OPA 1.9.0**, handed
-  axor's observations the engine agrees 42/42 and reproduces every admitted
-  alternative; without them 33/42, and it never separates a pair axor cannot. But a
-  neighbour with a *finer* language does: run on **ROPE**'s own code and published
-  per-task scopes, 18 of 64 referential pairs are separated — by a request-pinned
-  constant on the record-selecting argument, i.e. the same binding §6.8's step 4
-  identifies — while the 31 pairs on arguments its floor does not guard
-  (`send_money.amount/date`, `update_scheduled_transaction.id`) are admitted
-  identically. Report it that way: the forced admission is a property of the
-  *arguments the declared language leaves unguarded*, not of a particular engine, and
-  the separating ground is already deployed elsewhere at a measured cost (15 of those
-  64 needed calls refused, 6 of 57 tasks with no synthesisable scope).
+- **It transfers (step 5).** The same pairs through **OPA 1.9.0**: handed axor's
+  observations it agrees 42/42 and reproduces every admitted alternative; without them
+  it agrees 33/42 and never separates a pair axor cannot. A second neighbour (**ROPE**,
+  on its own code and published per-task scopes) admits **31 of 64** referential pairs
+  — the arguments neither declared rule guards (`send_money.amount/date`,
+  `update_scheduled_transaction.id`, case B verbatim) — which is the transferable
+  half. It separates the other 18 under its per-task scopes; **do not** write that up
+  as either language being finer until the parity run in
+  `docs/admission-slack-experiments.md` §C1 settles whether that is a feature axor's
+  language lacks or a rule its deployment did not declare.
 
 ---
 

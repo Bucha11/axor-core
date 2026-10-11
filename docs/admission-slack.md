@@ -308,24 +308,16 @@ The conclusion is about information, not engines: on these observations the
 excess admission belongs to the class of per-call declarative checks, and the
 binding that removes it is portable to a neighbour as a plain allowlist.
 
-**That is as far as the OPA run licenses, and a second neighbour sharpens it.**
-A gate with *finer* observations does separate some of these pairs. Run on
-**ROPE**'s own code and published per-task scopes
-(`examples/admission-slack/neighbor_rope.py`; full numbers in
-`docs/admission-slack-experiments.md` §C1), of the 64 referential pairs replayed
-through both gates ROPE **separates 18** — the allowlisted-payee swap, the hotel
-swap, the channel-member swap — because its floor plus per-task scope pins the
-record-selecting argument to a constant read from the request, which is precisely
-the `condition_binding` ground of §5. It admits the other **31**: the arguments its
-own floor does not guard (`send_money.amount`, `send_money.date`,
-`update_scheduled_transaction.id` — case B verbatim). And it pays the price §5
-predicted: the needed call is refused in 15 of the 64, 292 further substitutions
-are refused, and 6 of the 57 tasks have no synthesisable scope at all.
-
-So the claim is **not** "no per-call gate can separate the choice of record". It is:
-*for an argument the gate's declared language does not guard, the excess admission
-is forced and identical across gates* — and the separating ground, where a gate has
-it, is the per-call binding, independently implemented and independently costly.
+**That is as far as the OPA run licenses.** What a *second* neighbour shows is
+recorded in `docs/admission-slack-experiments.md` §C1 and is deliberately **not**
+summarised as a claim about anyone's observation language until the parity run
+that settles it has been done: ROPE separates 18 of 64 referential pairs under its
+published per-task scopes, and whether that reflects a feature axor's language
+lacks or a rule axor's deployment did not declare is exactly what that run
+decides. What the ROPE run already establishes without any such claim is the 31
+pairs **both** gates admit — the arguments neither declared rule guards
+(`send_money.amount`, `send_money.date`, `update_scheduled_transaction.id`, case B
+verbatim).
 
 ---
 
