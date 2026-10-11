@@ -180,9 +180,28 @@ Within that set the failure direction is deliberate over-taint (`⊇`, never sil
 **Scope boundary (part of the claim, not a hidden gap):** O2 is **explicit-flow
 soundness only**. An implicit (control-flow) leak — a deterministic interior branch
 on content that influences an output with `causal_root = ∅` — is **not** covered.
-This is shared with FIDES by design; CaMeL's STRICT-mode dependency augmentation is
-the known partial technique and is not yet adopted. See §6 and
+CaMeL's STRICT-mode dependency augmentation (adding the conditional test or loop
+iterable as a dependency of everything assigned in the block,
+[arXiv:2503.18813](https://arxiv.org/abs/2503.18813) §5) is the known partial
+technique and is not yet adopted. See §6 and
 [governance-model §7](governance-model.md).
+
+**Do not claim this boundary is shared with FIDES — on *this* axis it is not.**
+FIDES ([arXiv:2505.23643](https://arxiv.org/abs/2505.23643), Proposition 1)
+guarantees *non-interference for the integrity of tool calls and data*, and only
+*explicit secrecy* for confidentiality. Their integrity lattice's non-interference
+explicitly "includes consequential control flow decisions", and the mechanism is that
+policy P-T checks the **tool label** — whether the call was generated in a trusted
+context — not merely the arguments. So the axis on which FIDES accepts the
+implicit-flow weakening is **confidentiality**, which is the axis where *our* control
+is strongest (the floor is content-blind and whole-call, §5), and the axis where we
+take the weakening is **integrity**, which is the one FIDES closes. The profiles are
+mirror images, not the same scope choice. The construct that would move us onto their
+integrity profile is the one already specified:
+`integrity_default="context"` labels a value by the *context it was generated in*
+rather than by what it contains
+([rfc-integrity-context-default](rfc-integrity-context-default.md)) — a value-level
+analogue of their trusted-context tool label.
 
 **The model edge is not a constructor (current gap, not a scope choice).** A value
 the model writes into a tool call is produced by none of the constructors above. The
@@ -410,7 +429,9 @@ Stated as boundaries of the claim, not as incidental gaps:
 - **Implicit information flow** — O2 is explicit-flow soundness only (§2). A
   control-flow side channel with `causal_root = ∅` is not covered. Bounded by
   `tests/adversarial/test_implicit_flow_gap.py`; the standard partial fix
-  (CaMeL STRICT-mode dependency augmentation) is not yet adopted.
+  (CaMeL STRICT-mode dependency augmentation) is not yet adopted. This boundary is
+  **ours, not a shared one**: FIDES closes it on the integrity axis by checking the
+  trusted context of the call (§2).
 - **The integrity model-edge gap** — a value the model generates that contains no
   registered fragment derives `constant()` (trusted). This covers paraphrase, and
   also re-encoded or unsegmented *copies* of an untrusted identifier, so it is not a
