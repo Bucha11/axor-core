@@ -258,6 +258,64 @@ consumer, which is why the rule is scoped to the producer modules.
 
 ---
 
+## 3b. Every input that can PERMIT a call, and what must back it
+
+T0 (§3) says no model produces a trusted-path projection. That is necessary and
+not sufficient for the claim the kernel actually makes — that the model is outside
+the trusted base of the guarantee. A model that pre-manufactured a trusted label,
+chose the permitting policy, or answered an approval is already part of the ground
+on which the call was admitted, whatever `allow` itself calls.
+
+So the chain is audited end to end: for every input that can turn a call from
+denied into allowed, what is the admissible ground, and what actually produces it.
+
+| Permitting input | Admissible ground | Produced by | Status |
+|---|---|---|---|
+| Capability surface, path ceiling, consequence ceiling (`A₀`) | trusted operator configuration | `policy=` / `default_policy=` / profile overlay — else `PolicySelector` over `TaskAnalyzer` | **STRICT: refused** unless operator-supplied (`GovernedSession.run` raises `PolicyError`). Other modes: legacy — classification selects it, and an operator-supplied external classifier **may be a model** |
+| Delegation ceiling (`G`) | operator configuration | `escalation_policy.grantable_tools`, narrowed by parent/overlay composition | ✅ classifier presets carry none (K5-4) |
+| Action class (consequence axis) | registered declaration, keyed on the sink name | built-in table + `consequence_overrides`; unknown → `CONSEQUENTIAL`; name-token raising tightens only | ✅ the name is model-supplied, but it resolves against a declaration and dispatches the same name |
+| Sink roles — egress / integrity / imperative / positional / benign | operator declaration | session kwargs or YAML; STRICT validates role completeness; a positional declaration of an instruction-complete sink is refused at construction | ✅ under STRICT; outside it, role completeness is not required |
+| Enum / relational predicate satisfied | exact membership in a closed operator set | `verify_enum`, `verify_bounded_numeric`, `closed_allowlist_args` | ✅ |
+| Integrity supersession | every driving arg present **and** covered by a closed codomain | `integrity_superseded_by_decidable` | ✅ `numeric_range` deliberately inadmissible |
+| Confidentiality floor down | a registered sensitive-read event; lifted only by an unforgeable `GovernanceAuthority`, by fingerprint | `TaintEngine` outstanding map, `endorse_value` | ✅ |
+| "Trusted value" (`TrustedOrigin`) | TASK: the principal's task at depth 0 · OPERATOR: enum members · TOOL: a **declared** benign tool · ENDORSED: governance | `register_trusted`; a child's task at depth > 0 is trusted only if the inherited context is clean | ⚠️ `TOOL` is declaration-backed **only under STRICT roles**: `is_trusted_tool` returns True for *any* tool when `require_tool_roles` is False, so outside STRICT the ground is "the normalizer did not classify the read as external" |
+| Model-generated value carrying no registered fragment | — | `integrity_default`: `context` under STRICT (carries the context root), `clean` otherwise | ⚠️ STRICT closes it; otherwise this is the known O2 model-edge gap (§2) |
+| Approval (the governance gate for an over-ceiling sink) | a trusted human, or a rule whose correctness is checkable | operator-supplied `EscalationCallback` | ⚠️ **premise, uncheckable in core**: nothing prevents an operator from backing the callback with a model, which puts the model back in the trusted base. Stated in `contracts/approval.py` and governance-model §2 |
+| Projection features (carrier, path class, provenance label, normalized intent) | deterministic structural function | the six T0 producers | ✅ §3 |
+| Peer provenance labels | a signed receipt; across keysets only a bounded discount, never label authority | `federation/receipt.py`, `federation/ladder.py` | ✅ opt-in |
+
+**The result of the audit is a mode statement, not a global one.** The three
+inputs whose ground is a heuristic or a default rather than a declaration —
+policy selection, trusted-tool-output, and the integrity default — are exactly
+the three that STRICT closes. So:
+
+> The chain "producer → projection → gate → execution" excludes the model from
+> the trusted base **under STRICT, with an operator-supplied policy and an
+> approval callback that is not model-backed**. Any other configuration is not
+> the one the theorem covers, and the kernel now refuses the specific case where
+> it would otherwise look covered (STRICT without an operator policy) instead of
+> relying on a warning.
+
+**Two premises remain premises, and neither is closable from inside core:**
+
+- an approval is only as good as what answers it — core can bound its *scope*
+  (one call, one use, re-checked, atomically spent) but cannot inspect the
+  callable;
+- outside STRICT, `TrustedOrigin.TOOL` and `integrity_default="clean"` are
+  declaration-free, so the exclusion claim is not available there. This is a
+  configuration boundary, stated as one.
+
+**What was closed to make the chain reach execution at all:** a `TRANSFORM`
+decision rewrites the call, and the gates used to run on the arguments *before*
+the rewrite while the executor received the arguments *after* it. Nothing in core
+emits `TRANSFORM`, so no deployment was affected — but the premise "the gates
+verified the call that runs" did not hold for the contract as written. The
+transform is now resolved before normalization, so one argument set is
+normalized, gated, bound to the approval, re-checked after the await, and
+executed (`tests/node/test_transform_is_gated.py`; the suite fails without it).
+
+---
+
 ## 4. T4 and the decidability split (Theorem 0)
 
 T4 (effective = nominal) is the obligation where the theorem's safety content lives.

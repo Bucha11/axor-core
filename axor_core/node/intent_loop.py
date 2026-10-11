@@ -583,6 +583,22 @@ class IntentLoop:
 
         decision, pending_consumption = self._evaluate_tool_intent(intent, envelope)
 
+        # A TRANSFORM decision rewrites the call. Resolve it HERE, before anything
+        # is normalized or gated, and carry the result as the only argument set
+        # from this point on: a gate that ran on the pre-transform arguments does
+        # not justify executing the post-transform ones. Nothing in core emits
+        # TRANSFORM today, so this is the premise made structural rather than a
+        # bug being fixed — but the contract admits it and the executor honoured
+        # it, which is exactly the shape of an unexamined premise.
+        if decision.transformed_payload is not None:
+            tool_args = dict(decision.transformed_payload)
+            intent = Intent(
+                kind=intent.kind,
+                payload={**intent.payload, "args": tool_args},
+                node_id=intent.node_id,
+                sequence=intent.sequence,
+            )
+
         if decision.kind == PolicyDecisionKind.DENY:
             self._record_denial(intent, decision.reason, envelope, "capability")
             denial_resp = _make_denial_response(decision.reason)
@@ -895,8 +911,9 @@ class IntentLoop:
         # The exact argument set that will execute, frozen here. Everything from
         # this point — the approval question, the digest it is bound to, the
         # re-check and the handler call — uses THIS object, so what was approved
-        # and what runs cannot drift apart (including under a TRANSFORM decision).
-        exec_args = copy.deepcopy(dict(decision.transformed_payload or tool_args))
+        # and what runs cannot drift apart. It is the set every gate above ran on,
+        # because a TRANSFORM was already resolved before the cascade started.
+        exec_args = copy.deepcopy(dict(tool_args))
 
         # The consequence axis was the only gate left standing: put THIS call to
         # the approver now that everything else has admitted it. An approval is
@@ -999,8 +1016,8 @@ class IntentLoop:
             )
         )
 
-        # approved or transformed — the frozen set, identical to what was
-        # approved and re-checked above.
+        # The frozen set — identical to what every gate saw, what was approved,
+        # and what the post-await re-check re-examined.
         effective_args = exec_args
         effective_intent = Intent(
             kind=IntentKind.TOOL_CALL,
