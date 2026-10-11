@@ -29,11 +29,54 @@ is denied rather than passed as "unconstrained".
 
 from __future__ import annotations
 
+import itertools
 from dataclasses import dataclass
 from numbers import Real
 from typing import Iterable, Mapping, Sequence
 
 from axor_core.kernel.decidability import verify_bounded_numeric, verify_enum
+
+
+# A relational predicate over collection-valued arguments decides every tuple the
+# call actually effects — the product of its members' elements. The bound keeps the
+# case split finite (the whole reason these predicates are decidable): a call that
+# would need more than this many checks is refused rather than ground through.
+_MAX_RELATIONAL_TUPLES = 256
+
+
+def _enum_elements(value: object) -> "list[object]":
+    """The values an enum predicate must decide for this argument.
+
+    A scalar decides itself; a collection decides element by element (all of them).
+    Kept as one function so every composite predicate added later inherits the same
+    rule instead of re-deriving it — and so a crash can never again stand in for a
+    verdict.
+    """
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return list(value)
+    return [value]
+
+
+def _effected_tuples(
+    args: dict, names: "tuple[str, ...]"
+) -> "tuple[list[tuple], str | None]":
+    """Every tuple of values the call effects over `names`, or a denial reason.
+
+    Each member contributes its own elements (:func:`_enum_elements`), so a
+    collection-valued member multiplies the tuples instead of silently forming one
+    unverifiable tuple of collections. An empty collection effects NO tuple over
+    these arguments, which is the same answer `enum` gives it.
+    """
+    per_arg = [_enum_elements(args[name]) for name in names]
+    total = 1
+    for elements in per_arg:
+        total *= len(elements)
+    if total > _MAX_RELATIONAL_TUPLES:
+        return [], (
+            f"value policy: {list(names)} would need {total} combination checks, over "
+            f"the bound of {_MAX_RELATIONAL_TUPLES} — refused rather than left undecided"
+        )
+    return [tuple(c) for c in itertools.product(*per_arg)], None
 
 
 @dataclass(frozen=True)
@@ -76,9 +119,29 @@ class ValuePredicate:
                 return f"value policy: arg '{self.arg}'={value!r} fails range [{self.lo}, {self.hi}]"
             return None
         if self.kind == "enum":
-            r = verify_enum(value, self.allowed)
-            if not r.is_pass:
-                return f"value policy: arg '{self.arg}'={value!r} not in {sorted(map(str, self.allowed))}"
+            # A COLLECTION-valued argument names several destinations at once
+            # (`send_email(recipients=[...])`, `share_file(emails=[...])`): EVERY
+            # element must be a member, else an extra destination rides in next to a
+            # legitimate one. Checking the collection as a whole is not an option —
+            # `[a] in {a}` is False, and an unhashable value raised TypeError out of
+            # `evaluate`, which is a gate failure, not a verdict. An empty
+            # collection names no destination and so violates nothing.
+            for element in _enum_elements(value):
+                try:
+                    r = verify_enum(element, self.allowed)
+                except TypeError:
+                    # A nested collection (or any unhashable element) is not a
+                    # scalar an enum codomain can decide: fail closed, loudly, in
+                    # the verdict rather than as an exception.
+                    return (
+                        f"value policy: arg '{self.arg}' element {element!r} is not a "
+                        f"hashable scalar; an enum allowlist decides over scalars only"
+                    )
+                if not r.is_pass:
+                    return (
+                        f"value policy: arg '{self.arg}'={element!r} not in "
+                        f"{sorted(map(str, self.allowed))}"
+                    )
             return None
         # Unknown predicate kind — fail closed.
         return f"value policy: unknown predicate kind {self.kind!r} on '{self.arg}'"
@@ -97,30 +160,51 @@ class ValuePredicate:
                 f"missing {missing}"
             )
         if self.kind == "tuple_enum":
-            value = tuple(args[a] for a in self.args)
-            r = verify_enum(value, self.allowed)
-            if not r.is_pass:
-                return (
-                    f"value policy: {list(self.args)}={value!r} is not an allowed "
-                    f"combination ({len(self.allowed)} permitted)"
-                )
+            # A collection-valued member names several tuples at once:
+            # `recipients=[a, b], currency="EUR"` effects (a, EUR) AND (b, EUR), so
+            # EVERY one of them must be declared — the same element rule `enum`
+            # applies, lifted to the tuple.
+            tuples, overflow = _effected_tuples(args, self.args)
+            if overflow is not None:
+                return overflow
+            for value in tuples:
+                try:
+                    r = verify_enum(value, self.allowed)
+                except TypeError:
+                    # An unhashable element (a nested collection) is not a scalar a
+                    # tuple codomain can decide: fail closed in the verdict, never as
+                    # an exception out of the gate.
+                    return (
+                        f"value policy: {list(self.args)} element {value!r} is not a "
+                        f"tuple of hashable scalars; a tuple_enum decides over those only"
+                    )
+                if not r.is_pass:
+                    return (
+                        f"value policy: {list(self.args)}={value!r} is not an allowed "
+                        f"combination ({len(self.allowed)} permitted)"
+                    )
             return None
         if self.kind == "keyed_range":
             key_arg, value_arg = self.args
-            key, value = args[key_arg], args[value_arg]
-            for k, lo, hi in self.ranges:
-                if k == key:
-                    r = verify_bounded_numeric(value, lo, hi)
-                    if not r.is_pass:
-                        return (
-                            f"value policy: {value_arg}={value!r} fails range "
-                            f"[{lo}, {hi}] for {key_arg}={key!r}"
-                        )
-                    return None
-            return (
-                f"value policy: {key_arg}={key!r} has no declared range — "
-                f"unknown key fails closed"
-            )
+            tuples, overflow = _effected_tuples(args, self.args)
+            if overflow is not None:
+                return overflow
+            for key, value in tuples:
+                for k, lo, hi in self.ranges:
+                    if k == key:
+                        r = verify_bounded_numeric(value, lo, hi)
+                        if not r.is_pass:
+                            return (
+                                f"value policy: {value_arg}={value!r} fails range "
+                                f"[{lo}, {hi}] for {key_arg}={key!r}"
+                            )
+                        break
+                else:
+                    return (
+                        f"value policy: {key_arg}={key!r} has no declared range — "
+                        f"unknown key fails closed"
+                    )
+            return None
         return f"value policy: unknown relational kind {self.kind!r} on {list(self.args)}"
 
 

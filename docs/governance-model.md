@@ -541,7 +541,15 @@ its tools. The operator declares their roles so the kernel can govern them:
   three callers: `axor_core/policy/value_policy.py::closed_allowlist_args`. A
   relational predicate fails **closed** on a partially-present tuple: with part of
   the tuple missing the relation is unverifiable, and passing it would admit
-  exactly the pairing the predicate exists to forbid.
+  exactly the pairing the predicate exists to forbid. A **collection-valued**
+  argument (`send_email(recipients=[…])` and its kind) is decided **element by
+  element**, in every shape: every element of an `enum`, and every tuple in the
+  product a relational predicate's members effect, must be declared — so an
+  injected extra destination cannot ride in beside a legitimate one. One helper
+  (`_enum_elements`) holds that rule, so a predicate kind added later inherits it
+  rather than re-deriving it; an element an enum codomain cannot decide (an
+  unhashable one, i.e. a nested collection) and a product over the finite-case-split
+  bound are both **refusals in the verdict**, never exceptions out of the gate.
 - **Effect signature and coverage** (`axor_core/policy/effect.py`). A decidable
   projection makes each check sound; it does not make the policy a *description of
   the effect*. `effect_signature` names the arguments that decide what happens

@@ -96,6 +96,69 @@ class TestFailClosed:
         ) == []
 
 
+class TestCollectionValuedArguments:
+    """A collection-valued member names SEVERAL tuples; every one must be declared.
+
+    `enum` over `send_email(recipients=[...])` used to raise TypeError out of the
+    gate — a crash standing in for a verdict. The element rule that fixed it lives in
+    one helper precisely so the relational kinds inherit it, and these pin that they
+    do: a list member multiplies the tuples rather than forming one unverifiable
+    tuple of collections, and no input shape leaves `check` as an exception.
+    """
+
+    def test_every_effected_pairing_must_be_allowed(self):
+        pol = {_SINK: [tuple_enum(("recipient", "currency"), {("acme", "EUR")})]}
+        assert check_value_policies(
+            _SINK, {"recipient": ["acme"], "currency": "EUR"}, pol) is None
+        denial = check_value_policies(
+            _SINK, {"recipient": ["acme", "globex"], "currency": "EUR"}, pol)
+        assert denial is not None and "globex" in denial
+
+    def test_an_unhashable_element_is_a_verdict_not_a_crash(self):
+        pol = {_SINK: [tuple_enum(("recipient", "currency"), {("acme", "EUR")})]}
+        denial = check_value_policies(
+            _SINK, {"recipient": [["acme"]], "currency": "EUR"}, pol)
+        assert denial is not None and "hashable" in denial
+
+    def test_an_empty_collection_effects_no_tuple(self):
+        """Consistent with `enum`: an empty destination field names nothing, so there
+        is no pairing to forbid. (Whether the SINK treats empty as "everyone" is a
+        codomain-fidelity question, not this predicate's.)"""
+        pol = {_SINK: [tuple_enum(("recipient", "currency"), {("acme", "EUR")})]}
+        assert check_value_policies(
+            _SINK, {"recipient": [], "currency": "EUR"}, pol) is None
+
+    def test_keyed_range_checks_every_key_and_every_value(self):
+        pol = {_SINK: [keyed_range("recipient", "amount", {"acme": (0, 500)})]}
+        assert check_value_policies(
+            _SINK, {"recipient": ["acme"], "amount": 100}, pol) is None
+        unknown = check_value_policies(
+            _SINK, {"recipient": ["acme", "globex"], "amount": 100}, pol)
+        assert unknown is not None and "no declared range" in unknown
+        out_of_range = check_value_policies(
+            _SINK, {"recipient": "acme", "amount": [100, 900]}, pol)
+        assert out_of_range is not None and "fails range" in out_of_range
+
+    def test_the_case_split_stays_bounded(self):
+        """These predicates are decidable because the case split is finite. A call
+        whose product exceeds the bound is refused, not ground through."""
+        pol = {_SINK: [tuple_enum(("recipient", "currency"), {("acme", "EUR")})]}
+        denial = check_value_policies(
+            _SINK, {"recipient": [f"r{i}" for i in range(300)], "currency": "EUR"}, pol)
+        assert denial is not None and "bound" in denial
+
+    @pytest.mark.parametrize("recipient", [
+        None, 7, (), set(), frozenset(), [None], {"a": 1}, b"bytes",
+    ])
+    def test_no_input_shape_escapes_as_an_exception(self, recipient):
+        pol = {_SINK: [
+            tuple_enum(("recipient", "currency"), {("acme", "EUR")}),
+            keyed_range("recipient", "amount", {"acme": (0, 500)}),
+        ]}
+        check_value_policies(
+            _SINK, {"recipient": recipient, "currency": "EUR", "amount": 1}, pol)
+
+
 class TestClosedCodomainClassification:
     """One classifier, three callers. A closed codomain is one the attacker cannot
     choose a value outside of; an open interval is not."""
