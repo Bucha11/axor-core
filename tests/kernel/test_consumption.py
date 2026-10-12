@@ -322,3 +322,22 @@ async def test_an_approval_requested_for_a_named_call_fits_the_prepared_call():
         _escalate({"recipient": ALLOWED_IBAN}), env, lp._trace_events
     )
     assert refused["error"] == "escalation_denied" and "'amount' is absent" in refused["reason"]
+
+
+def test_a_denial_carries_the_set_the_kernel_judged():
+    """A host that executes a denied call (observe-only) must be able to tell the
+    judged set from what it ran: prepared when preparation succeeded, the
+    proposal as received when preparation itself refused it."""
+    pols = {"send_money": [enum("recipient", {ALLOWED_IBAN}), numeric_range("amount", 0, 10)]}
+    contracts = {"send_money": SinkContract(fields={
+        "recipient": FieldContract(FieldKind.IDENTIFIER),
+        "amount": FieldContract(FieldKind.NUMBER, decimal_string=True),
+    })}
+    gov = ToolCallGovernor(value_policies=pols, field_contracts=contracts,
+                           consequence_overrides={"send_money": ConsequenceClass.CONSEQUENTIAL})
+    over = gov.evaluate("send_money", {"recipient": ALLOWED_IBAN, "amount": "50"})
+    assert not over.allowed and over.category == "value_policy"
+    assert over.args == {"recipient": ALLOWED_IBAN, "amount": 50}
+    absent = gov.evaluate("send_money", {"recipient": ALLOWED_IBAN})
+    assert absent.category == "consumption_contract"
+    assert absent.args == {"recipient": ALLOWED_IBAN}

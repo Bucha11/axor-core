@@ -35,6 +35,26 @@
 - **`docs/guarantees.md`** — one table of guarantees, conditions, premises and
   evidence.
 
+- **`GovernanceDecision.args` on denials too** — the set the kernel judged
+  (prepared, or the proposal as received when preparation refused it), so a host
+  that executes a denied call in an observe-only arm can record what it ran apart
+  from what was checked. Execute only on `allowed`.
+- **trace/v1 schema (descriptions only, no structural change):** on a
+  `tool_result`, `call_id` + `arg_bindings` name the call and the arguments
+  actually executed when an observe-only arm ran a DENY; `arg_bindings` on a
+  `tool_call_intent` are the checked arguments.
+
+### Changed (examples)
+
+- **AgentDojo origin arm relabelled, not changed.** The `*_origin.yaml` configs
+  are an origin-only baseline (role completeness + complete consequence table, no
+  egress allowlist by design); they declared `mode: strict`, which requires an
+  allowlist, and failed to construct outside the runner. They now declare
+  `mode: production` with an explicit guarantees header, and
+  `examples/agentdojo/origin_arm.py` adds the two STRICT obligations the arm
+  carries. The governor kwargs the runner builds are byte-identical before and
+  after.
+
 ### Changed (breaking under STRICT)
 
 - **STRICT requires a ground for every guarded sink**: a sink with value

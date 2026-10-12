@@ -14,6 +14,13 @@ back in place. The counts are therefore per proposal, not rates: they show that
 each condition is load-bearing for its constraint in isolation, not how often an
 agent would attempt the attack.
 
+**What `0 → 1 → 0` shows, and what it does not.** It shows that, *in this
+construction*, nothing else stands in for the condition: remove it and the
+constraint is violated. It does not show that the particular mechanism is
+necessary in general. Confidentiality, for instance, can be had by a design with
+no session floor (e.g. information-flow labels carried on values to the sink); the
+row says only that, in Axor as built, the floor is the component that carries it.
+
 <!-- matrix:begin -->
 | Condition | Constraint | Violating effects: present → removed → restored | Legitimate call executed (present) | Pattern of |
 |---|---|---|---|---|

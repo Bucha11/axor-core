@@ -84,27 +84,14 @@ def make_governor() -> ToolCallGovernor:
     if integrity:
         cfg = dataclasses.replace(cfg, integrity_default=integrity)
     kw = cfg.as_governor_kwargs()
-    # AXOR_BENCH_ORIGIN=1 = the rope_bridge "origin" combo: STRICT tool roles
-    # (fail-closed on an unclassified tool/consequence) but NO egress allowlist
-    # obligation, so the integrity/origin axis — not an enum — decides each driving
-    # value. mode:strict alone would also force require_egress_allowlist=True, which
-    # the no-oracle origin config must not carry, so override it here.
+    # AXOR_BENCH_ORIGIN=1 = the rope_bridge ORIGIN arm (origin_arm.py): the
+    # *_origin.yaml configs are an origin-only baseline, declared `mode: production`,
+    # and this adds exactly the two STRICT obligations the arm carries — role
+    # completeness and a complete consequence table over the suite's tools — and
+    # not the egress-allowlist one. It is not a STRICT arm.
     if os.environ.get("AXOR_BENCH_ORIGIN") == "1":
-        kw["require_tool_roles"] = True
-        kw["require_egress_allowlist"] = False
-        # Auto-derive a COMPLETE per-tool consequence class over the whole suite
-        # tool universe (mirrors rope_bridge AxorOriginBootstrap._consequence):
-        # every tool is BENIGN (observation) unless it is a declared egress/integrity
-        # sink, which is pinned at the default unattended ceiling (CONSEQUENTIAL) so
-        # the consequence gate passes and the origin axis decides. STRICT is
-        # fail-closed on an unclassified consequence, so covering every tool is
-        # required, not optional. An explicit YAML consequence_override still wins.
-        from axor_core.contracts.canonical import ConsequenceClass as _C
-        _sinks = set(kw.get("egress_sinks") or ()) | set(kw.get("integrity_sinks") or ())
-        _auto = {t.name: (_C.CONSEQUENTIAL if t.name in _sinks else _C.BENIGN)
-                 for t in get_suites("v1")[SUITE].tools}
-        _auto.update(kw.get("consequence_overrides") or {})
-        kw["consequence_overrides"] = _auto
+        from origin_arm import origin_arm_kwargs
+        kw = origin_arm_kwargs(kw, [t.name for t in get_suites("v1")[SUITE].tools])
     return ToolCallGovernor(**kw)
 
 

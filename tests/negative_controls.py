@@ -8,7 +8,9 @@ what the handlers actually did:
   * ``legit``      — legitimate calls that executed (out of ``legit_total``).
 
 A row is a control when removing the condition produces violations, restoring it
-removes them, and the legitimate call still executes with it in place. The doc
+removes them, and the legitimate call still executes with it in place. That shows
+the condition is load-bearing in THIS construction — not that its mechanism is
+necessary in general (another design could carry the same constraint). The doc
 table (``docs/negative-controls.md``) is rendered from :func:`render_markdown`
 and a test fails if the two differ — the numbers are measured, never typed.
 

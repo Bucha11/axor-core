@@ -134,11 +134,14 @@ class GovernanceDecision:
     allowed: bool
     reason: str = "approved"
     category: str = "approved"
-    # The argument set every gate decided on: the call put into its sink's
-    # consumption contract (defaults materialised, declared conversions applied).
-    # An allowed call must be EXECUTED with these, not with the arguments the
-    # model proposed — otherwise the value checked is not the value consumed.
-    # Identical to the proposed arguments for a sink with no contract.
+    # The argument set the kernel judged — on an allow AND on a deny. For a sink
+    # with a consumption contract it is the call put into the contract (defaults
+    # materialised, declared conversions applied); when preparation itself failed
+    # it is the proposal as received. An allowed call must be EXECUTED with these,
+    # never with the model's raw proposal — otherwise the value checked is not the
+    # value consumed. Identical to the proposed arguments for a sink with no
+    # contract. A host that executes a DENIED call (an observe-only arm) is running
+    # something the kernel refused, and must record what it ran separately.
     args: dict[str, Any] | None = None
     # The normalized intent for this call, kept so register_output can reuse it
     # without advancing the normalizer's provenance state twice.
@@ -351,7 +354,7 @@ class ToolCallGovernor:
                 )
             return GovernanceDecision(
                 allowed=False, reason=reason, category=category,
-                _normalized=normalized,
+                args=dict(args), _normalized=normalized,
             )
 
         def _deny(gd: GateDecision) -> GovernanceDecision:

@@ -124,6 +124,41 @@ def test_agentdojo_suite_configs_load_and_build_governors():
         assert governor is not None
 
 
+def test_origin_arm_configs_are_labelled_and_build_as_the_runner_builds_them():
+    """The *_origin.yaml configs are an origin-only baseline, not a STRICT arm:
+    they carry no egress allowlist by design, so they must not claim
+    `mode: strict` (which would require one). The runner adds role completeness
+    and a complete consequence table (origin_arm.py); built that way, each
+    constructs, enforces roles, and has no value predicate to rest T4 on."""
+    import glob
+    import importlib.util
+
+    config_dir = os.path.join(
+        os.path.dirname(os.path.dirname(__file__)), "examples", "agentdojo"
+    )
+    spec = importlib.util.spec_from_file_location(
+        "origin_arm", os.path.join(config_dir, "origin_arm.py"))
+    origin_arm = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(origin_arm)  # type: ignore[union-attr]
+
+    from axor_core.governor import ToolCallGovernor
+
+    paths = sorted(glob.glob(os.path.join(config_dir, "config", "*_origin*.yaml")))
+    assert len(paths) >= 4
+    for path in paths:
+        text = open(path).read()
+        assert "ORIGIN-ONLY BASELINE — not a STRICT arm" in text, path
+        cfg = GovernanceConfig.from_yaml(path)
+        assert cfg.mode is not ExecutionMode.STRICT
+        assert cfg.integrity_default == "context"
+        assert not cfg.value_policies  # no destination allowlist, by design
+        kw = origin_arm.origin_arm_kwargs(cfg.as_governor_kwargs(), ["unlisted_tool"])
+        assert kw["require_tool_roles"] and not kw["require_egress_allowlist"]
+        gov = ToolCallGovernor(**kw)
+        assert gov.conformance_obligations == []
+        assert not gov.evaluate("unlisted_tool", {}).allowed  # roles are enforced
+
+
 def test_as_governor_kwargs_strict_maps_to_allowlist_obligation():
     strict = GovernanceConfig.from_dict({
         "mode": "strict",

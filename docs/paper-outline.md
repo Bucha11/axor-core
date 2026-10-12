@@ -360,7 +360,11 @@ recipients are refused either way — controls, kept so the claim stays proporti
 violating effects counted on the handlers' own state and the legitimate call checked
 with the condition in place. Every effect row reads `0 → 1 → 0` with the legitimate
 call executed. The counts are per proposal — they show each condition is
-load-bearing in isolation, not attack rates. Rates belong to §6.
+load-bearing in isolation, not attack rates. Rates belong to §6. And they show
+indispensability **within this construction**, not universal necessity of each
+mechanism: confidentiality, for one, could be carried by a design without a session
+floor. The claim is "in Axor as built, removing X admits the forbidden effect," and
+it is stated that way.
 
 **5.8 Putting it together.** Under STRICT, with an operator-supplied policy, an approval
 callback that is not model-backed, consumption contracts on the guarded fields, and A-3:
