@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Added
+
+- **`falsy_is_absent`** on a field contract: a handler that tests a field by
+  truthiness (`if amount:` — AgentDojo's stock `update_scheduled_transaction` and
+  `update_user_info`) treats `0`, `""` and `[]` as "leave unchanged". The field is
+  dropped from the prepared call, so the gates see what the handler does.
+
 ### Changed (STRICT: record closure is checked, not assumed)
 
 - **STRICT now defaults to `integrity_origins: request-only`.** Under any-trusted a

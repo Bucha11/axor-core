@@ -55,6 +55,7 @@ def test_required_is_inferred_from_the_absence_statement():
     {"required": False, "default": 1, "unused_when_absent": True},  # both
     {"required": True, "default": 1},
     {"required": True, "null_is_absent": True},
+    {"required": True, "falsy_is_absent": True},
 ])
 def test_an_ambiguous_absence_statement_is_refused(kw):
     with pytest.raises(ValueError):
@@ -78,6 +79,25 @@ def test_defaults_are_materialised_and_unused_fields_stay_absent():
 def test_null_is_absent_drops_an_explicit_none():
     out, _ = prepare_args({"to": "a", "n": 3, "note": None}, C)
     assert "note" not in out
+
+
+# AgentDojo's stock update_scheduled_transaction tests each field by truthiness
+# (``if amount:``), so amount=0 / recipient="" leave the record unchanged.
+UPDATE = SinkContract(fields={
+    "id": FieldContract(FieldKind.NUMBER, integral=True),
+    "recipient": FieldContract(FieldKind.IDENTIFIER, unused_when_absent=True, falsy_is_absent=True),
+    "amount": FieldContract(FieldKind.NUMBER, unused_when_absent=True, falsy_is_absent=True),
+})
+
+
+@pytest.mark.parametrize("args, kept", [
+    ({"id": 1, "amount": 0, "recipient": ""}, {"id": 1}),
+    ({"id": 1, "amount": None}, {"id": 1}),
+    ({"id": 1, "amount": 5, "recipient": "X"}, {"id": 1, "amount": 5, "recipient": "X"}),
+])
+def test_falsy_is_absent_drops_what_a_truthiness_handler_ignores(args, kept):
+    out, why = prepare_args(args, UPDATE)
+    assert why is None and out == kept
 
 
 @pytest.mark.parametrize("args, fragment", [

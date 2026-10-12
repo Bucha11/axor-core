@@ -143,6 +143,12 @@ class FieldContract:
 
     ``null_is_absent`` — an explicit ``None`` means "absent" (optional fields
                          only), as in ``update(recipient=None)``.
+    ``falsy_is_absent`` — any falsy value (``None``, ``0``, ``""``, ``[]``,
+                         ``False``) means "absent" (optional fields only): the
+                         handler tests the field by truthiness (``if amount:``), so
+                         ``amount=0`` leaves the record unchanged rather than
+                         setting it to 0. The field is then dropped from the
+                         prepared call, so the gates see what the handler does.
     ``integral``       — NUMBER only: the handler consumes an int; a non-integral
                          number is refused (never truncated behind the check's back).
     ``decimal_string`` — NUMBER only: a plain decimal string is converted to a
@@ -154,6 +160,7 @@ class FieldContract:
     default: object = MISSING
     unused_when_absent: bool = False
     null_is_absent: bool = False
+    falsy_is_absent: bool = False
     integral: bool = False
     decimal_string: bool = False
 
@@ -165,9 +172,11 @@ class FieldContract:
             object.__setattr__(
                 self, "required", not (has_default or self.unused_when_absent)
             )
-        if self.required and (has_default or self.unused_when_absent or self.null_is_absent):
+        if self.required and (has_default or self.unused_when_absent or self.null_is_absent
+                              or self.falsy_is_absent):
             raise ValueError(
-                "a required field takes no default / unused_when_absent / null_is_absent"
+                "a required field takes no default / unused_when_absent / null_is_absent / "
+                "falsy_is_absent"
             )
         if not self.required and has_default == self.unused_when_absent:
             raise ValueError(
@@ -252,7 +261,9 @@ def prepare_args(args: Mapping, contract: SinkContract) -> "tuple[dict | None, s
             )
     out: dict = {k: v for k, v in args.items() if k not in contract.fields}
     for name, fc in contract.fields.items():
-        absent = name not in args or (fc.null_is_absent and args[name] is None)
+        absent = (name not in args
+                  or (fc.null_is_absent and args[name] is None)
+                  or (fc.falsy_is_absent and not args[name]))
         if absent:
             if fc.required:
                 return None, f"required argument '{name}' is absent"
@@ -443,7 +454,7 @@ def parse_field_contracts(raw: object) -> "dict[str, SinkContract]":
                 raise ValueError(f"field_contracts[{sink!r}].{name}: needs a 'kind'")
             fextra = set(f) - {
                 "kind", "required", "default", "unused_when_absent", "null_is_absent",
-                "integral", "decimal_string",
+                "falsy_is_absent", "integral", "decimal_string",
             }
             if fextra:
                 raise ValueError(
@@ -459,14 +470,15 @@ def parse_field_contracts(raw: object) -> "dict[str, SinkContract]":
             required = f.get("required")
             flags = {
                 k: f.get(k, False)
-                for k in ("unused_when_absent", "null_is_absent", "integral", "decimal_string")
+                for k in ("unused_when_absent", "null_is_absent", "falsy_is_absent",
+                          "integral", "decimal_string")
             }
             if (required is not None and not isinstance(required, bool)) or not all(
                 isinstance(v, bool) for v in flags.values()
             ):
                 raise ValueError(
                     f"field_contracts[{sink!r}].{name}: required / unused_when_absent / "
-                    f"null_is_absent / integral / decimal_string must be booleans"
+                    f"null_is_absent / falsy_is_absent / integral / decimal_string must be booleans"
                 )
             try:
                 fields[str(name)] = FieldContract(
