@@ -361,3 +361,18 @@ def test_a_denial_carries_the_set_the_kernel_judged():
     absent = gov.evaluate("send_money", {"recipient": ALLOWED_IBAN})
     assert absent.category == "consumption_contract"
     assert absent.args == {"recipient": ALLOWED_IBAN}
+
+
+def test_structured_field_carries_a_json_value_and_takes_no_predicate():
+    c = SinkContract(fields={
+        "to": FieldContract(FieldKind.IDENTIFIER_LIST),
+        "attachments": FieldContract(FieldKind.STRUCTURED, unused_when_absent=True, null_is_absent=True),
+    })
+    att = [{"type": "file", "file_id": "7"}]
+    out, why = prepare_args({"to": ["a"], "attachments": att}, c)
+    assert why is None and out["attachments"] == att
+    _, why = prepare_args({"to": ["a"], "attachments": [object()]}, c)
+    assert why and "JSON" in why
+    from axor_core.policy.value_policy import enum
+    errs = validate_consumption_contracts({"s": [enum("attachments", ["x"])]}, {"s": c})
+    assert errs

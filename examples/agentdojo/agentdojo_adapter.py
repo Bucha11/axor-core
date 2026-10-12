@@ -305,6 +305,10 @@ class GovernedToolsExecutor(BasePipelineElement):
         self._seen_ids: set[str] = set()
         self.denied_count = 0
         self.denials: list[str] = []
+        # Every decision of the current task, in order: what was proposed, what ran,
+        # and the verdict. The runner writes it into the per-task record, so a
+        # residual attack success can be classified against the invariants.
+        self.task_calls: list[dict] = []
 
     def _governor_for(self, messages, task_text) -> ToolCallGovernor:
         # New task: the very first tool-execution turn has exactly one assistant
@@ -312,6 +316,7 @@ class GovernedToolsExecutor(BasePipelineElement):
         has_prior_tool_result = any(m["role"] == "tool" for m in messages[:-1])
         if self._governor is None or not has_prior_tool_result:
             self._governor = self._make_governor()
+            self.task_calls = []
             # Context-default integrity: the user's task prompt is the trusted
             # origin the attacker cannot author, so a driving value the model lifts
             # from the prompt (a recipient the user named) is proven trusted, while a
@@ -331,6 +336,12 @@ class GovernedToolsExecutor(BasePipelineElement):
         results: list[ChatToolResultMessage] = []
         for tool_call in tool_calls:
             decision = governor.evaluate(tool_call.function, dict(tool_call.args))
+            self.task_calls.append({
+                "tool": tool_call.function, "proposed": dict(tool_call.args),
+                "executed": (dict(decision.args) if decision.allowed and decision.args is not None
+                             else (dict(tool_call.args) if decision.allowed else None)),
+                "allowed": bool(decision.allowed), "category": decision.category,
+            })
             if not decision.allowed:
                 self.denied_count += 1
                 self.denials.append(f"{tool_call.function}: {decision.category}")
@@ -341,8 +352,9 @@ class GovernedToolsExecutor(BasePipelineElement):
                     tool_call=tool_call,
                     error=(
                         "Blocked by the execution governance kernel "
-                        f"({decision.category}). This action was refused and must "
-                        "not be retried."
+                        f"({decision.category}). This action was refused"
+                        + ("." if os.environ.get("AXOR_BENCH_RETRY_HINT") == "neutral"
+                           else " and must not be retried.")
                     ),
                 ))
                 continue

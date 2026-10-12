@@ -198,6 +198,28 @@ def build_pipeline(governed: bool):
     return pipeline, tools_executor
 
 
+def _record(axis: str, governed: bool, ut_id: str, it_id: "str | None", *,
+            utility=None, security=None, error=None, executor=None) -> None:
+    """Append one task's outcome to AXOR_BENCH_RECORD (JSONL), if set. Errors are
+    recorded too, so every pass has an explicit denominator and the tasks it
+    dropped are named; governed records carry every decision of the task."""
+    path = os.environ.get("AXOR_BENCH_RECORD")
+    if not path:
+        return
+    import json
+    rec = {
+        "suite": SUITE, "axis": axis, "condition": "governed" if governed else "undefended",
+        "user_task": ut_id, "injection_task": it_id, "utility": utility, "security": security,
+        "error": error, "model": MODEL, "pass": os.environ.get("AXOR_BENCH_PASS"),
+        "config": os.environ.get("AXOR_BENCH_CONFIG", f"{SUITE}.yaml"),
+        "integrity": os.environ.get("AXOR_BENCH_INTEGRITY"),
+        "retry_hint": os.environ.get("AXOR_BENCH_RETRY_HINT", "no-retry"),
+        "calls": list(getattr(executor, "task_calls", []) or []) if governed else None,
+    }
+    with open(path, "a") as f:
+        f.write(json.dumps(rec, default=str) + "\n")
+
+
 def run_condition(governed: bool, suite, attack_name: str):
     pipeline, tools_executor = build_pipeline(governed)
     attack = load_attack(attack_name, suite, pipeline)
@@ -216,7 +238,11 @@ def run_condition(governed: bool, suite, attack_name: str):
                 )
             except Exception as exc:  # keep the slice going; report and move on
                 print(f"  [{label}] {ut_id} x {it_id}: ERROR {type(exc).__name__}: {exc}")
+                _record("attack", governed, ut_id, it_id, error=f"{type(exc).__name__}: {exc}",
+                        executor=tools_executor)
                 continue
+            _record("attack", governed, ut_id, it_id, utility=utility, security=security,
+                    executor=tools_executor)
             utilities.append(utility)
             asr.append(security)
             print(
@@ -238,7 +264,10 @@ def run_benign(governed: bool, suite):
             utility, _ = suite.run_task_with_pipeline(pipeline, user_task, None, {})
         except Exception as exc:
             print(f"  [{label}] {ut_id}: ERROR {type(exc).__name__}: {exc}")
+            _record("benign", governed, ut_id, None, error=f"{type(exc).__name__}: {exc}",
+                    executor=tools_executor)
             continue
+        _record("benign", governed, ut_id, None, utility=utility, executor=tools_executor)
         utilities.append(utility)
         print(f"  [{label}] {ut_id:<14} (benign)  utility={'Y' if utility else 'n'}")
     return utilities, tools_executor

@@ -27,6 +27,8 @@ names every field the handler reads and the field's consumption kind:
   PATH               handed to a path resolver     no — fuzz obligation
   INTERPRETED        parsed by an interpreter      no — fuzz obligation
   TEXT               opaque content                no — fuzz obligation
+  STRUCTURED         an opaque JSON value (a list  no — carried as-is, never guarded
+                     of attachment records)
   =================  ============================  ==================================
 
 and and what the handler does when the field is absent (refuse, a declared default,
@@ -81,6 +83,7 @@ class FieldKind(str, Enum):
     PATH = "path"
     INTERPRETED = "interpreted"
     TEXT = "text"
+    STRUCTURED = "structured"
 
 
 # The consumption mode each field kind implies (decidability.ConsumptionMode).
@@ -92,6 +95,7 @@ _MODE_OF: dict[FieldKind, ConsumptionMode] = {
     FieldKind.PATH: ConsumptionMode.PATH_RESOLVE,
     FieldKind.INTERPRETED: ConsumptionMode.INTERPRET,
     FieldKind.TEXT: ConsumptionMode.INTERPRET,
+    FieldKind.STRUCTURED: ConsumptionMode.INTERPRET,
 }
 
 # Field kinds each predicate role may guard. A role is what the predicate reads
@@ -238,10 +242,27 @@ def _prepare_value(name: str, value: object, fc: FieldContract) -> "tuple[object
         if not isinstance(value, (list, tuple)) or not all(isinstance(v, str) for v in value):
             return None, f"'{name}'={value!r} is not a list of identifier strings"
         return list(value), None
+    if fc.kind is FieldKind.STRUCTURED:
+        # An opaque JSON value (dicts, lists, scalars) the handler consumes as a
+        # whole — e.g. AgentDojo's send_email(attachments=[{...}]). No predicate may
+        # guard it (registration refuses one), so it is carried unchanged.
+        if not _is_json(value):
+            return None, f"'{name}'={value!r} is not a JSON value"
+        return value, None
     # PATH / INTERPRETED / TEXT: carried as the string the handler gets.
     if not isinstance(value, str):
         return None, f"'{name}'={value!r} is not a string"
     return value, None
+
+
+def _is_json(v: object) -> bool:
+    if v is None or isinstance(v, (str, bool, int, float)):
+        return True
+    if isinstance(v, (list, tuple)):
+        return all(_is_json(x) for x in v)
+    if isinstance(v, Mapping):
+        return all(isinstance(k, str) and _is_json(x) for k, x in v.items())
+    return False
 
 
 def prepare_args(args: Mapping, contract: SinkContract) -> "tuple[dict | None, str | None]":
