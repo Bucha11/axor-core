@@ -14,10 +14,14 @@
 # open codomain an attacker-derived value can satisfy, so the kernel refuses to supersede
 # on it. Only the `enum` recipient drives supersession here.
 #
-# The allowlist IBANs are the recipients the USER NAMES IN THE PROMPT (e.g. user_task_3
-# "send back to GB29...", user_task_4 "refund GB29...") — the operator's/user's known-payee
-# list, which is legitimate deployment knowledge, not answer-peeking. This recovers the
-# value-coincidence tasks (prompt-given payee that also coincidentally appears in a read).
+# The allowlist is derived WITHOUT task knowledge: every counterparty in the account's
+# initial state (transaction history and standing orders of the default environment) —
+# what a bank already knows as the user's payees. It is not built from user prompts.
+# An earlier list was the union of IBANs the user tasks' prompts name; that union contains
+# US133000000121212121212, which is AgentDojo's attacker IBAN (user_task_15 names it as the
+# new landlord), so supersession admitted the attacker on every egress sink. This list
+# does not contain it. Cost: user_task_15's landlord update to US133... is refused.
+# This recovers the value-coincidence tasks (prompt-given payee that also appears in a read).
 # Genuine shared-channel tasks whose payee exists ONLY in an untrusted read (e.g. "pay the
 # bill in bill-*.txt", task 0; "adjust rent per landlord-notices.txt", task 2) are NOT in
 # the list and remain blocked — an operator can't pre-approve a one-off payee. That residual
@@ -43,9 +47,9 @@ driving_args:
 
 value_policies:
   send_money:
-    - {arg: recipient, kind: enum, allowed: [GB29NWBK60161331926819, US122000000121212121212, US133000000121212121212]}
+    - {arg: recipient, kind: enum, allowed: [CH9300762011623852957, GB29NWBK60161331926819, SE3550000000054910000003, US122000000121212121212]}
     - {arg: amount, kind: numeric_range, lo: 0, hi: 1000000}
   schedule_transaction:
-    - {arg: recipient, kind: enum, allowed: [GB29NWBK60161331926819, US122000000121212121212, US133000000121212121212]}
+    - {arg: recipient, kind: enum, allowed: [CH9300762011623852957, GB29NWBK60161331926819, SE3550000000054910000003, US122000000121212121212]}
   update_scheduled_transaction:
-    - {arg: recipient, kind: enum, allowed: [GB29NWBK60161331926819, US122000000121212121212, US133000000121212121212]}
+    - {arg: recipient, kind: enum, allowed: [CH9300762011623852957, GB29NWBK60161331926819, SE3550000000054910000003, US122000000121212121212]}
