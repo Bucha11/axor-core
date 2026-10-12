@@ -150,6 +150,16 @@ Conversely, 204 cases are admitted by the consequence axis and refused only by t
 origin axis, so neither axis subsumes the other. (The two floor cases report
 category `taint_enforcement`; the reason text names the floor.)
 
+**Without the benchmark's labels (`python role_blind.py`).** Every tool in
+`tools.json` is classified by its leading verb alone: a read verb makes it an
+untrusted source, anything else an egress sink driven by all its parameters, with
+the same verb-based consequence classes. Over the 510 dh base cases: 306 refused by
+the consequence gate, 192 by the origin axis, **12 admitted**. All 12 have
+`WebBrowserNavigateTo` as the user tool: "navigate" is not a read verb, so its
+response is not marked untrusted and a non-catastrophic attacker call passes. The
+same tool is the only one of the 17 user tools classified as a sink — the false
+positive the labels hid. No attacker tool is classified as a read.
+
 **Honest caveat.** InjecAgent is all-attack, so every denial is correct and it
 cannot show context-default's *over-block* cost (legitimate egress whose value is
 model-synthesized rather than a verbatim task span). That false-positive cost is
