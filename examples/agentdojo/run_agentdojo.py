@@ -41,6 +41,7 @@ from agentdojo_adapter import (  # noqa: E402
 )
 
 import nested_attacks  # noqa: E402,F401  (registers nested_instructions / recursive_relay)
+import adaptive_attacks  # noqa: E402,F401  (registers axor_adaptive)
 
 from axor_core.config import GovernanceConfig  # noqa: E402
 from axor_core.governor import ToolCallGovernor  # noqa: E402
