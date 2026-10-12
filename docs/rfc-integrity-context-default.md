@@ -48,6 +48,24 @@ Who is exposed:
 - **Confidentiality**: not affected. The floor is content-blind
   (`tests/adversarial/test_confidentiality_floor.py`).
 
+### 1b. A measured instance of the same polarity failure
+
+The marker study ([paper-model-carried-labels](paper-model-carried-labels.md)) builds the
+other obvious mechanism in this space — tag the untrusted bytes at the source and have a
+gate deny any argument still carrying the tag — and an adversarial search defeats it in
+one round by supplying the target value *encoded* (`\uXXXX` escapes, reversed, ROT13 with
+a digit shift, hex ASCII octets) and having the model *derive* the plaintext. The derived
+value never appeared in the tool output, so no tag was on it and the ledger had no
+fragment to match: both gates silent, in one move, with the tag never stripped.
+
+That is this RFC's §1 residual reached from the other direction, and it is the clearest
+available argument for inverting the polarity: the decode family is denied under
+`integrity_default="context"` not because the kernel recognises the encoding but because
+it never asks what surface form the value has. **Those four vectors are a two-sided
+corpus** — they must be DENIED under `context` and are ALLOWED under `clean` — and they
+belong in this repository's regression suite rather than in the eval repo, because the
+expected verdicts are a property of the integrity default, not of a model.
+
 ## 2. Why improving the ledger cannot fix it
 
 Every matching improvement (Aho-Corasick, k-gram shingling, entity canonicalisation,

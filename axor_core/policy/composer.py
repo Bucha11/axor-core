@@ -29,6 +29,12 @@ def _intersect_escalation(
         max_escalations=min(policy.max_escalations, ceiling.max_escalations),
         max_ops_per_grant=min(policy.max_ops_per_grant, ceiling.max_ops_per_grant),
         require_human=policy.require_human or ceiling.require_human,
+        # call_approval WIDENS (it turns a denial into a question), so the meet
+        # is `and` — like allow_escalation. Omitting it would also be SAFE (the
+        # field defaults to the strict value, which is why the ceiling sweep does
+        # not catch its absence); it is set explicitly so a deployment that opts
+        # in on both sides does not silently lose the knob.
+        call_approval=policy.call_approval and ceiling.call_approval,
     )
 
 
@@ -85,7 +91,14 @@ class PolicyComposer:
         escalation profile) therefore cannot widen a narrower per-task policy."""
         changes: dict = {}
         if self._consequence_ceiling is not None:
-            changes["max_unattended_consequence"] = self._consequence_ceiling
+            # Ceiling semantics: lower is stricter, so the overlay takes the MEET
+            # with the per-task value. A direct assignment here would let a looser
+            # operator profile (e.g. "balanced" = CONSEQUENTIAL) widen a stricter
+            # per-task policy (REVERSIBLE) — the one authority field that escaped
+            # the narrowing rule this method documents.
+            changes["max_unattended_consequence"] = min(
+                policy.max_unattended_consequence, self._consequence_ceiling
+            )
         if self._overlay_escalation is not None:
             changes["escalation_policy"] = _intersect_escalation(
                 policy.escalation_policy, self._overlay_escalation
@@ -98,8 +111,20 @@ class PolicyComposer:
             else:
                 # Confined already → intersect, so a path outside the workspace
                 # cannot survive and the workspace cannot widen the policy.
-                changes["allowed_paths"] = intersect_allowlist(
+                # An empty intersection means the two allowlists are DISJOINT.
+                # Empty is not a deny-all sentinel downstream — every consumer
+                # (the filesystem gate in node/intent_loop, _restrict_allowed_paths,
+                # LeaseValidator.check_path_allowed) reads an empty tuple as "no
+                # path restriction", so returning it here would drop the ceiling
+                # altogether and widen BOTH operands. Fall back to the operator
+                # workspace, mirroring _restrict_allowed_paths' fallback to the
+                # trusted operand: the per-task roots cannot be honoured anyway
+                # (they lie outside the workspace the operator confined us to).
+                intersected = intersect_allowlist(
                     policy_paths, tuple(self._overlay_allowed_paths)
+                )
+                changes["allowed_paths"] = intersected or tuple(
+                    self._overlay_allowed_paths
                 )
         return dataclasses.replace(policy, **changes) if changes else policy
 
@@ -229,6 +254,16 @@ class PolicyComposer:
             child_policy.allow_model_switch and parent_policy.allow_model_switch
         )
 
+        # consequence ceiling: a child cannot run unattended at a higher
+        # irreversibility class than its parent. Lower is stricter, so the meet is
+        # min(). Without this a classifier-selected child (which carries the
+        # dataclass default, CONSEQUENTIAL) would silently out-rank a parent
+        # pinned to REVERSIBLE and skip the governance gate the parent requires.
+        max_unattended_consequence = min(
+            child_policy.max_unattended_consequence,
+            parent_policy.max_unattended_consequence,
+        )
+
         # allowed_paths: child cannot widen the parent's filesystem ceiling.
         allowed_paths = _restrict_allowed_paths(
             child_policy.allowed_paths, parent_policy.allowed_paths
@@ -253,6 +288,7 @@ class PolicyComposer:
             allow_model_switch=allow_model_switch,
             allowed_paths=allowed_paths,
             escalation_policy=escalation_policy,
+            max_unattended_consequence=max_unattended_consequence,
         )
 
 
@@ -363,4 +399,5 @@ def _restrict_escalation(
         max_escalations=min(child.max_escalations, parent.max_escalations),
         max_ops_per_grant=min(child.max_ops_per_grant, parent.max_ops_per_grant),
         require_human=child.require_human or parent.require_human,
+        call_approval=child.call_approval and parent.call_approval,
     )

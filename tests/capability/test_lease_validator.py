@@ -135,3 +135,62 @@ def test_increment_use():
     assert lease.is_valid
     lease.increment_use()
     assert lease.is_exhausted
+
+
+# ── the delegation ceiling: A₀ ∪ G, not A₀ ───────────────────────────────────
+#
+# "Callable now" and "may be granted" are different sets. A lease exists precisely
+# to put a grantable tool in force for a bounded while, so validating it against
+# the CURRENT capability set rejected every grant that had a point — which is what
+# made documented capability-on-demand unusable. Validating against A₀ ∪ G fixes
+# that without making G callable: G stays out of resolve().
+
+def _ro_policy(grantable=("write",)):
+    from axor_core.contracts.policy import EscalationPolicy, ExecutionPolicy, ToolPolicy
+    return ExecutionPolicy(
+        name="ro",
+        tool_policy=ToolPolicy(allow_read=True),
+        escalation_policy=EscalationPolicy(
+            allow_escalation=True, grantable_tools=tuple(grantable)
+        ),
+    )
+
+
+def test_delegation_ceiling_is_available_plus_grantable():
+    from axor_core.capability.resolver import CapabilityResolver
+
+    policy = _ro_policy()
+    available = CapabilityResolver().resolve(policy).allowed_tools
+    ceiling = LeaseValidator().delegation_ceiling(policy)
+    assert "write" not in available          # G is NOT callable before a grant
+    assert ceiling == frozenset(available) | {"write"}
+
+
+def test_a_lease_for_a_grantable_tool_is_accepted():
+    from axor_core.contracts.lease import LeaseAuthorityType
+
+    lease, err = LeaseValidator().create_lease(
+        "operator", LeaseAuthorityType.HUMAN_OPERATOR, ["write"], _ro_policy()
+    )
+    assert err is None, err
+    assert lease.allowed_tools == frozenset({"write"})
+
+
+def test_a_lease_for_a_tool_in_neither_set_is_rejected():
+    from axor_core.contracts.lease import LeaseAuthorityType
+
+    _lease, err = LeaseValidator().create_lease(
+        "operator", LeaseAuthorityType.HUMAN_OPERATOR, ["bash"], _ro_policy()
+    )
+    assert err is not None and "delegation ceiling" in err
+
+
+def test_the_delegation_ceiling_follows_the_narrowed_escalation_policy():
+    """G is an authority field: parent and deployment composition narrow it like
+    every other one, so the delegation ceiling is bounded by the trusted ceiling."""
+    from axor_core.policy import PolicyComposer
+
+    child = _ro_policy(grantable=("write", "bash"))
+    parent = _ro_policy(grantable=("write",))
+    narrowed = PolicyComposer().apply_parent_restrictions(child, parent)
+    assert "bash" not in LeaseValidator().delegation_ceiling(narrowed)

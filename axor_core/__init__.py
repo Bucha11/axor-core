@@ -87,6 +87,8 @@ _LAZY = {
     "AuthorityPolicy": "axor_core.contracts.authority",
     "ChildAuthorityPolicy": "axor_core.contracts.authority",
     "ExportAuthorityPolicy": "axor_core.contracts.authority",
+    "ApprovalRequest": "axor_core.contracts.approval",
+    "AuthorityScope": "axor_core.contracts.approval",
     "ExecutionPlan": "axor_core.contracts.planning",
     "RetrievalBreadth": "axor_core.contracts.planning",
     "DecompositionPreference": "axor_core.contracts.planning",
@@ -150,6 +152,7 @@ if TYPE_CHECKING:  # static visibility for type checkers / IDEs (not loaded at r
     from axor_core.contracts.authority import (
         AuthorityPolicy, ChildAuthorityPolicy, ExportAuthorityPolicy,
     )
+    from axor_core.contracts.approval import ApprovalRequest, AuthorityScope
     from axor_core.contracts.planning import (
         ExecutionPlan, RetrievalBreadth, DecompositionPreference, ResourceBudget,
     )
@@ -175,6 +178,7 @@ __all__ = [
     "SignalClassifier",
     "ExecutionPolicy",
     "AuthorityPolicy", "ChildAuthorityPolicy", "ExportAuthorityPolicy",
+    "ApprovalRequest", "AuthorityScope",
     "ExecutionPlan", "RetrievalBreadth", "DecompositionPreference",
     "ResourceBudget", "split_legacy_policy",
     "TaskSignal", "TaskComplexity", "TaskNature",

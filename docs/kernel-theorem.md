@@ -62,6 +62,82 @@ handling — the fuzzing region, exactly where the split predicts bugs must live
 
 ---
 
+## 1b. The second claim (K5) — authority containment
+
+K4 is about the *first* argument of the decision: raw input reaches it only through
+an admissible projection. It says nothing about the *second* — where the policy
+came from. That is a separate claim, and the one the "untrusted data cannot create
+authority" thesis actually needs:
+
+> **Authority containment.** For every step of a session, on every axis,
+> `A_t ⊆ B`, and the only move that changes `B` is a trusted event.
+
+With three sets kept apart (`axor_core/kernel/authority.py`):
+
+```
+A₀   what the policy makes callable now        (CapabilityResolver.resolve)
+G    what the operator declared grantable      (escalation_policy.grantable_tools)
+B    the trusted ceiling for this turn         (A₀ ∪ G, after parent + overlay composition)
+A_t  what is in force right now                (A₀ plus live authority, minus what the
+                                                degradation level refuses)
+```
+
+**Why it is not "the composition contains no union."** That phrasing cannot
+describe a system with lawful recovery: an escalation legitimately *extends* what
+is in force. The content is a containment invariant plus a closed, typed set of
+moves — `NARROW`, `RESTORE_CLASS`, `RESTORE_CALL`, `SPEND`, `SET_CEILING` — each
+with its own legality condition. A transition is typed by its **cause**, declared
+by the caller and checked against the two states (`authority.check`), because the
+cause is not always visible in the states: a trusted re-assertion of the turn's
+policy is a `SET_CEILING` even when the ceiling value is unchanged. Where no cause
+is available, `authority.classify` infers one and reports an unexplained widening —
+that inference path is the silent-widening detector, not the primary check.
+
+**K5 splits in two, and only the first half is about authority composition:**
+
+```
+  A_t ⊆ B(t)                       authority composition — this claim
+  execute(s, e) ⟹ e ∈ A_t          policy enforcement — the gate sequence + O3
+```
+
+Neither half implies the other. A correct lattice says nothing about a labeller or
+a normalizer admitting an effect outside what is in force; complete mediation says
+nothing about where the ceiling came from.
+
+**Status.** The containment half is machine-checked over random interleavings of
+the real engines (not a model of them: every view is read back through
+`axor_core/node/authority_probe.py` from the policy, the degradation engine, the
+capability resolver and the escalation manager's own tables). The enforcement half
+is O1/O3 above. What is *not* claimed: that the authority a transition restores is
+*appropriate* — only that it stays inside a ceiling the untrusted side cannot
+move; and that the policy's description of an effect is precise enough, which is
+`validate_effect_coverage` and explicitly advisory.
+
+**Two carve-outs, declared rather than assumed:**
+
+- `escalate` / `escalate_policy` are intent kinds the loop handles itself, never
+  governed sinks, and the degradation engine adds them at LOCKED ("everything
+  frozen except read + escalate"). The containment check excludes them —
+  `KERNEL_INTERNAL_INTENTS` — and the state machine asserts that nothing *else*
+  ever appears there, so a real tool riding the exemption fails the build.
+- Authority does not outlive the turn it was granted in: the `IntentLoop`, and
+  with it the `EscalationManager`, is constructed inside `GovernedNode.run`. That
+  is what keeps `A_t ⊆ B` across a ceiling that drops. If authority is ever hoisted
+  to session scope, lowering a ceiling will have to retract authority above it; the
+  state machine already detects that case
+  (`test_a_ceiling_that_drops_under_live_authority_is_caught`).
+
+| Obligation | What it requires | Pinned by |
+|---|---|---|
+| **K5-1** containment | `A_t ⊆ B` on tools, paths and the unattended consequence ceiling, at every step | `tests/invariants/test_authority_transitions.py` (`AuthorityMachine`, invariant after every rule); `axor_core/kernel/authority.py::violations` |
+| **K5-2** typed transitions | every move is one of five kinds and satisfies that kind's condition; an undeclared widening is reported | `authority.check` / `authority.classify`; `tests/invariants/test_authority_transitions.py` (hand-built illegal pairs: restoration of a non-grantable tool, spend that widens, authority with no record) |
+| **K5-3** one step never widens its trusted operand | each composition entry point (parent restriction, deployment overlay, extension overrides) returns no authority wider than its trusted operand, over **every** declared authority field | `tests/invariants/test_authority_ceiling_sweep.py` (field set derived from `AuthorityPolicy`, so a new field without a declared order fails the build) |
+| **K5-4** delegation ≠ availability | `G` is not callable before a grant; a grant is validated against `A₀ ∪ G`; an authorised call is dispatched with `A₀ ∪ {that tool}` and the tool is out of reach again once spent | `tests/capability/test_lease_validator.py` (`delegation_ceiling`); `tests/node/test_call_bound_authority.py::test_a_grantable_tool_is_unreachable_until_granted_and_after_spending` |
+| **K5-5** authority stays current | a call authorisation is bound to one call, re-checked against mutable state after the approval await, spent atomically, and discarded if it cannot be used now | `tests/node/test_call_bound_authority.py` (floor armed / cancelled during the wait, two concurrent claimants, replaced argument) |
+| **K5** scope | the model is read from the live objects, never maintained alongside them | `axor_core/node/authority_probe.py`; `EscalationManager.authority_records`; `DegradationEngine.tool_denial` (one source for what a level permits, read by both the enforcement path and the probe) |
+
+---
+
 ## 2. The three structural obligations (O1 / O2 / O3)
 
 The theorem decomposes into three obligations. Each is a property of the
@@ -104,9 +180,28 @@ Within that set the failure direction is deliberate over-taint (`⊇`, never sil
 **Scope boundary (part of the claim, not a hidden gap):** O2 is **explicit-flow
 soundness only**. An implicit (control-flow) leak — a deterministic interior branch
 on content that influences an output with `causal_root = ∅` — is **not** covered.
-This is shared with FIDES by design; CaMeL's STRICT-mode dependency augmentation is
-the known partial technique and is not yet adopted. See §6 and
+CaMeL's STRICT-mode dependency augmentation (adding the conditional test or loop
+iterable as a dependency of everything assigned in the block,
+[arXiv:2503.18813](https://arxiv.org/abs/2503.18813) §5) is the known partial
+technique and is not yet adopted. See §6 and
 [governance-model §7](governance-model.md).
+
+**Do not claim this boundary is shared with FIDES — on *this* axis it is not.**
+FIDES ([arXiv:2505.23643](https://arxiv.org/abs/2505.23643), Proposition 1)
+guarantees *non-interference for the integrity of tool calls and data*, and only
+*explicit secrecy* for confidentiality. Their integrity lattice's non-interference
+explicitly "includes consequential control flow decisions", and the mechanism is that
+policy P-T checks the **tool label** — whether the call was generated in a trusted
+context — not merely the arguments. So the axis on which FIDES accepts the
+implicit-flow weakening is **confidentiality**, which is the axis where *our* control
+is strongest (the floor is content-blind and whole-call, §5), and the axis where we
+take the weakening is **integrity**, which is the one FIDES closes. The profiles are
+mirror images, not the same scope choice. The construct that would move us onto their
+integrity profile is the one already specified:
+`integrity_default="context"` labels a value by the *context it was generated in*
+rather than by what it contains
+([rfc-integrity-context-default](rfc-integrity-context-default.md)) — a value-level
+analogue of their trusted-context tool label.
 
 **The model edge is not a constructor (current gap, not a scope choice).** A value
 the model writes into a tool call is produced by none of the constructors above. The
@@ -151,7 +246,13 @@ No real-world effect is reachable except through a guarded coercion that calls
 
 A projection produced by a model that reads the governed content is in the untrusted
 domain even when its output type-checks: its *faithfulness* is steerable (the
-Firewalls input-firewall LLM-projector is the public counterexample). Such a process
+Firewalls input-firewall LLM-projector is the public counterexample; for a *measured*
+one, built and broken on purpose, see
+[paper-model-carried-labels](paper-model-carried-labels.md) — a projection with a
+two-element, instruction-free codomain consumed as a case-split, i.e. impeccable under
+T4, whose producer is the model, and which an adversarial search defeats in one round
+without ever touching the projection itself. That instance is what separates T0 from T4:
+a flawless codomain does not rescue a steerable producer). Such a process
 may feed the detection layer only, never the trusted path.
 
 In this codebase every trusted-path projection is produced by a deterministic,
@@ -179,6 +280,65 @@ structural function — there is no model in the decision loop:
 The adjudicator is a *consumer* of the projection (advisory, projection-only,
 tightening-only) and may itself be a model — T0 constrains the producer, not the
 consumer, which is why the rule is scoped to the producer modules.
+
+---
+
+## 3b. Every input that can PERMIT a call, and what must back it
+
+T0 (§3) says no model produces a trusted-path projection. That is necessary and
+not sufficient for the claim the kernel actually makes — that the model is outside
+the trusted base of the guarantee. A model that pre-manufactured a trusted label,
+chose the permitting policy, or answered an approval is already part of the ground
+on which the call was admitted, whatever `allow` itself calls.
+
+So the chain is audited end to end: for every input that can turn a call from
+denied into allowed, what is the admissible ground, and what actually produces it.
+
+| Permitting input | Admissible ground | Produced by | Status |
+|---|---|---|---|
+| Capability surface, path ceiling, consequence ceiling (`A₀`) | trusted operator configuration | `policy=` / `default_policy=` / profile overlay — else `PolicySelector` over `TaskAnalyzer` | **STRICT: refused** unless operator-supplied (`GovernedSession.run` raises `PolicyError`). Other modes: legacy — classification selects it, and an operator-supplied external classifier **may be a model** |
+| Delegation ceiling (`G`) | operator configuration | `escalation_policy.grantable_tools`, narrowed by parent/overlay composition | ✅ classifier presets carry none (K5-4) |
+| Action class (consequence axis) | registered declaration, keyed on the sink name | built-in table + `consequence_overrides`; unknown → `CONSEQUENTIAL`; name-token raising tightens only | ✅ the name is model-supplied, but it resolves against a declaration and dispatches the same name |
+| Sink roles — egress / integrity / imperative / positional / benign | operator declaration | session kwargs or YAML; STRICT validates role completeness; a positional declaration of an instruction-complete sink is refused at construction | ✅ under STRICT; outside it, role completeness is not required |
+| Enum / relational predicate satisfied | exact membership in a closed operator set | `verify_enum`, `verify_bounded_numeric`, `closed_allowlist_args` | ✅ |
+| Integrity supersession | every driving arg present **and** covered by a closed codomain | `integrity_superseded_by_decidable` | ✅ `numeric_range` deliberately inadmissible |
+| Confidentiality floor down | a registered sensitive-read event; lifted only by an unforgeable `GovernanceAuthority`, by fingerprint | `TaintEngine` outstanding map, `endorse_value` | ✅ |
+| "Trusted value" (`TrustedOrigin`) | TASK: the principal's task at depth 0 · OPERATOR: enum members · TOOL: a **declared** benign tool · ENDORSED: governance | `register_trusted`; a child's task at depth > 0 is trusted only if the inherited context is clean | ⚠️ `TOOL` is declaration-backed **only under STRICT roles**: `is_trusted_tool` returns True for *any* tool when `require_tool_roles` is False, so outside STRICT the ground is "the normalizer did not classify the read as external" |
+| Model-generated value carrying no registered fragment | — | `integrity_default`: `context` under STRICT (carries the context root), `clean` otherwise | ⚠️ STRICT closes it; otherwise this is the known O2 model-edge gap (§2) |
+| Approval (the governance gate for an over-ceiling sink) | a trusted human, or a rule whose correctness is checkable | operator-supplied `EscalationCallback` | ⚠️ **premise, uncheckable in core**: nothing prevents an operator from backing the callback with a model, which puts the model back in the trusted base. Stated in `contracts/approval.py` and governance-model §2 |
+| Projection features (carrier, path class, provenance label, normalized intent) | deterministic structural function | the six T0 producers | ✅ §3 |
+| Peer provenance labels | a signed receipt; across keysets only a bounded discount, never label authority | `federation/receipt.py`, `federation/ladder.py` | ✅ opt-in |
+| *Absence* of a model-carried mark (datamarking read at the gate) | — | the model, which must reproduce the sentinel onto the argument | ❌ **inadmissible as a positive ground**: the producer is the model, and a value the model *derives* rather than copies carries no mark by construction. Admissible only in the deny direction, as detection. [paper-model-carried-labels](paper-model-carried-labels.md) |
+
+**The result of the audit is a mode statement, not a global one.** The three
+inputs whose ground is a heuristic or a default rather than a declaration —
+policy selection, trusted-tool-output, and the integrity default — are exactly
+the three that STRICT closes. So:
+
+> The chain "producer → projection → gate → execution" excludes the model from
+> the trusted base **under STRICT, with an operator-supplied policy and an
+> approval callback that is not model-backed**. Any other configuration is not
+> the one the theorem covers, and the kernel now refuses the specific case where
+> it would otherwise look covered (STRICT without an operator policy) instead of
+> relying on a warning.
+
+**Two premises remain premises, and neither is closable from inside core:**
+
+- an approval is only as good as what answers it — core can bound its *scope*
+  (one call, one use, re-checked, atomically spent) but cannot inspect the
+  callable;
+- outside STRICT, `TrustedOrigin.TOOL` and `integrity_default="clean"` are
+  declaration-free, so the exclusion claim is not available there. This is a
+  configuration boundary, stated as one.
+
+**What was closed to make the chain reach execution at all:** a `TRANSFORM`
+decision rewrites the call, and the gates used to run on the arguments *before*
+the rewrite while the executor received the arguments *after* it. Nothing in core
+emits `TRANSFORM`, so no deployment was affected — but the premise "the gates
+verified the call that runs" did not hold for the contract as written. The
+transform is now resolved before normalization, so one argument set is
+normalized, gated, bound to the approval, re-checked after the await, and
+executed (`tests/node/test_transform_is_gated.py`; the suite fails without it).
 
 ---
 
@@ -269,7 +429,9 @@ Stated as boundaries of the claim, not as incidental gaps:
 - **Implicit information flow** — O2 is explicit-flow soundness only (§2). A
   control-flow side channel with `causal_root = ∅` is not covered. Bounded by
   `tests/adversarial/test_implicit_flow_gap.py`; the standard partial fix
-  (CaMeL STRICT-mode dependency augmentation) is not yet adopted.
+  (CaMeL STRICT-mode dependency augmentation) is not yet adopted. This boundary is
+  **ours, not a shared one**: FIDES closes it on the integrity axis by checking the
+  trusted context of the call (§2).
 - **The integrity model-edge gap** — a value the model generates that contains no
   registered fragment derives `constant()` (trusted). This covers paraphrase, and
   also re-encoded or unsegmented *copies* of an untrusted identifier, so it is not a

@@ -8,7 +8,22 @@ auto-denied (fail-closed).
 
 Signature (see :data:`axor_core.node.intent_loop.EscalationCallback`):
 
-    async (tool_use_id: str, tool: str, paths: list[str], max_ops: int) -> bool
+    async (request: ApprovalRequest) -> bool
+
+The request carries its :class:`~axor_core.contracts.approval.AuthorityScope`:
+
+* CLASS — "grant this tool, under these path roots, for N ops". The answer is
+  authority over a *class* of calls, which is all a request made before the call
+  exists can be.
+* EFFECT — "allow THIS call", with its arguments and an ``call_digest``. The
+  resulting grant is one-shot and matches only a call with that digest.
+
+An EFFECT request's ``args`` are raw, attacker-influenceable values: an approver
+renders them as data and never follows them as instruction. They reach an approver
+only after every structural gate has already admitted the call.
+
+The legacy four-argument signature still works (it is adapted with a
+DeprecationWarning) but can only be asked CLASS-scoped questions.
 
 Two implementations ship in core:
 
@@ -32,6 +47,8 @@ import asyncio
 import logging
 import sys
 
+from axor_core.capability.lease_validator import extract_path_arg
+from axor_core.contracts.approval import ApprovalRequest
 from axor_core.security.paths import paths_within
 
 log = logging.getLogger("axor.capability.approvals")
@@ -90,9 +107,52 @@ class AllowlistEscalationApprover:
         self._path_prefixes = tuple(allowed_path_prefixes)
         self._unconfined_tools = frozenset(unconfined_tools)
 
-    async def __call__(
-        self, tool_use_id: str, tool: str, paths: list[str], max_ops: int
-    ) -> bool:
+    async def __call__(self, request: ApprovalRequest) -> bool:
+        if request.is_call_scoped:
+            return self._approve_call(request)
+        return self._approve_class(
+            request.tool, list(request.paths), request.max_ops
+        )
+
+    def _approve_call(self, request: ApprovalRequest) -> bool:
+        """One concrete call. The path confinement is checked against the call's
+        OWN path argument — strictly more precise than a class-scoped grant, where
+        only the requested roots are known."""
+        tool = request.tool
+        cap = self._allowed_tools.get(tool)
+        if cap is None:
+            log.info("effect approval denied by allowlist: tool %r not allowed", tool)
+            return False
+        path = extract_path_arg(dict(request.args))
+        if tool in self._unconfined_tools:
+            # Declared not path-confinable: approvable only without a path to
+            # confine, exactly as for a class grant.
+            if path:
+                log.info(
+                    "effect approval denied by allowlist: tool %r is unconfined-only "
+                    "but the call carries path %r", tool, path,
+                )
+                return False
+        elif self._path_prefixes:
+            if not path:
+                log.info(
+                    "effect approval denied by allowlist: tool %r call carries no "
+                    "path but approver confines to %r", tool, self._path_prefixes,
+                )
+                return False
+            if not paths_within([path], self._path_prefixes):
+                log.info(
+                    "effect approval denied by allowlist: tool %r path %r does not "
+                    "resolve within %r", tool, path, self._path_prefixes,
+                )
+                return False
+        log.info(
+            "effect approval granted by allowlist: tool %r effect %s (signature %s)",
+            tool, request.call_digest[:12], list(request.effect_signature),
+        )
+        return True
+
+    def _approve_class(self, tool: str, paths: list[str], max_ops: int) -> bool:
         cap = self._allowed_tools.get(tool)
         if cap is None:
             log.info("escalation denied by allowlist: tool %r not allowed", tool)
@@ -140,9 +200,7 @@ class AllowlistEscalationApprover:
         return True
 
 
-async def console_escalation_callback(
-    tool_use_id: str, tool: str, paths: list[str], max_ops: int
-) -> bool:
+async def console_escalation_callback(request: ApprovalRequest) -> bool:
     """Interactive human approval on the controlling terminal.
 
     Denies when stdin is not a TTY — a headless deployment must configure an
@@ -150,6 +208,7 @@ async def console_escalation_callback(
     prompt nobody can answer. A terminal error mid-prompt (EOF, closed
     stream) also denies.
     """
+    tool, paths, max_ops = request.tool, list(request.paths), request.max_ops
     stdin = getattr(sys, "stdin", None)
     try:
         interactive = stdin is not None and stdin.isatty()
@@ -162,11 +221,25 @@ async def console_escalation_callback(
         )
         return False
 
-    scope = f"paths {paths!r}" if paths else "no path restriction"
-    prompt = (
-        f"[axor] escalation request: grant tool {tool!r} ({scope}, "
-        f"max {max_ops} ops)? [y/N] "
-    )
+    if request.is_call_scoped:
+        # The arguments are untrusted content. They are printed with !r so the
+        # human sees them as data (quoted, escaped) rather than as a line of text
+        # that could imitate the prompt itself.
+        shown = ", ".join(f"{k}={v!r}" for k, v in sorted(request.args.items()))
+        prompt = (
+            f"[axor] approve THIS call?\n"
+            f"       tool:   {tool!r}"
+            + (f"  (class: {request.consequence})" if request.consequence else "")
+            + f"\n       args:   {shown}\n"
+            f"       effect: {request.call_digest[:16]} (one use only)\n"
+            f"  [y/N] "
+        )
+    else:
+        scope = f"paths {paths!r}" if paths else "no path restriction"
+        prompt = (
+            f"[axor] escalation request: grant tool {tool!r} ({scope}, "
+            f"max {max_ops} ops)? [y/N] "
+        )
     # input() blocks; keep the event loop (and any concurrent governance
     # work) responsive while the human decides.
     try:

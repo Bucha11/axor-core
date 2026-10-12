@@ -56,6 +56,34 @@ class LeaseValidator:
             return True
         return path_matches_allowlist(path, lease.allowed_paths)
 
+    def delegation_ceiling(self, policy: ExecutionPolicy) -> frozenset[str]:
+        """The tools a grant may ever cover: what is available NOW, plus what the
+        operator declared grantable.
+
+        Three sets, deliberately distinct (see
+        [governance-model](../../docs/governance-model.md) §2, "What an approval is
+        authority *over*"):
+
+          * ``A₀`` — available now: ``CapabilityResolver.resolve(policy)``. A tool
+            in ``grantable_tools`` is NOT in it, so it cannot be called before a
+            grant exists;
+          * ``G``  — grantable: ``escalation_policy.grantable_tools``, the
+            operator's delegation ceiling. Parent and deployment composition
+            narrow it like every other authority field, so it is bounded by the
+            trusted ceiling ``B``;
+          * ``A_t`` — in force now: ``A₀`` plus whatever active grants add, which
+            is what a lease may cover and why the check below is against
+            ``A₀ ∪ G`` rather than ``A₀``.
+
+        Keeping ``G`` out of ``resolve`` is the point: adding it there would make
+        every potentially-grantable tool immediately callable.
+        """
+        available = _resolver.resolve(policy).allowed_tools
+        grantable = frozenset(
+            getattr(getattr(policy, "escalation_policy", None), "grantable_tools", ())
+            or ()
+        )
+        return frozenset(available) | grantable
 
     def validate_against_policy_ceiling(
         self,
@@ -65,12 +93,18 @@ class LeaseValidator:
         """
         Validate that the lease does not exceed the parent policy ceiling.
 
+        The tool ceiling is the DELEGATION ceiling (``A₀ ∪ G``), not the current
+        capability set: a lease exists precisely to put a grantable tool in force
+        for a bounded while. Every other bound (paths, TTL, uses) is unchanged.
+
         Returns None if valid, or an error reason string if it would exceed the ceiling.
         """
-        parent_caps = _resolver.resolve(parent_policy)
-        excess = lease.allowed_tools - parent_caps.allowed_tools
+        excess = lease.allowed_tools - self.delegation_ceiling(parent_policy)
         if excess:
-            return f"lease grants tools outside parent ceiling: {excess}"
+            return (
+                f"lease grants tools outside the delegation ceiling "
+                f"(available ∪ grantable): {excess}"
+            )
         # Path ceiling: when the parent policy restricts paths, the lease may not
         # grant access to paths outside that ceiling.
         parent_paths = getattr(parent_policy, "allowed_paths", ()) or ()

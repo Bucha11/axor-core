@@ -68,7 +68,12 @@ def intersect_allowlist(
     when they overlap; disjoint pairs contribute nothing. Every returned root is
     therefore contained by BOTH a policy root and a ceiling root — the result can
     only narrow, never widen past either side. An empty result means the two
-    allowlists are disjoint (confine to nothing — fail closed)."""
+    allowlists are DISJOINT — and it is not a deny-all sentinel: every consumer
+    of ``allowed_paths`` reads an empty tuple as "no path restriction", so a
+    caller must not hand an empty intersection on as a ceiling. Decide what the
+    disjoint case means (fall back to the trusted operand, or reject the
+    configuration) at the call site; ``PolicyComposer._apply_deployment_overlay``
+    falls back to the operator workspace."""
     result: list[str] = []
     for p in policy_paths:
         for c in ceiling_paths:

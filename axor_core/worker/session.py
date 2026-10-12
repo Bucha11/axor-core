@@ -19,6 +19,7 @@ from axor_core.contracts.drift import BehavioralDriftObserver
 from axor_core.contracts.observation import ContextTap
 from axor_core.contracts.invokable import Invokable
 from axor_core.contracts.mode import ExecutionMode
+from axor_core.errors.exceptions import PolicyError
 from axor_core.contracts.policy import (
     EscalationPolicy,
     ExecutionPolicy,
@@ -601,6 +602,28 @@ class GovernedSession:
         # escalation config (see _apply_operator_escalation).
         if policy is None and self._default_policy is not None:
             policy = self._apply_operator_escalation(self._default_policy)
+        if policy is None and self._mode == ExecutionMode.STRICT:
+            # STRICT is the mode that CLAIMS the guarantee, and the guarantee is
+            # that the model is outside the trusted base of the decision. A policy
+            # derived from task classification does not satisfy it: the classifier
+            # reads the task text — which in an agentic session is not reliably the
+            # principal's — and what it returns carries authority (tool_policy,
+            # paths, the consequence ceiling), not just a plan. The external
+            # classifier, which an operator may back with a model, is already
+            # disabled in STRICT; the keyword heuristic is deterministic but still
+            # text-derived, and determinism is not authorship.
+            #
+            # So this configuration is refused rather than silently claimed to be
+            # covered: authority must come from the operator (per-call `policy=` or
+            # `default_policy=`). See docs/security/classifier-threat-model.md —
+            # the structural fix is the AuthorityPolicy / ExecutionPlan split, and
+            # this guard is what keeps the claim honest until it lands.
+            raise PolicyError(
+                "STRICT mode will not derive authority from task classification: "
+                "pass policy=... to run() or default_policy=... to GovernedSession. "
+                "(A classifier may shape the execution PLAN; it may not choose the "
+                "capability surface in the mode that claims the guarantee.)"
+            )
         if policy is None and self._mode == ExecutionMode.PRODUCTION \
                 and not self._classifier_policy_warned:
             _log.warning(

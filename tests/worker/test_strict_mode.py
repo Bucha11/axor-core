@@ -165,3 +165,70 @@ def test_strict_is_superset_of_production():
     assert session._strict_escalation is True
     assert session._trace_config.audit_required is True
     assert session._analyzer._external is None
+
+
+# ── 6. STRICT will not take authority from task classification ────────────────
+#
+# STRICT is the mode that CLAIMS the guarantee, and the guarantee is that the
+# model sits outside the trusted base of the decision. A policy derived from the
+# task text does not satisfy it: the classifier reads text that in an agentic
+# session is not reliably the principal's, and what the selector returns carries
+# AUTHORITY (tool_policy, allowed_paths, the consequence ceiling), not just a
+# plan. Disabling the external classifier (tests 1-3 above) removes the MODEL
+# from that path; it does not make the remaining keyword heuristic an author of
+# authority. So the configuration is refused rather than silently claimed.
+
+import pytest
+
+from axor_core.contracts.policy import ExecutionPolicy, ToolPolicy
+from axor_core.errors.exceptions import PolicyError
+
+
+async def test_strict_refuses_to_derive_authority_from_classification():
+    session = _session(ExecutionMode.STRICT)
+    with pytest.raises(PolicyError, match="will not derive authority"):
+        await session.run("summarise the quarterly numbers")
+
+
+async def test_strict_with_a_default_policy_passes_the_guard():
+    session = _session(
+        ExecutionMode.STRICT,
+        default_policy=ExecutionPolicy(
+            name="operator", tool_policy=ToolPolicy(allow_read=True)
+        ),
+    )
+    try:
+        await session.run("summarise the quarterly numbers")
+    except PolicyError as exc:  # pragma: no cover - the assertion is the point
+        pytest.fail(f"guard fired although the operator supplied authority: {exc}")
+    except Exception:
+        pass  # the MagicMock executor fails further down; irrelevant here
+
+
+async def test_strict_with_a_per_call_policy_passes_the_guard():
+    session = _session(ExecutionMode.STRICT)
+    try:
+        await session.run(
+            "summarise the quarterly numbers",
+            policy=ExecutionPolicy(
+                name="per_call", tool_policy=ToolPolicy(allow_read=True)
+            ),
+        )
+    except PolicyError as exc:  # pragma: no cover
+        pytest.fail(f"guard fired although the caller supplied authority: {exc}")
+    except Exception:
+        pass
+
+
+async def test_production_still_classifies_and_only_warns():
+    """The guard is scoped to the mode that claims the guarantee. PRODUCTION keeps
+    the legacy behaviour (classification selects the policy) and warns once —
+    which is also the honest statement that such a configuration is not the one
+    the theorem covers."""
+    session = _session(ExecutionMode.PRODUCTION)
+    try:
+        await session.run("summarise the quarterly numbers")
+    except PolicyError as exc:  # pragma: no cover
+        pytest.fail(f"PRODUCTION must not be refused by the STRICT guard: {exc}")
+    except Exception:
+        pass

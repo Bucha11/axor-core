@@ -29,7 +29,13 @@ from typing import Any
 from axor_core.contracts.canonical import ConsequenceClass
 from axor_core.contracts.mode import ExecutionMode
 from axor_core.contracts.taint import INTEGRITY_DEFAULTS, INTEGRITY_ORIGIN_MODES
-from axor_core.policy.value_policy import ValuePredicate, enum, numeric_range
+from axor_core.policy.value_policy import (
+    ValuePredicate,
+    enum,
+    keyed_range,
+    numeric_range,
+    tuple_enum,
+)
 
 # Recognised top-level keys. Anything else is a config error (fail closed).
 _KNOWN_KEYS = frozenset({
@@ -247,11 +253,95 @@ def _parse_value_policies(raw: Any) -> dict[str, list[ValuePredicate]]:
     return out
 
 
+_RELATIONAL_KINDS = frozenset({"tuple_enum", "keyed_range"})
+
+
+def _parse_relational_predicate(tool: Any, p: dict, kind: str) -> ValuePredicate:
+    """Parse a relational predicate (``args`` instead of ``arg``).
+
+    Same fail-closed-at-load discipline as the per-arg kinds: an empty combination
+    set or range table denies every call while still satisfying a presence-only
+    allowlist obligation, and a non-numeric or inverted bound would defer to a
+    TypeError on the enforcement path.
+    """
+    args = p.get("args")
+    if not isinstance(args, (list, tuple)) or len(args) < 2:
+        raise ValueError(
+            f"value_policies[{tool!r}]: {kind} predicate needs 'args' with at least "
+            f"two argument names (it constrains a tuple, not one value)"
+        )
+    args = [str(a) for a in args]
+    if len(set(args)) != len(args):
+        raise ValueError(f"value_policies[{tool!r}]: {kind} 'args' has duplicates: {args}")
+
+    if kind == "tuple_enum":
+        extra = set(p) - {"kind", "args", "allowed"}
+        if extra:
+            raise ValueError(
+                f"value_policies[{tool!r}].{args}: unknown tuple_enum field(s) {sorted(extra)}"
+            )
+        allowed = p.get("allowed")
+        if not isinstance(allowed, (list, tuple)) or len(allowed) == 0:
+            raise ValueError(
+                f"value_policies[{tool!r}].{args}: tuple_enum needs a non-empty "
+                f"'allowed' list of combinations"
+            )
+        combos = []
+        for combo in allowed:
+            if not isinstance(combo, (list, tuple)) or len(combo) != len(args):
+                raise ValueError(
+                    f"value_policies[{tool!r}].{args}: each tuple_enum combination "
+                    f"must list exactly {len(args)} values, got {combo!r}"
+                )
+            combos.append(tuple(str(v) for v in combo))
+        return tuple_enum(args, combos)
+
+    # keyed_range
+    extra = set(p) - {"kind", "args", "ranges"}
+    if extra:
+        raise ValueError(
+            f"value_policies[{tool!r}].{args}: unknown keyed_range field(s) {sorted(extra)}"
+        )
+    if len(args) != 2:
+        raise ValueError(
+            f"value_policies[{tool!r}].{args}: keyed_range takes exactly two args "
+            f"(key, value)"
+        )
+    ranges = p.get("ranges")
+    if not isinstance(ranges, dict) or not ranges:
+        raise ValueError(
+            f"value_policies[{tool!r}].{args}: keyed_range needs a non-empty 'ranges' "
+            f"mapping of key -> [lo, hi]"
+        )
+    parsed: dict[object, tuple] = {}
+    for key, bounds in ranges.items():
+        if not isinstance(bounds, (list, tuple)) or len(bounds) != 2:
+            raise ValueError(
+                f"value_policies[{tool!r}].{args}: range for {key!r} must be [lo, hi]"
+            )
+        lo, hi = bounds
+        if isinstance(lo, bool) or isinstance(hi, bool) or not isinstance(lo, (int, float)) \
+                or not isinstance(hi, (int, float)):
+            raise ValueError(
+                f"value_policies[{tool!r}].{args}: range bounds for {key!r} must be "
+                f"numbers, got lo={lo!r} hi={hi!r}"
+            )
+        if lo > hi:
+            raise ValueError(
+                f"value_policies[{tool!r}].{args}: inverted range for {key!r} "
+                f"(lo={lo} > hi={hi}) rejects every value"
+            )
+        parsed[str(key)] = (lo, hi)
+    return keyed_range(args[0], args[1], parsed)
+
+
 def _parse_predicate(tool: Any, p: Any) -> ValuePredicate:
     if not isinstance(p, dict):
         raise ValueError(f"value_policies[{tool!r}]: each predicate must be a mapping")
     arg = p.get("arg")
     kind = p.get("kind")
+    if kind in _RELATIONAL_KINDS:
+        return _parse_relational_predicate(tool, p, str(kind))
     if not arg or not kind:
         raise ValueError(f"value_policies[{tool!r}]: predicate needs 'arg' and 'kind'")
     if kind == "enum":
@@ -299,7 +389,7 @@ def _parse_predicate(tool: Any, p: Any) -> ValuePredicate:
         return numeric_range(str(arg), lo, hi)
     raise ValueError(
         f"value_policies[{tool!r}].{arg}: unknown predicate kind {kind!r} "
-        f"(expected 'enum' or 'numeric_range')"
+        f"(expected 'enum', 'numeric_range', 'tuple_enum' or 'keyed_range')"
     )
 
 
