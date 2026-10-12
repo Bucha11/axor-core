@@ -320,3 +320,52 @@ def field_obligation(kind: CodomainKind, mode: ConsumptionMode) -> str:
     """Operator-facing helper: 'predicate' if a sink field can be guarded by a
     decidable value predicate, else 'fuzz' (must ride the fuzz/positional path)."""
     return "predicate" if is_decidable(kind, mode) else "fuzz"
+
+
+# ── task-scoped grants ────────────────────────────────────────────────────────
+
+def validate_grant_config(
+    grant_args: "dict[str, dict[str, str]] | None",
+    grant_templates: "dict[str, list[dict]] | None" = None,
+    bounded_damage: "dict[str, list[str]] | None" = None,
+) -> list[str]:
+    """Refuse grant declarations that would give false assurance.
+
+    * A grant arg must have a structured kind (iban, email, money, ...). A free-text
+      field (a message body, a subject) is rich syntax: exact match on it is not
+      authority over what the effect does, so it cannot carry a grant.
+    * A numeric limit (``{max: n}``) bounds damage; it does not endorse a value. It
+      is accepted only on a sink.arg the operator declared ``bounded_damage``.
+    * A template may only constrain declared grant args.
+    """
+    from axor_core.kernel.handles import GRANTABLE_KINDS
+
+    errors: list[str] = []
+    grant_args = grant_args or {}
+    bounded = {t: set(a) for t, a in (bounded_damage or {}).items()}
+    for sink, args in grant_args.items():
+        if not args:
+            errors.append(f"grant_args[{sink!r}] declares no arguments")
+        for arg, kind in args.items():
+            if kind not in GRANTABLE_KINDS:
+                errors.append(
+                    f"grant_args[{sink!r}][{arg!r}] has kind {kind!r}: not a structured "
+                    f"kind ({sorted(GRANTABLE_KINDS)}). A rich-syntax field cannot carry "
+                    f"a grant — exact match on free text is not authority over the effect"
+                )
+    for sink, entries in (grant_templates or {}).items():
+        if sink not in grant_args:
+            errors.append(f"grant_templates[{sink!r}]: sink has no grant_args")
+            continue
+        for entry in entries:
+            for arg, spec in entry.items():
+                if isinstance(spec, dict) and "max" in spec:
+                    if arg not in bounded.get(sink, ()):
+                        errors.append(
+                            f"grant_templates[{sink!r}][{arg!r}] is a numeric limit but "
+                            f"{sink}.{arg} is not declared bounded_damage: a limit bounds "
+                            f"damage, it does not endorse a value"
+                        )
+                elif arg not in grant_args[sink]:
+                    errors.append(f"grant_templates[{sink!r}][{arg!r}]: not a grant arg of {sink!r}")
+    return errors

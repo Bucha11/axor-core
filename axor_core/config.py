@@ -47,6 +47,9 @@ _KNOWN_KEYS = frozenset({
     "integrity_default",
     "integrity_origins",
     "federation",
+    "grant_args",
+    "grant_templates",
+    "bounded_damage",
 })
 _CONSEQUENCE_BY_NAME = {c.name.lower(): c for c in ConsequenceClass}
 
@@ -90,6 +93,11 @@ class GovernanceConfig:
     # (used by a transport adapter to mint our outgoing receipts).
     federation_gateway: "Any | None" = None
     federation_identity: "Any | None" = None
+    # Task-scoped grants: sink -> {arg: handle kind}; operator templates (L2);
+    # sink -> [args] whose numeric limit is a bounded-damage guarantee.
+    grant_args: dict[str, dict[str, str]] = field(default_factory=dict)
+    grant_templates: dict[str, list[dict]] = field(default_factory=dict)
+    bounded_damage: dict[str, list[str]] = field(default_factory=dict)
 
     # ── construction ─────────────────────────────────────────────────────────────
 
@@ -148,6 +156,7 @@ class GovernanceConfig:
                 data.get("consequence_overrides")
             ),
             **_parse_federation(data.get("federation")),
+            **_parse_grants(data),
         )
 
     @classmethod
@@ -214,6 +223,9 @@ class GovernanceConfig:
             "require_tool_roles": self.mode is ExecutionMode.STRICT,
             "integrity_default": self.integrity_default,
             "integrity_origins": self.integrity_origins,
+            "grant_args": dict(self.grant_args),
+            "grant_templates": dict(self.grant_templates),
+            "bounded_damage": dict(self.bounded_damage),
         }
 
 
@@ -225,6 +237,28 @@ def _as_set(value: Any, field_name: str) -> frozenset[str]:
     if not isinstance(value, (list, tuple, set)):
         raise ValueError(f"{field_name} must be a list of tool names, got {type(value).__name__}")
     return frozenset(str(v) for v in value)
+
+
+def _parse_grants(data: dict[str, Any]) -> dict[str, Any]:
+    """grant_args / grant_templates / bounded_damage, validated at load (fail closed)."""
+    from axor_core.kernel.registration import validate_grant_config
+
+    ga = data.get("grant_args") or {}
+    gt = data.get("grant_templates") or {}
+    bd = data.get("bounded_damage") or {}
+    if not isinstance(ga, dict) or not all(isinstance(v, dict) for v in ga.values()):
+        raise ValueError("grant_args must be a mapping of tool -> {arg: kind}")
+    if not isinstance(gt, dict) or not all(isinstance(v, list) for v in gt.values()):
+        raise ValueError("grant_templates must be a mapping of tool -> [ {arg: value}, ... ]")
+    if not isinstance(bd, dict) or not all(isinstance(v, (list, tuple)) for v in bd.values()):
+        raise ValueError("bounded_damage must be a mapping of tool -> [arg name, ...]")
+    grant_args = {str(t): {str(a): str(k) for a, k in v.items()} for t, v in ga.items()}
+    templates = {str(t): [dict(e) for e in v] for t, v in gt.items()}
+    bounded = {str(t): [str(a) for a in v] for t, v in bd.items()}
+    errors = validate_grant_config(grant_args, templates, bounded)
+    if errors:
+        raise ValueError("grant config: " + "; ".join(errors))
+    return {"grant_args": grant_args, "grant_templates": templates, "bounded_damage": bounded}
 
 
 def _parse_driving_args(raw: Any) -> dict[str, list[str]]:

@@ -42,6 +42,8 @@ from axor_core.contracts.trace import (
 from axor_core.policy.gates import (
     GateDecision,
     carrier_gate,
+    grant_gate,
+    grant_gate_confirmable,
     consequence_gate,
     integrity_superseded_by_decidable,
     positional_gate,
@@ -67,6 +69,10 @@ from axor_core.kernel.registration import (
     validate_egress_driving_args,
     tool_is_classified,
 )
+from axor_core.kernel.registration import validate_grant_config
+from axor_core.kernel.grants import GrantMinter, GrantStore
+from axor_core.kernel.handles import HandleTable
+from axor_core.kernel.confirm import render
 from axor_core.taint.engine import TaintEngine
 
 # The closed set of denial categories, and the GATE each one names.
@@ -95,6 +101,10 @@ GATE_OF_CATEGORY: dict[str, str] = {
     # an unclassified tool is refused by the capability gate: it has no declared
     # role, so no capability to act under.
     "unclassified_tool": "capability",
+    # task-scoped grants: no live grant covers the call, or a raw value sat in a
+    # handle-typed slot. Both are capability refusals — no authority to act.
+    "grant_gate": "capability",
+    "grant_handle": "capability",
 }
 
 DENIAL_CATEGORIES: frozenset[str] = frozenset(GATE_OF_CATEGORY)
@@ -128,6 +138,12 @@ class GovernanceDecision:
     # The normalized intent for this call, kept so register_output can reuse it
     # without advancing the normalizer's provenance state twice.
     _normalized: NormalizedIntent | None = field(default=None, repr=False)
+    # Task-scoped grants (audit): the grant that authorized this call, its source
+    # (L1 request / L2 template / L3 structured / L4 confirmation), and whether a
+    # confirmation was asked for it. None on a sink without grant args.
+    grant_id: str | None = None
+    grant_source: str | None = None
+    confirmed: bool = False
 
 
 class ToolCallGovernor:
@@ -166,6 +182,13 @@ class ToolCallGovernor:
         integrity_origins: "str | None" = None,
         trace: bool = True,
         node_id: str = "",
+        grant_args: "dict[str, dict[str, str]] | None" = None,
+        grant_templates: "dict[str, list[dict]] | None" = None,
+        bounded_damage: "dict[str, list[str]] | None" = None,
+        grant_store: Any = None,
+        handle_table: "HandleTable | None" = None,
+        confirmer: Any = None,
+        strict_handles: bool = False,
     ) -> None:
         self._positional_sinks = frozenset(positional_sinks or ())
         illegal = {
@@ -234,6 +257,23 @@ class ToolCallGovernor:
                 )
             if errors:
                 raise ValueError("strict egress allowlist: " + "; ".join(errors))
+        # Task-scoped grants. A sink with grant args runs only under a live grant
+        # covering its driving tuple; grants are minted from trusted inputs only
+        # (GrantMinter), never from anything register_output sees (O4).
+        self._grant_args = {k: dict(v) for k, v in (grant_args or {}).items()}
+        grant_errors = validate_grant_config(self._grant_args, grant_templates, bounded_damage)
+        if grant_errors:
+            raise ValueError("grant config: " + "; ".join(grant_errors))
+        self._handles = handle_table if handle_table is not None else HandleTable()
+        self._grants = grant_store if grant_store is not None else GrantStore()
+        # The kernel store or the locked spend-side wrapper; both expose find/reserve.
+        inner = getattr(self._grants, "inner", self._grants)
+        self._minter = GrantMinter(inner, self._handles, self._grant_args)
+        if grant_templates:
+            self._minter.from_templates(grant_templates)
+        self._confirmer = confirmer
+        self._strict_handles = strict_handles
+        self.confirmations = 0
         self._normalizer = IntentNormalizer()
         self._taint = TaintEngine(node_id=node_id, integrity_default=resolved_integrity,
                                   integrity_origins=resolved_origins)
@@ -389,9 +429,26 @@ class ToolCallGovernor:
             self._taint.confidentiality_floor_active(), self._egress_sinks,
             integrity_superseded=integrity_superseded_by_decidable(
                 tool_name, args, self._driving_args, self._value_policies
-            ),
+            ) or self._integrity_superseded_by_grant(tool_name),
             integrity_sinks=self._integrity_sinks,
         )
+        if gd is not None:
+            return _deny(gd)
+
+        # 7. task-scoped grant — last, so a confirmation is only ever asked for a
+        #    call every other gate would admit.
+        gd, grant = grant_gate(
+            tool_name, args, self._grant_args, self._grants, self._handles,
+            strict_handles=self._strict_handles,
+        )
+        confirmed = False
+        if grant_gate_confirmable(gd) and self._confirmer is not None:
+            action = render(tool_name, args, self._grant_args[tool_name], self._handles)
+            self.confirmations += 1
+            if self._confirmer.confirm(action, (tool_name, dict(args))):
+                grant = self._minter.from_confirmation(tool_name, args)
+                confirmed = grant is not None
+                gd = None if grant is not None else gd
         if gd is not None:
             return _deny(gd)
 
@@ -401,10 +458,58 @@ class ToolCallGovernor:
                     kind=TraceEventKind.INTENT_APPROVED,
                     node_id=self._node_id,
                     sequence=len(self._trace_events),
-                    payload=self._call_payload(tool_name, args, normalized),
+                    payload={
+                        **self._call_payload(tool_name, args, normalized),
+                        # audit: which grant authorized this call, from where
+                        **({"grant": {"id": grant.id, "source": grant.source.value,
+                                      "confirmed": confirmed}}
+                           if grant is not None else {}),
+                    },
                 )
             )
-        return GovernanceDecision(allowed=True, _normalized=normalized)
+        return GovernanceDecision(
+            allowed=True, _normalized=normalized,
+            grant_id=grant.id if grant is not None else None,
+            grant_source=grant.source.value if grant is not None else None,
+            confirmed=confirmed,
+        )
+
+    def _integrity_superseded_by_grant(self, tool_name: str) -> bool:
+        """A grant sink whose every driving arg is a grant arg carries its integrity
+        axis on the grant (step 7 denies an uncovered call), so content-taint
+        integrity is superseded there, as for a decidable value policy."""
+        kinds = self._grant_args.get(tool_name)
+        if not kinds:
+            return False
+        driving = self._driving_args.get(tool_name)
+        return driving is not None and set(driving) <= set(kinds)
+
+    # ── grants ────────────────────────────────────────────────────────────────
+
+    @property
+    def grants(self) -> GrantMinter:
+        """Mint grants from trusted inputs: ``from_request`` (L1), ``from_templates``
+        (L2), ``from_structured`` (L3). L4 is the confirmer passed at construction."""
+        return self._minter
+
+    @property
+    def handles(self) -> HandleTable:
+        return self._handles
+
+    @property
+    def grant_store(self) -> Any:
+        return self._grants
+
+    def spend(self, decision: GovernanceDecision, args: dict[str, Any],
+              call_key: str | None = None) -> str | None:
+        """Reserve one use of the grant that authorized ``decision`` and return the
+        spend's idempotency key (``<grant id>#<n>``); None when the call needed no
+        grant. The executor commits after the effect ran (or releases)."""
+        if decision.grant_id is None or decision._normalized is None:
+            return None
+        r = self._grants.reserve(decision._normalized.tool, args, self._handles,
+                                 call_key=call_key, grant_id=decision.grant_id)
+        return r.key if r is not None else None
 
     @property
     def trace_events(self) -> "list[TraceEvent]":

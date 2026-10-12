@@ -97,3 +97,21 @@ source_modules =
     axor_core.contracts.planning
 forbidden_modules =
     axor_core.contracts.authority
+
+# O4 — no amplification (task-scoped grants, docs/task-scoped-grants.md). A grant
+# enters the store only through GrantMinter, from a trusted input. The
+# register_output path — the taint engine and ledger, the provenance/arming map
+# and the normalizer that read tool outputs — must not be able to reach the
+# minting API, so no tool output can become authority.
+[importlinter:contract:o4-no-amplification]
+name = O4 — the tool-output path must not import grant minting
+type = forbidden
+source_modules =
+    axor_core.taint
+    axor_core.policy.provenance
+    axor_core.policy.normalizer
+    axor_core.security
+forbidden_modules =
+    axor_core.kernel.grants
+    axor_core.kernel.confirm
+    axor_core.capability.grant_store

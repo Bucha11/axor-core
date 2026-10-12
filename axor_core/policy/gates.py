@@ -277,3 +277,58 @@ def taint_gate(
         ),
         category="taint_enforcement",
     )
+
+
+def grant_gate(
+    tool_name: str,
+    args: dict,
+    grant_args: "dict[str, dict[str, str]]",
+    store,
+    table,
+    *,
+    strict_handles: bool = False,
+):
+    """Task-scoped grants: a call on a sink with declared grant args runs only under a
+    live grant that covers its whole driving tuple. Returns (denial | None, grant).
+
+    Under ``strict_handles`` a grant arg must be passed as a handle reference; a raw
+    string where a handle is expected is refused before any lookup (the model never
+    gets to spell a value into an authority-bearing slot).
+
+    The grant replaces the content-taint INTEGRITY check for those args (the caller
+    passes ``integrity_superseded``); the confidentiality floor and the consequence
+    class are not touched — a grant is not a waiver of either.
+
+    A ``no live grant`` denial is the one a confirmation (L4) may cure; the caller
+    tells it apart by ``grant_gate_confirmable``."""
+    from axor_core.kernel.handles import is_handle_ref
+
+    kinds = grant_args.get(tool_name)
+    if not kinds:
+        return None, None
+    if strict_handles:
+        for arg in kinds:
+            if arg not in args:
+                continue
+            v = args[arg]
+            vals = v if isinstance(v, (list, tuple, set, frozenset)) else [v]
+            raw = [x for x in vals if not is_handle_ref(x)]
+            if raw:
+                return GateDecision(
+                    f"grant gate: {tool_name}.{arg} takes a handle; a raw value was passed",
+                    "grant_handle",
+                ), None
+    grant = store.find(tool_name, args, table)
+    if grant is None:
+        return GateDecision(
+            f"grant gate: no live grant covers {tool_name}"
+            f"({', '.join(f'{a}=…' for a in kinds if a in args)}); authority for this "
+            f"sink comes only from the request, an operator template, a structured "
+            f"request or a confirmation",
+            "grant_gate",
+        ), None
+    return None, grant
+
+
+def grant_gate_confirmable(gd: "GateDecision | None") -> bool:
+    return gd is not None and gd.category == "grant_gate"
