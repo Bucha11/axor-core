@@ -22,7 +22,7 @@
    §5.8, новое App. F).
 4. **Точность формулировок**: убрать «discharged by fuzzing», «proved/proven» для
    floor, «shared with FIDES»; supersession — замена основания (везде по тексту).
-5. **ROPE — один абзац в Related work** (§7), без расширения §6.3.
+5. **ROPE — один абзац в Related work** (§7), не длиннее прежнего; §6.3 без изменений.
 6. **Ограничения**: предпосылка соответствия обработчика контракту, record closure,
    полнота таблицы оснований (§8).
 
@@ -291,16 +291,16 @@ A statically declared allowlist is non-poisonable by construction; the attacker 
 
 ## 7 Related work
 
-### P-23 · §7 ROPE — заменить абзац (один абзац, без расширения §6.3)
+### P-23 · §7 ROPE — заменить абзац целиком (короче исходного + новое по существу)
 
 <<<<<<< FIND
-ROPE [22]. The closest system by mechanism, and the one we compare against under controlled conditions rather than by citation: both decide at the tool call and ask whether the argument traces to a trusted origin, and they differ in what carries it, a ledger over content against a structural projection per sink.
+ROPE [22]. The closest system by mechanism, and the one we compare against under controlled conditions rather than by citation: both decide at the tool call and ask whether the argument traces to a trusted origin, and they differ in what carries it, a ledger over content against a structural projection per sink. Because ROPE is likewise a gate over an unmodified agent, both defenses run in one harness on one backbone; the measurement, including axor's configurable origin setting at both ends, is in §6.3. Neither system dominates, and the two sit at different points on the same frontier: on slack ROPE is cheaper on utility by mechanism while axor's integrity residual is smaller (CU 71.4 at ASR 4.8 against CU 52.4 at ASR 1.9), on banking the two are equivalent on mechanism and the utility figure is one task of agent nondeterminism (§6.3), and on travel the ordering depends on the origin setting.
 =======
-ROPE [22]. The closest system by mechanism, and the one we compare against under controlled conditions rather than by citation: both decide at the tool call and ask whether the argument traces to a trusted origin, and they differ in what carries it, a ledger over content against a structural projection per sink. Its guarantee (origin soundness, under platform-metadata integrity, record integrity and enumeration completeness) is about the origin of the admitted value; the consumer of that value and the completeness of the guarded-tool table are premises. Run on both systems' own enforcement code with the same handlers and an equal-policy ROPE arm, the amount bound turns out to be policy content (the same bound blocks the same call in both), while the absent-argument and alias cases execute under ROPE and under Axor alike until a consumption contract is added — so the difference on T4 is the contract, not Axor as such; a tool missing from the table is admitted by ROPE and refused by Axor's STRICT completeness; confidentiality is outside ROPE's scope. In the other direction, ROPE's record-closure lemma discharges a condition Axor leaves open: a trusted tool's output can be written by an earlier admitted call (§8).
+ROPE [22]. The closest system by mechanism: both decide at the tool call whether an argument traces to a trusted origin, with a ledger over content against a structural projection per sink; neither dominates on AgentDojo (§6.3). ROPE's guarantee concerns the origin of the admitted value, leaving the value's consumer and the completeness of the guarded-tool table as premises. Run on both systems' own enforcement code with equal policy, the remaining differences are the consumption contract (without it, Axor shares ROPE's absent-argument and alias gaps), fail-closed handling of an unlisted tool, and the confidentiality floor; ROPE's record-closure lemma covers a condition Axor leaves open (§8).
 >>>>>>> REPLACE
 
-> Если точный текст абзаца ROPE в исходнике длиннее (он продолжается про §6.3), заменяется
-> только первое предложение-якорь; остальная часть абзаца остаётся как есть.
+> Цифры по slack/banking/travel из удалённой части не теряются — они в §6.3 и
+> Таблице 3, на которые абзац ссылается.
 
 ### P-24 · §7 FIDES
 
@@ -448,6 +448,6 @@ Completeness of this table is argued, not tested: the allow path admits a call o
 ## Не трогать
 
 - §6.3 (контролируемое сравнение с ROPE в его харнессе) и Таблицу 3 — числа и текст
-  остаются; новый материал про ROPE — только абзац P-23 в §7.
+  остаются; материал про ROPE в §7 — один абзац P-23, не длиннее прежнего.
 - Все числа §6, App. C–E.
 - Рисунки 2, 3, 5, 6 — без изменений.
