@@ -347,7 +347,12 @@ class GovernedToolsExecutor(BasePipelineElement):
                 ))
                 continue
 
-            tool_result, error = runtime.run_function(env, tool_call.function, tool_call.args)
+            # Execute the argument set the kernel judged: for a tool with a
+            # consumption contract it is the prepared set (defaults, declared
+            # conversions), and the raw proposal is a value no gate saw. Without a
+            # contract the two are identical.
+            call_args = decision.args if decision.args is not None else tool_call.args
+            tool_result, error = runtime.run_function(env, tool_call.function, call_args)
             if error is None:
                 governor.register_output(decision, tool_result_to_str(tool_result))
             results.append(ChatToolResultMessage(

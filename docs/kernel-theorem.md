@@ -305,26 +305,58 @@ who may issue it, what it permits, how it is checked, what happens when it is
 absent or fails, and what it does **not** override.
 
 <!-- grounds:begin -->
-| Permitting input | Issued by | Permits | Checked by | Absent / fails | Does not override | Status |
-|---|---|---|---|---|---|---|
-| Operator policy (A₀: tools, paths, consequence ceiling) | operator configuration (policy= / default_policy=) | the capability surface and the unattended consequence ceiling | STRICT refuses to run without an operator-supplied policy | STRICT: PolicyError, nothing runs; other modes: classifier-selected, not covered | every per-call gate | enforced-under-strict |
-| Delegation ceiling (G) | operator configuration (escalation_policy.grantable_tools) | which tools a grant or approval may ever reach | grants and leases validated against available ∪ grantable | no escalation surface: an over-ceiling tool stays unreachable | per-call gates; a grant only adds the tool to the capability set | enforced |
-| Action class (consequence axis) | built-in table + operator consequence_overrides, keyed on the sink name | an unattended call whose class is within the ceiling | exact-name lookup; STRICT: unclassified ⇒ CATASTROPHIC | STRICT: refused at construction / treated as catastrophic | value, taint, floor, carrier, SSRF gates | enforced-under-strict |
-| Sink roles (egress / integrity / imperative / positional / benign) | operator declaration | which gates a tool is subject to; a positional sink admits only structured carriers | STRICT role completeness; an instruction-complete sink cannot be declared positional | STRICT: an unclassified tool is refused | the floor and the value gates | enforced-under-strict |
-| Consumption contract (T4 for a guarded field) | operator declaration per sink field (field_contracts) | a value predicate to count as faithful for the field it guards | predicate role vs field kind at registration; every call prepared into the contract before the first gate | STRICT: a guarded sink needs a contract or an explicit attestation; otherwise reported unverified | handler conformance to its contract (a premise); every gate after preparation | enforced |
-| Integrity supersession | operator, by declaring a closed allowlist on every driving arg | skipping the origin (integrity-taint) check: membership in the pre-authorised set satisfies that obligation instead | every driving arg present and covered by a closed codomain (enum / tuple_enum / keyed key) | origin check applies; numeric_range never supersedes | the confidentiality floor, consequence, value ranges, capability | enforced |
-| Confidentiality floor down | no sensitive read outstanding; lifted only by GovernanceAuthority endorsement | egress | outstanding-read map; endorsement verifies the authority token, per value fingerprint | egress denied while a sensitive read is outstanding | integrity, consequence, value gates | enforced |
-| Trusted value (TrustedOrigin) | TASK: the principal's task at depth 0 · OPERATOR: allowlist members · TOOL: a declared benign tool · ENDORSED: governance | a model-emitted value to escape the context root at an integrity sink | register_trusted from kernel-side code only; TOOL requires a benign declaration under STRICT | the value carries the context root (STRICT) and is denied at an integrity sink | the floor, consequence, value gates | enforced-under-strict |
-| Call-bound approval | the operator-supplied EscalationCallback | one call over the consequence ceiling | call digest over every prepared argument; volatile state re-checked after the answer; claimed atomically, one use | the consequence denial stands | every other gate (asked only after all of them pass) | premise |
-| Projection features (carrier, path class, provenance label, normalized intent) | the T0 producer modules | the per-value gates' inputs | import contract (no model surface) + determinism tests | — | — | enforced |
-| Peer provenance label | a peer, by signed receipt | restoring a peer value's trust level | signature, nonce, binding to the value; across keysets only a bounded discount | the value is untrusted | every gate | enforced |
-| Absence of a model-carried mark | the model (it must reproduce the mark onto the argument) | nothing — inadmissible as a positive ground | — | admissible only in the deny direction, as detection | — | inadmissible |
+| Permitting input | Issued by | Permits | Checked by core | Absent / fails | Does not override | Premise (not checked by core) | Status |
+|---|---|---|---|---|---|---|---|
+| Operator policy (A₀: tools, paths, consequence ceiling) | operator configuration (policy= / default_policy=) | the capability surface and the unattended consequence ceiling | STRICT refuses to run without an operator-supplied policy | STRICT: PolicyError, nothing runs; other modes: classifier-selected, not covered | every per-call gate | the operator's policy is the intended one | enforced-under-strict |
+| Delegation ceiling (G) | operator configuration (escalation_policy.grantable_tools) | which tools a grant or approval may ever reach | grants and leases validated against available ∪ grantable | no escalation surface: an over-ceiling tool stays unreachable | per-call gates; a grant only adds the tool to the capability set | the operator's ceiling is the intended one | enforced |
+| Action class (consequence axis) | built-in table + operator consequence_overrides, keyed on the sink name | an unattended call whose class is within the ceiling | exact-name lookup; STRICT: unclassified ⇒ CATASTROPHIC | STRICT: refused at construction / treated as catastrophic | value, taint, floor, carrier, SSRF gates | the declared class matches the tool's real irreversibility | enforced-under-strict |
+| Sink roles (egress / integrity / imperative / positional / benign) | operator declaration | which gates a tool is subject to; a positional sink admits only structured carriers | STRICT role completeness; an instruction-complete sink cannot be declared positional | STRICT: an unclassified tool is refused | the floor and the value gates | the declared role matches what the tool does (a mis-declared sensitive source arms no floor) | enforced-under-strict |
+| Consumption contract (T4 for a guarded field) | operator declaration per sink field (field_contracts) | a value predicate to count as faithful for the field it guards | predicate role vs field kind at registration; every call prepared into the contract before the first gate; the prepared set is what executes | see the attestation row; outside STRICT, nothing — reported 'unverified' | every gate after preparation | the handler consumes each field as its contract states (its defaults, aliases and parsing are the ones declared) | enforced |
+| Consumption attestation | operator statement per sink (consumption_attested) | a guarded sink with no contract to construct under STRICT | none beyond presence: core does not compare the predicates with any field description and prepares nothing | STRICT: construction refused for a guarded sink with neither contract nor attestation | every gate — but the gates decide the raw proposal, which is also what executes | the whole of T4 for that sink: the handler consumes the guarded fields exactly as the predicates assume | premise |
+| Integrity supersession | operator, by declaring a closed allowlist on every driving arg | skipping the origin (integrity-taint) check: membership in the pre-authorised set satisfies that obligation instead | every driving arg present and covered by a closed codomain (enum / tuple_enum / keyed key) | origin check applies; numeric_range never supersedes | the confidentiality floor, consequence, value ranges, capability | the operator's set is the intended one; T4 for the covered arg rests on that sink's contract, or on its attestation | enforced |
+| Confidentiality floor down | no sensitive read outstanding; lifted only by GovernanceAuthority endorsement | egress | outstanding-read map; endorsement verifies the authority token, per value fingerprint | egress denied while a sensitive read is outstanding | integrity, consequence, value gates | the governance authority is not reachable by the agent | enforced |
+| Trusted value (TrustedOrigin) | TASK: the principal's task at depth 0 · OPERATOR: allowlist members · TOOL: a declared benign tool · ENDORSED: governance | a model-emitted value to escape the context root at an integrity sink | register_trusted from kernel-side code only; TOOL requires a benign declaration under STRICT | the value carries the context root (STRICT) and is denied at an integrity sink | the floor, consequence, value gates | a declared benign tool's output is in fact not attacker-writable | enforced-under-strict |
+| Call-bound approval | the operator-supplied EscalationCallback | one call over the consequence ceiling | call digest over every prepared argument; volatile state re-checked after the answer; claimed atomically, one use | the consequence denial stands | every other gate (asked only after all of them pass) | the callback is a trusted party or a checkable rule — not a model | premise |
+| Projection features (carrier, path class, provenance label, normalized intent) | the T0 producer modules | the per-value gates' inputs | import contract (no model surface) + determinism tests | — | — | — | enforced |
+| Peer provenance label | a peer, by signed receipt | restoring a peer value's trust level | signature, nonce, binding to the value; across keysets only a bounded discount | the value is untrusted | every gate | the peer's key is held by the peer | enforced |
+| Absence of a model-carried mark | the model (it must reproduce the mark onto the argument) | nothing — inadmissible as a positive ground | — | admissible only in the deny direction, as detection | — | — | inadmissible |
 <!-- grounds:end -->
+
+**What the table is, and what it is not.** It is a specification: each row is held
+to the code (the mechanism imports, the pinning tests exist, the document matches
+the data). "Checked by core" and "Premise" are separate columns so that nothing a
+ground merely *rests on* reads as something core verified — in particular a
+consumption **attestation** is its own row, status `premise`: core prepares
+nothing for an attested sink and compares its predicates with no field
+description, so the gates decide the raw proposal and the operator's sentence is
+the whole of T4 there.
+
+The tests do **not** show the table is complete. Completeness — every input that
+can turn a denial into an allow has a row — is argued by enumerating what the allow
+path reads. In `IntentLoop._resolve_tool_intent` (and the same predicates in
+`ToolCallGovernor.evaluate` and `kernel/replay.evaluate_call`) a call is executed
+only if every one of these admits it, and each admission reads only the listed
+inputs:
+
+| Step on the allow path | Inputs it reads that can admit | Row |
+|---|---|---|
+| consumption preparation | the sink's contract (or none) | contract / attestation |
+| capability (`_evaluate_tool_intent`, executor re-check) | policy `A₀`, leases and grants within `G` | operator policy, delegation ceiling, call-bound approval |
+| STRICT role check | role declarations | sink roles |
+| consequence | class table + overrides, ceiling; deferred approval | action class, call-bound approval |
+| value policies | operator predicates over the prepared call | contract / attestation (T4) |
+| degradation, SSRF, positional, carrier | structural projections of the call | projection features, sink roles |
+| per-value taint | driving root (ledger, context root, trusted index), floor state, supersession | trusted value, floor, supersession, peer label |
+| adjudicator, budget, admission | tighten only — cannot admit | — |
+
+The argument is only as good as this enumeration, and nothing mechanical keeps
+the enumeration current: a new admitting input added to the allow path needs a
+row here and a line in this table, and no test will notice if it gets neither.
 
 Two readings of the table matter for the claim:
 
 - **Determinism is not correctness.** A deterministic producer can still issue the
-  wrong ground; the "Checked by" column is the check, and the "Status" column says
+  wrong ground; the "Checked by core" column is the check, and the "Status" column says
   where the check cannot be made in core (`premise`). The negative controls in
   `tests/integration/test_end_to_end_chain.py` build two such grounds on purpose —
   an approver whose codomain is {yes, no} but which follows the call's arguments,

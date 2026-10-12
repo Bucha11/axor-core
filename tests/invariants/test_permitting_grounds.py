@@ -40,8 +40,11 @@ def _test_names(path: Path) -> set[str]:
 def test_every_ground_is_fully_stated(ground):
     assert ground.status in STATUSES
     for text in (ground.name, ground.issuer, ground.permits, ground.check,
-                 ground.on_absence, ground.does_not_override):
+                 ground.on_absence, ground.does_not_override, ground.premise):
         assert text.strip()
+    if ground.status == "premise":
+        # a ground core cannot check must say what it rests on
+        assert ground.premise != "—"
     assert ground.pinned_by, "a ground no test exercises is a claim, not a specification"
     if ground.status != "inadmissible":
         assert ground.verified_by
@@ -73,3 +76,11 @@ def test_the_theorem_table_is_rendered_from_the_specification():
         "docs/kernel-theorem.md §3b is out of date — regenerate it from "
         "axor_core.kernel.grounds.render_markdown()"
     )
+
+
+def test_attestation_is_not_presented_as_a_checked_contract():
+    by_name = {g.name: g for g in GROUNDS}
+    contract = by_name["Consumption contract (T4 for a guarded field)"]
+    attested = by_name["Consumption attestation"]
+    assert contract.status == "enforced" and attested.status == "premise"
+    assert "none" in attested.check
