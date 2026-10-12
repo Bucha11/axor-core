@@ -32,11 +32,57 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 
-def _governor(suite_name, prompt):
+class _Decision:
+    def __init__(self, allowed, args, category):
+        self.allowed, self.args, self.category = allowed, args, category
+
+
+class _Simple:
+    """Baseline policies that are not axor configurations."""
+
+    def __init__(self, policy, cfg):
+        self.policy, self.cfg, self.read_untrusted = policy, cfg, False
+
+    def evaluate(self, tool, args):
+        sinks = self.cfg.egress_sinks | self.cfg.integrity_sinks
+        if self.policy == "no-sink-after-read" and tool in sinks and self.read_untrusted:
+            return _Decision(False, args, "sink_after_read")
+        return _Decision(True, args, "approved")
+
+    def register_output(self, decision, output):
+        pass
+
+    def note(self, tool):
+        if tool in self.cfg.untrusted_sources or tool in self.cfg.sensitive_sources:
+            self.read_untrusted = True
+
+
+POLICIES = ("strict", "undefended", "no-sink-after-read", "allowlist-only", "origin-only")
+
+
+def _governor(suite_name, prompt, policy="strict"):
+    import dataclasses
     from axor_core.config import GovernanceConfig
+    from axor_core.contracts.mode import ExecutionMode
     from axor_core.governor import ToolCallGovernor
     cfg = GovernanceConfig.from_yaml(os.path.join(HERE, "config", f"{suite_name}_strict.yaml"))
-    g = ToolCallGovernor(**cfg.as_governor_kwargs())
+    if policy in ("undefended", "no-sink-after-read"):
+        return _Simple(policy, cfg), cfg
+    if policy == "allowlist-only":
+        # the same allowlists, no provenance: nothing is registered as untrusted
+        base = dataclasses.replace(cfg, mode=ExecutionMode.PRODUCTION, untrusted_sources=frozenset(),
+                                   sensitive_sources=frozenset(), integrity_default="clean",
+                                   field_contracts={}, consumption_attested=frozenset())
+        g = ToolCallGovernor(**base.as_governor_kwargs())
+    elif policy == "origin-only":
+        # the same roles and integrity default, no allowlists and no contracts
+        base = dataclasses.replace(cfg, mode=ExecutionMode.PRODUCTION, value_policies={},
+                                   field_contracts={}, consumption_attested=frozenset())
+        kw = base.as_governor_kwargs()
+        kw["require_tool_roles"] = True
+        g = ToolCallGovernor(**kw)
+    else:
+        g = ToolCallGovernor(**cfg.as_governor_kwargs())
     g.register_task(prompt)
     return g, cfg
 
@@ -46,6 +92,8 @@ def _run(g, runtime, env, calls, log):
     ok = True
     for c in calls:
         d = g.evaluate(c.function, dict(c.args))
+        if hasattr(g, "note"):
+            g.note(c.function)
         entry = {"tool": c.function, "args": dict(c.args), "allowed": d.allowed, "category": d.category}
         if d.allowed:
             entry["executed"] = dict(d.args)
@@ -72,7 +120,7 @@ def _breach(cfg, entry):
     return False
 
 
-def replay(suite_name):
+def replay(suite_name, policy="strict"):
     from agentdojo.functions_runtime import FunctionsRuntime
     from agentdojo.task_suite.load_suites import get_suite
     suite = get_suite("v1", suite_name)
@@ -80,7 +128,7 @@ def replay(suite_name):
     benign = {}
     for ut_id, ut in suite.user_tasks.items():
         env = suite.load_and_inject_default_environment({})
-        g, _ = _governor(suite_name, ut.PROMPT)
+        g, _ = _governor(suite_name, ut.PROMPT, policy)
         log = []
         try:
             benign[ut_id] = {"feasible": _run(g, runtime, env, ut.ground_truth(env), log), "calls": log}
@@ -91,7 +139,7 @@ def replay(suite_name):
     for ut_id, ut in suite.user_tasks.items():
         for it_id, it in suite.injection_tasks.items():
             env = suite.load_and_inject_default_environment({k: it.GOAL for k in vectors})
-            g, cfg = _governor(suite_name, ut.PROMPT)
+            g, cfg = _governor(suite_name, ut.PROMPT, policy)
             log = []
             try:
                 _run(g, runtime, env, ut.ground_truth(env), log)
@@ -127,7 +175,26 @@ def summarize(suite_name, benign, pairs):
             "permitted_by_injection_task": dict(permitted_by_it)}
 
 
+def frontier(suites=("banking", "slack", "travel", "workspace")):
+    """Every policy through the same replay: gate-feasible tasks vs attack pairs."""
+    rows = {}
+    for policy in POLICIES:
+        feas = tasks = 0
+        verdicts = collections.Counter()
+        for name in suites:
+            b, p = replay(name, policy)
+            feas += sum(1 for v in b.values() if v["feasible"])
+            tasks += len(b)
+            verdicts.update(x.get("verdict", "error") for x in p)
+        rows[policy] = {"feasible": feas, "tasks": tasks, **dict(verdicts)}
+    return rows
+
+
 if __name__ == "__main__":  # pragma: no cover
+    if os.environ.get("AXOR_REPLAY_FRONTIER") == "1":
+        for k, v in frontier().items():
+            print(k, json.dumps(v))
+        sys.exit(0)
     out_dir = os.environ.get("AXOR_STRICT_REPLAY_OUT")
     for name in sys.argv[1:] or ["banking", "slack", "travel", "workspace"]:
         b, p = replay(name)

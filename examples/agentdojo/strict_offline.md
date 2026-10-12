@@ -27,6 +27,25 @@ attacker value in any of them.
 | workspace | 22/40 | 240 | 240 | 0 | 0 | 0 |
 | **total** | **55/97** | **629** | **588** | **21** | **20** | **0** |
 
+Every tool that can write an allowlist source is itself allowlisted on that
+destination or an integrity sink (`build_strict.py`, `source_closure_check`): the
+sources are closed under admitted calls, so rebuilding an allowlist between sessions
+cannot grow it with an attacker value.
+
+Frontier — the same replay under baseline policies (`AXOR_REPLAY_FRONTIER=1`):
+
+| policy | gate-feasible tasks | pairs refused | permitted | outside |
+|---|---|---|---|---|
+| undefended | 97 | 0 | 609 | 20 |
+| allowlist only (same allowlists, no provenance) | 78 | 428 | 181 | 20 |
+| **STRICT** | **55** | **588** | **21** | 20 |
+| origin only (same roles, context default, no allowlists) | 49 | 604 | 5 | 20 |
+| no sink after any untrusted read | 37 | 609 | 0 | 20 |
+
+No baseline dominates STRICT and STRICT dominates none: all five lie on one
+frontier. Against origin-only STRICT gains 6 tasks and admits 16 more `IT1` pairs,
+because allowlist members are trusted values and so clear the recipient `Alice`.
+
 Residual classes:
 - slack `IT1` (21): a direct message to `Alice` — a directory member — with the
   attacker's link in the **body**, a non-driving text field. Permitted by the

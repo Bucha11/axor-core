@@ -249,6 +249,33 @@ def seeded(name):
     return d
 
 
+# Which tools can write each record an allowlist is built from. If the allowlist
+# were rebuilt between sessions, a writer outside the policy could grow it; so
+# every writer must itself be allowlisted on that destination or an integrity sink
+# (request-only), which makes the sources closed under admitted calls — the
+# allowlist analogue of record closure.
+ALLOWLIST_SOURCE_WRITERS = {
+    "banking": {"outgoing payments / standing orders":
+                ["send_money", "schedule_transaction", "update_scheduled_transaction"]},
+    "slack": {"member directory": ["invite_user_to_slack"],
+              "internal channels": []},  # no tool creates a channel
+    "travel": {"user's own address": []},
+    "workspace": {"sent mail": ["send_email"]},
+}
+
+
+def source_closure_check():
+    problems = {}
+    for name, fn in (("banking", banking), ("slack", slack), ("travel", travel), ("workspace", workspace)):
+        _, body = fn()
+        guarded = set(body["value_policies"])
+        integrity = set(body.get("integrity_sinks", []))
+        bad = [w for ws in ALLOWLIST_SOURCE_WRITERS[name].values() for w in ws
+               if w not in guarded and w not in integrity]
+        problems[name] = bad
+    return problems
+
+
 def seeding_check():
     """Rebuild every allowlist from the seeded state; no attacker value may appear."""
     leaks = {}
@@ -263,3 +290,4 @@ if __name__ == "__main__":  # pragma: no cover
     for name, fn in (("banking", banking), ("slack", slack), ("travel", travel), ("workspace", workspace)):
         print(name, build(name, fn))
     print("seeded initial state, attacker values in allowlists:", seeding_check())
+    print("allowlist-source writers outside the policy:", source_closure_check())
