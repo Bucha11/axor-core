@@ -338,7 +338,7 @@ def validate_grant_config(
       is accepted only on a sink.arg the operator declared ``bounded_damage``.
     * A template may only constrain declared grant args.
     """
-    from axor_core.kernel.handles import GRANTABLE_KINDS
+    from axor_core.kernel.handles import GRANTABLE_KINDS, split_kind
 
     errors: list[str] = []
     grant_args = grant_args or {}
@@ -347,7 +347,7 @@ def validate_grant_config(
         if not args:
             errors.append(f"grant_args[{sink!r}] declares no arguments")
         for arg, kind in args.items():
-            if kind not in GRANTABLE_KINDS:
+            if split_kind(kind)[0] not in GRANTABLE_KINDS:
                 errors.append(
                     f"grant_args[{sink!r}][{arg!r}] has kind {kind!r}: not a structured "
                     f"kind ({sorted(GRANTABLE_KINDS)}). A rich-syntax field cannot carry "

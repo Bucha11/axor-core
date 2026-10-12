@@ -308,7 +308,7 @@ def grant_gate(
         return None, None
     if strict_handles:
         for arg in kinds:
-            if arg not in args:
+            if args.get(arg) is None:
                 continue
             v = args[arg]
             vals = v if isinstance(v, (list, tuple, set, frozenset)) else [v]

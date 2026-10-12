@@ -121,7 +121,15 @@ CANONICALIZERS: dict[str, Callable[[Any], str]] = {
 GRANTABLE_KINDS = frozenset(CANONICALIZERS)
 
 
+def split_kind(kind: str) -> tuple[str, bool]:
+    """``"email?"`` -> ("email", True): a trailing ``?`` marks an OPTIONAL grant arg —
+    a call may omit it (absence cannot carry a value anywhere), but a value that IS
+    passed must be covered like any other."""
+    return (kind[:-1], True) if kind.endswith("?") else (kind, False)
+
+
 def canonicalize(kind: str, value: Any) -> str:
+    kind = split_kind(kind)[0]
     try:
         fn = CANONICALIZERS[kind]
     except KeyError:

@@ -16,7 +16,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Callable, Mapping, Protocol
 
-from axor_core.kernel.handles import HandleTable, is_handle_ref
+from axor_core.kernel.handles import HandleTable, is_handle_ref, split_kind
 
 
 @dataclass(frozen=True)
@@ -47,8 +47,9 @@ def render(sink: str, args: Mapping[str, Any], grant_args: Mapping[str, str],
     """Render from the table, never from model text (the ``description`` a model
     attaches to a proposal is not an input here)."""
     shown: list[RenderedArg] = []
-    for arg, kind in grant_args.items():
-        if arg not in args:
+    for arg, spec in grant_args.items():
+        kind = split_kind(spec)[0]
+        if args.get(arg) is None:
             continue
         v = args[arg]
         vals = list(v) if isinstance(v, (list, tuple, set, frozenset)) else [v]

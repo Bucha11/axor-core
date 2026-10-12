@@ -448,3 +448,33 @@ def test_limit_constraint_is_bounded_damage_not_endorsement():
     c = ArgConstraint.at_most(100)
     assert c.admits(100, None) and c.admits("99.99", None)
     assert not c.admits(100.01, None) and not c.admits(True, None) and not c.admits("NaN", None)
+
+
+# ── optional grant args ──────────────────────────────────────────────────────
+
+_CAL = {"create_calendar_event": {"participants": "email?"}}
+
+
+def test_optional_arg_admits_absence_and_covers_present_values():
+    store, table = GrantStore(), HandleTable()
+    GrantMinter(store, table, _CAL).from_request("add a lunch with bob@x.io on Friday")
+    find = lambda a: store.find("create_calendar_event", a, table)  # noqa: E731
+    assert find({"title": "lunch"})
+    assert find({"title": "lunch", "participants": None})
+    assert find({"title": "lunch", "participants": ["bob@x.io"]})
+    assert find({"title": "lunch", "participants": ["bob@x.io", "eve@evil.io"]}) is None
+
+
+def test_optional_arg_without_literal_admits_only_absence():
+    store, table = GrantStore(), HandleTable()
+    GrantMinter(store, table, _CAL).from_request("block two hours for focus time")
+    assert store.find("create_calendar_event", {"title": "focus"}, table)
+    assert store.find("create_calendar_event", {"participants": ["eve@evil.io"]}, table) is None
+
+
+def test_confirmed_action_that_omits_an_arg_does_not_authorize_adding_it_later():
+    store, table = GrantStore(), HandleTable()
+    m = GrantMinter(store, table, {"send_email": {"recipients": "email", "cc": "email?"}})
+    m.from_confirmation("send_email", {"recipients": ["bob@x.io"]})
+    assert store.find("send_email", {"recipients": ["bob@x.io"]}, table)
+    assert store.find("send_email", {"recipients": ["bob@x.io"], "cc": ["eve@evil.io"]}, table) is None

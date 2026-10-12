@@ -33,6 +33,7 @@ Invariants this module carries (docs/task-scoped-grants.md):
 
 from __future__ import annotations
 
+import dataclasses
 import enum
 import itertools
 from dataclasses import dataclass, field
@@ -44,6 +45,7 @@ from axor_core.kernel.handles import (
     TrustedChannel,
     canonicalize,
     is_handle_ref,
+    split_kind,
 )
 from axor_core.kernel.request_literals import literal_values
 
@@ -62,6 +64,9 @@ class ArgConstraint:
     handle_kind: str
     values: frozenset[str] = frozenset()  # canonical values (exact: one; enum: many)
     limit: Decimal | None = None
+    # An optional arg may be absent (None / missing / empty collection); a value that
+    # is present must still be admitted. Optional with no values = absence only.
+    optional: bool = False
 
     @classmethod
     def exact(cls, handle_kind: str, value: Any) -> "ArgConstraint":
@@ -118,9 +123,13 @@ class Grant:
         if sink != self.sink:
             return False
         for arg, c in self.constraints.items():
-            if arg not in args:
+            v = args.get(arg)
+            if v is None or (isinstance(v, (list, tuple, set, frozenset)) and not v):
+                if c.optional:
+                    continue  # absent: nothing flows through this slot
                 return False
-            v = args[arg]
+            if c.kind is not ConstraintKind.LIMIT and not c.values:
+                return False  # absence-only constraint, and a value was passed
             # A collection-valued argument (recipients=[...]) is covered only if
             # every element is admitted — a grant for Bob does not cover [Bob, Eve].
             if isinstance(v, (list, tuple, set, frozenset)):
@@ -327,7 +336,10 @@ class GrantMinter:
         uses = self.default_uses if uses is None else uses
         for sink, args in self.grant_args.items():
             cands: dict[str, list[str]] = {}
-            for arg, kind in args.items():
+            opt: dict[str, bool] = {}
+            for arg, spec in args.items():
+                kind, optional = split_kind(spec)
+                opt[arg] = optional
                 vals = []
                 for v in literal_values(request, kind):
                     try:
@@ -335,22 +347,27 @@ class GrantMinter:
                     except ValueError:
                         continue
                 vals = list(dict.fromkeys(vals))
-                if not vals:
+                if not vals and not optional:
                     break
                 cands[arg] = vals
                 for v in vals:
                     self.table.mint_trusted(v, kind, TrustedChannel.REQUEST)
             else:
+                kinds = {a: split_kind(args[a])[0] for a in cands}
                 if not self.tuple_grants:
                     out.append(self._mint(
-                        sink, {a: ArgConstraint(ConstraintKind.ENUM, args[a], frozenset(vs))
+                        sink, {a: ArgConstraint(ConstraintKind.ENUM, kinds[a], frozenset(vs),
+                                                optional=opt[a])
                                for a, vs in cands.items()},
                         None, TrustedChannel.REQUEST, "per-arg"))
                     continue
                 names = list(cands)
-                for combo in itertools.product(*(cands[a] for a in names)):
+                # an optional arg with no literal contributes "absent" (an empty set)
+                for combo in itertools.product(*((cands[a] or [None]) for a in names)):
                     out.append(self._mint(
-                        sink, {a: ArgConstraint(ConstraintKind.EXACT, args[a], frozenset({v}))
+                        sink, {a: ArgConstraint(ConstraintKind.EXACT, kinds[a],
+                                                frozenset() if v is None else frozenset({v}),
+                                                optional=opt[a])
                                for a, v in zip(names, combo)},
                         uses, TrustedChannel.REQUEST))
         return out
@@ -367,9 +384,10 @@ class GrantMinter:
                     if isinstance(spec, Mapping) and "max" in spec:
                         cs[arg] = ArgConstraint.at_most(spec["max"])
                         continue
-                    kind = kinds.get(arg)
-                    if kind is None:
+                    spec_kind = kinds.get(arg)
+                    if spec_kind is None:
                         raise ValueError(f"template for {sink}.{arg}: not a grant arg")
+                    kind = split_kind(spec_kind)[0]
                     vals = list(spec) if isinstance(spec, (list, tuple, set, frozenset)) else [spec]
                     for v in vals:
                         self.table.mint_trusted(v, kind, TrustedChannel.OPERATOR)
@@ -393,10 +411,14 @@ class GrantMinter:
         if not kinds:
             return None
         cs: dict[str, ArgConstraint] = {}
-        for arg, kind in kinds.items():
-            if arg not in args:
+        for arg, spec in kinds.items():
+            kind, optional = split_kind(spec)
+            v = args.get(arg)
+            if v is None or (isinstance(v, (list, tuple, set, frozenset)) and not v):
+                # the confirmed/structured action omitted this arg: the grant admits
+                # only its absence, never a value added later
+                cs[arg] = ArgConstraint(ConstraintKind.ENUM, kind, frozenset(), optional=True)
                 continue
-            v = args[arg]
             if is_handle_ref(v):
                 h = self.table.get(v)
                 if h is None:
@@ -406,8 +428,9 @@ class GrantMinter:
             try:
                 for x in vals:
                     self.table.mint_trusted(x, kind, channel)
-                cs[arg] = (ArgConstraint.exact(kind, vals[0]) if len(vals) == 1
-                           else ArgConstraint.enum(kind, vals))
+                c = (ArgConstraint.exact(kind, vals[0]) if len(vals) == 1
+                     else ArgConstraint.enum(kind, vals))
+                cs[arg] = dataclasses.replace(c, optional=optional)
             except (ValueError, IndexError):
                 return None
         return self._mint(sink, cs, uses, channel)
