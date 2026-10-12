@@ -1,0 +1,71 @@
+{
+ "race": [
+  {
+   "trials": 200,
+   "threads": 8,
+   "uses": 1,
+   "violations": 0
+  },
+  {
+   "trials": 200,
+   "threads": 32,
+   "uses": 1,
+   "violations": 0
+  },
+  {
+   "trials": 200,
+   "threads": 32,
+   "uses": 5,
+   "violations": 0
+  }
+ ],
+ "faults": [
+  {
+   "trials": 200,
+   "threads": 16,
+   "uses": 3,
+   "fault_p": {
+    "before": 0.1,
+    "after": 0.1
+   },
+   "calls": 12800,
+   "same_key_rerun_attempts": 0,
+   "effects_over_uses": 0,
+   "committed": 600,
+   "released": 58,
+   "lost_unknowable": 0,
+   "lost_knowable": 0
+  },
+  {
+   "trials": 200,
+   "threads": 16,
+   "uses": 3,
+   "fault_p": {
+    "before": 0.1,
+    "after": 0.1,
+    "silent": 0.05,
+    "refuse": 0.05
+   },
+   "calls": 12800,
+   "same_key_rerun_attempts": 0,
+   "effects_over_uses": 0,
+   "committed": 555,
+   "released": 93,
+   "lost_unknowable": 45,
+   "lost_knowable": 0
+  }
+ ],
+ "latency": {
+  "n": 20000,
+  "evaluate_us": {
+   "p50": 34.4,
+   "p99": 99.8,
+   "mean": 41.8
+  },
+  "reserve_commit_us": {
+   "p50": 8.9,
+   "p99": 37.6,
+   "mean": 10.8
+  }
+ }
+}
