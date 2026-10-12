@@ -192,7 +192,7 @@ GROUNDS: tuple[PermittingGround, ...] = (
         check="register_trusted from kernel-side code only; TOOL requires a benign declaration under STRICT",
         on_absence="the value carries the context root (STRICT) and is denied at an integrity sink",
         does_not_override="the floor, consequence, value gates",
-        premise="a declared benign tool's output is in fact not attacker-writable",
+        premise="a declared benign tool's output is in fact not attacker-writable — including by an earlier ADMITTED call: no record-closure condition is stated or checked (cf. ROPE Lemma 1; laundering measured in axor-eval experiments/rope_comparison)",
         status="enforced-under-strict",
         verified_by=(
             "axor_core.taint.engine:TaintEngine.register_trusted",
