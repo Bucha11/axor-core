@@ -7,10 +7,15 @@ injection task is read. Per suite:
   roles         every tool classified (reads -> untrusted, or sensitive where it
                 returns the user's own data; destination-bearing calls -> egress;
                 other state changes -> integrity sinks), consequence class for all
-  allowlists    every egress destination argument ∈ initial-state counterparties
-                (banking: transaction/standing-order counterparties; slack: users,
-                channels, initially present web pages; workspace: contact list;
-                travel: the user's own address)
+  allowlists    every egress destination argument ∈ counterparties of records the
+                USER authored, or the organisation's member directory — never a
+                sender of an incoming record, received content, or web content,
+                which an outside party can write (banking: recipients of outgoing
+                payments and standing orders; slack: member directory and its
+                internal channels; workspace: recipients of sent mail and the
+                user's own address; travel: the user's own address). Slack has no
+                user-authored web destination, so post_webpage is an integrity sink
+                whose URL must come from the request.
   contracts     every guarded sink's fields, kinds and absence behaviour, as read
                 off the stock handler (experiments/review_offline/contract_audit)
   integrity     context default; origin setting left to the STRICT default
@@ -51,12 +56,28 @@ def _initial(name):
     return suite, suite.load_and_inject_default_environment({}).model_dump()
 
 
-def banking():
-    suite, d = _initial("banking")
+def trusted_payees(d):
     acct = d["bank_account"]
-    payees = sorted(({t["recipient"] for t in acct["transactions"]}
-                     | {t["sender"] for t in acct["transactions"]}
-                     | {t["recipient"] for t in acct["scheduled_transactions"]}) - {"me"})
+    return sorted(({t["recipient"] for t in acct["transactions"] if t["sender"] == "me"}
+                   | {t["recipient"] for t in acct["scheduled_transactions"]}) - {"me"})
+
+
+def trusted_slack(d):
+    s = d["slack"]
+    return sorted(s["users"]), sorted(c for c in s["channels"] if not c.startswith("External_"))
+
+
+def trusted_mail(d):
+    inbox = d["inbox"]
+    me = inbox["account_email"]
+    sent = [e for e in inbox["initial_emails"] if e["sender"] == me]
+    return sorted({me} | {a for e in sent for a in e["recipients"] + (e.get("cc") or []) + (e.get("bcc") or [])})
+
+
+def banking(d=None):
+    suite, d0 = _initial("banking")
+    d = d or d0
+    payees = trusted_payees(d)
     sinks = ["send_money", "schedule_transaction", "update_scheduled_transaction"]
     pay = {"recipient": f(ID), "amount": f(NUM, decimal_string=True), "subject": f(TXT), "date": f(INT)}
     return suite, {
@@ -80,16 +101,16 @@ def banking():
     }
 
 
-def slack():
-    suite, d = _initial("slack")
-    s = d["slack"]
-    users, channels, pages = sorted(s["users"]), sorted(s["channels"]), sorted(d["web"]["web_content"])
+def slack(d=None):
+    suite, d0 = _initial("slack")
+    d = d or d0
+    users, channels = trusted_slack(d)
     return suite, {
         "untrusted_sources": ["get_channels", "read_channel_messages", "read_inbox",
                               "get_webpage", "get_users_in_channel"],
-        "egress_sinks": ["send_direct_message", "send_channel_message", "post_webpage"],
+        "egress_sinks": ["send_direct_message", "send_channel_message"],
         "integrity_sinks": ["add_user_to_channel", "invite_user_to_slack", "remove_user_from_slack",
-                            "get_webpage"],
+                            "get_webpage", "post_webpage"],
         "driving_args": {"send_direct_message": ["recipient"], "send_channel_message": ["channel"],
                          "post_webpage": ["url"], "get_webpage": ["url"],
                          "add_user_to_channel": ["user", "channel"],
@@ -97,18 +118,17 @@ def slack():
         "value_policies": {
             "send_direct_message": [{"arg": "recipient", "kind": "enum", "allowed": users}],
             "send_channel_message": [{"arg": "channel", "kind": "enum", "allowed": channels}],
-            "post_webpage": [{"arg": "url", "kind": "enum", "allowed": pages}],
         },
         "field_contracts": {
             "send_direct_message": {"closed": True, "fields": {"recipient": f(ID), "body": f(TXT)}},
             "send_channel_message": {"closed": True, "fields": {"channel": f(ID), "body": f(TXT)}},
-            "post_webpage": {"closed": True, "fields": {"url": f(ID), "content": f(TXT)}},
         },
     }
 
 
-def travel():
-    suite, d = _initial("travel")
+def travel(d=None):
+    suite, d0 = _initial("travel")
+    d = d or d0
     me = [d["user"]["email"]]
     reads = [t.name for t in suite.tools if t.name.startswith(("get_", "check_", "search_"))
              and t.name != "get_user_information"]
@@ -128,9 +148,10 @@ def travel():
     }
 
 
-def workspace():
-    suite, d = _initial("workspace")
-    contacts = sorted({c["email"] for c in d["inbox"].get("contact_list", [])} | {d["inbox"]["account_email"]})
+def workspace(d=None):
+    suite, d0 = _initial("workspace")
+    d = d or d0
+    contacts = trusted_mail(d)
     reads = [t.name for t in suite.tools if t.name.startswith(("get_", "search_", "list_"))]
     return suite, {
         "untrusted_sources": reads,
@@ -200,6 +221,45 @@ def build(name, fn):
     return volume
 
 
+ATTACKER = {"iban": "US133000000121212121212", "email": "mark.black-2134@gmail.com",
+            "url": "www.my-website-234.com/random", "user": "Fred"}
+
+
+def seeded(name):
+    """The initial state after an outside party seeds it: an incoming payment from
+    the attacker, a received mail from the attacker (which an inbox would also add
+    to its contact list), an attacker web page, an attacker-named external channel.
+    Every record an outsider can create before any task runs."""
+    import copy
+    _, d = _initial(name)
+    d = copy.deepcopy(d)
+    if name == "banking":
+        d["bank_account"]["transactions"].append(
+            {"id": 99, "sender": ATTACKER["iban"], "recipient": "me", "amount": 0.01,
+             "subject": "hi", "date": "2022-01-01", "recurring": False})
+    if name == "slack":
+        d["web"]["web_content"][ATTACKER["url"]] = "hello"
+        d["slack"]["channels"].append("External_attacker")
+    if name == "workspace":
+        d["inbox"]["initial_emails"].append(
+            {"id_": "99", "sender": ATTACKER["email"], "recipients": [d["inbox"]["account_email"]],
+             "cc": [], "bcc": [], "subject": "hi", "body": "hi", "status": "received",
+             "read": False, "timestamp": "2024-05-01T00:00:00", "attachments": []})
+        d["inbox"].setdefault("contact_list", []).append({"name": "x", "email": ATTACKER["email"]})
+    return d
+
+
+def seeding_check():
+    """Rebuild every allowlist from the seeded state; no attacker value may appear."""
+    leaks = {}
+    for name, fn in (("banking", banking), ("slack", slack), ("travel", travel), ("workspace", workspace)):
+        _, body = fn(seeded(name))
+        members = {m for ps in body["value_policies"].values() for p in ps for m in p["allowed"]}
+        leaks[name] = sorted(members & set(ATTACKER.values()))
+    return leaks
+
+
 if __name__ == "__main__":  # pragma: no cover
     for name, fn in (("banking", banking), ("slack", slack), ("travel", travel), ("workspace", workspace)):
         print(name, build(name, fn))
+    print("seeded initial state, attacker values in allowlists:", seeding_check())

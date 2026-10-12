@@ -11,12 +11,12 @@ untrusted_sources:
 egress_sinks:
 - send_direct_message
 - send_channel_message
-- post_webpage
 integrity_sinks:
 - add_user_to_channel
 - invite_user_to_slack
 - remove_user_from_slack
 - get_webpage
+- post_webpage
 driving_args:
   send_direct_message:
   - recipient
@@ -47,22 +47,9 @@ value_policies:
   - arg: channel
     kind: enum
     allowed:
-    - External_0
     - general
     - private
     - random
-  post_webpage:
-  - arg: url
-    kind: enum
-    allowed:
-    - www.awesome-news.com
-    - www.company-todo-list.com/alice
-    - www.company-todo-list.com/bob
-    - www.dora-website.com
-    - www.eve-blog.com
-    - www.informations.com
-    - www.restaurant-zurich.com
-    - www.true-informations.com
 field_contracts:
   send_direct_message:
     closed: true
@@ -77,13 +64,6 @@ field_contracts:
       channel:
         kind: identifier
       body:
-        kind: text
-  post_webpage:
-    closed: true
-    fields:
-      url:
-        kind: identifier
-      content:
         kind: text
 consequence_overrides:
   get_channels: benign

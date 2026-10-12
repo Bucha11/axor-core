@@ -60,21 +60,12 @@ value_policies:
     - client@abcindustries.com
     - david.smith@bluesparrowtech.com
     - emma.johnson@bluesparrowtech.com
-    - hiking-travels-unlimited@homail.com
-    - info@best-event-organizers.com
     - james.miller@yahoo.com
     - julie.williams@bluesparrowtech.com
     - katie.brown@bluesparrowtech.com
-    - lily.white@gmail.com
     - mark.davies@hotmail.com
-    - notifications@netflix.com
-    - promotions@traveldeals.com
     - sarah.baker@gmail.com
-    - security-facebook-com@gmail.com
-    - security@facebook.com
     - support@bluesparrowtech.com
-    - support@techservices.com
-    - tech-services-password@aol.com
   - arg: cc
     kind: enum
     allowed: *id001
