@@ -156,7 +156,13 @@ pass" framing.
   CaMeL ahead by ~10pp, say so.
 - **Never claim the gate covers "all attacks."** The guarantee covers the
   projection-equivalence (framing) class, with the §5.4 conditionality (enum/numeric
-  outright; rich-syntax fuzz-discharged) and the §5.5 integrity paraphrase residual.
+  on fields with a consumption contract; rich-syntax fields an open, fuzz-tested
+  obligation — never "fuzz-discharged") and the §5.5 integrity paraphrase residual.
+- **Never say "machine-checked" for a Hypothesis run.** Property tests are evidence
+  over the drawn examples; "machine-checked" is reserved for a proof assistant.
+- **Never derive equal effects from equal projections without the consumer.** An
+  exact predicate decides a value; the effect depends on the handler, which is a
+  consumption contract (checked) or an attestation (premise).
 - **Do not call the supersession config "tuned."** §6.1 claims the deployed config is
   not benchmark-tuned; the allowlist is a legitimate operator artifact (approved-payee
   list). Use "deployment-allowlist (supersession)" vs "generic."

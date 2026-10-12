@@ -29,6 +29,7 @@ from typing import Any
 from axor_core.contracts.canonical import ConsequenceClass
 from axor_core.contracts.mode import ExecutionMode
 from axor_core.contracts.taint import INTEGRITY_DEFAULTS, INTEGRITY_ORIGIN_MODES
+from axor_core.kernel.consumption import SinkContract, parse_field_contracts
 from axor_core.policy.value_policy import (
     ValuePredicate,
     enum,
@@ -44,6 +45,7 @@ _KNOWN_KEYS = frozenset({
     "positional_sinks", "imperative_sinks", "integrity_sinks", "benign_tools",
     "value_policies", "consequence_overrides",
     "driving_args",
+    "field_contracts", "consumption_attested",
     "integrity_default",
     "integrity_origins",
     "federation",
@@ -75,6 +77,13 @@ class GovernanceConfig:
     value_policies: dict[str, list[ValuePredicate]] = field(default_factory=dict)
     # tool name -> argument names the taint decision keys on (whole-args by default)
     driving_args: dict[str, list[str]] = field(default_factory=dict)
+    # tool name -> consumption contract: the fields its handler reads and how
+    # (kernel/consumption.py). Value predicates are checked against it, and every
+    # call is put into it before the first gate.
+    field_contracts: dict[str, SinkContract] = field(default_factory=dict)
+    # guarded tools with no contract whose handler conformance the operator states
+    # explicitly (STRICT requires a contract or this for every guarded tool)
+    consumption_attested: frozenset[str] = frozenset()
     # tool name -> action-class override (raise/lower how irreversible it is)
     consequence_overrides: dict[str, ConsequenceClass] = field(default_factory=dict)
     # "clean" (legacy) or "context": whether a model-generated value that carries
@@ -144,6 +153,10 @@ class GovernanceConfig:
             benign_tools=_as_set(data.get("benign_tools"), "benign_tools"),
             value_policies=_parse_value_policies(data.get("value_policies")),
             driving_args=_parse_driving_args(data.get("driving_args")),
+            field_contracts=parse_field_contracts(data.get("field_contracts")),
+            consumption_attested=_as_set(
+                data.get("consumption_attested"), "consumption_attested"
+            ),
             consequence_overrides=_parse_consequence_overrides(
                 data.get("consequence_overrides")
             ),
@@ -179,6 +192,8 @@ class GovernanceConfig:
             "benign_tools": set(self.benign_tools),
             "value_policies": dict(self.value_policies),
             "driving_args": dict(self.driving_args),
+            "field_contracts": dict(self.field_contracts),
+            "consumption_attested": set(self.consumption_attested),
             # GovernedSession names the consequence-override table `danger`.
             "danger": dict(self.consequence_overrides),
             "integrity_default": self.integrity_default,
@@ -209,6 +224,8 @@ class GovernanceConfig:
             "benign_tools": set(self.benign_tools),
             "value_policies": dict(self.value_policies),
             "driving_args": dict(self.driving_args),
+            "field_contracts": dict(self.field_contracts),
+            "consumption_attested": set(self.consumption_attested),
             "consequence_overrides": dict(self.consequence_overrides),
             "require_egress_allowlist": self.mode is ExecutionMode.STRICT,
             "require_tool_roles": self.mode is ExecutionMode.STRICT,

@@ -142,6 +142,7 @@ def _strict_write_decision(**kw):
         require_egress_allowlist=True,
         require_tool_roles=True,
         value_policies={"write": [numeric_range("mode", 0, 0o777)]},
+        consumption_attested={"write"},
         consequence_overrides=_STRICT_CLASSES,
         **kw,
     )
@@ -243,6 +244,7 @@ def test_context_mode_strict_trusts_only_declared_benign_tools():
             # STRICT needs a role for every tool: a value policy classifies both
             value_policies={"transfer_money": [numeric_range("amount", 0, 10**6)],
                             "crm_lookup": [numeric_range("limit", 0, 10)]},
+            consumption_attested={"transfer_money", "crm_lookup"},
             # ... and an explicit consequence class
             consequence_overrides={"read_inbox": ConsequenceClass.BENIGN,
                                    "crm_lookup": ConsequenceClass.BENIGN,
@@ -302,6 +304,7 @@ def test_context_mode_closes_the_strict_write_gap():
         require_egress_allowlist=True,
         require_tool_roles=True,
         value_policies={"write": [numeric_range("mode", 0, 0o777)]},
+        consumption_attested={"write"},
         consequence_overrides=_STRICT_CLASSES,
     )
     d = g.evaluate("write", {"path": "/etc/./cron.d/axor-helper-job",

@@ -297,28 +297,35 @@ structural function, never a model reading the governed content; the Firewalls
 LLM-projector is the public counterexample; pinned by an `.importlinter` contract + an
 import-scan test) and **T4** (effective codomain = nominal). T4 splits:
 
-- **Decidable by construction** for finite **enums** and **bounded-numeric** ranges
-  consumed as case-split / numerically — two equal projections cannot be split into
-  distinct effects. Discharged by a decision procedure
-  (`axor_core/kernel/decidability.py`); a config that mis-guards a fuzz field with a
-  decidable predicate is **rejected** (`registration.py`).
+- **Decided by a procedure** for finite **enums** and **bounded-numeric** ranges
+  — *for fields whose consumption is registered by a consumption contract*
+  (`axor_core/kernel/consumption.py`). An exact check decides the value; that the
+  handler turns it into the matching effect depends on the handler (defaults,
+  aliases, coercion, list handling, path resolution). The contract registers the
+  consumer per field, a predicate is checked against its field's contract (an enum on
+  a path field is refused with FUZZ_REQUIRED), and every call is prepared into the
+  contract before the first gate, so the value checked is the value executed.
+  Without a contract the conformance is an operator attestation (required under
+  STRICT) — a premise, reported as such.
 - **Fuzzing only** for **path / string-subfield / carrier-over-free-text** — the
-  consumer is a rich-syntax interpreter, T4 is undecidable in general, so it stays a
-  fuzzing obligation. The weird-machine class is **localized** here. (Anecdotal but
-  consistent: the two real bugs found to date — newline-injection in path extraction,
-  `../` traversal in lease validation — both lived in this region. Two data points;
-  offer them as consistency with the split, not as validation of it.)
+  consumer is a rich-syntax interpreter, T4 is undecidable in general, so it stays an
+  open obligation; fuzzing is *evidence* over the drawn inputs, not a discharge. The
+  weird-machine class is **localized** here. (Anecdotal but consistent: the two real
+  bugs found to date — newline-injection in path extraction, `../` traversal in lease
+  validation — both lived in this region. Two data points; offer them as consistency
+  with the split, not as validation of it.)
 
-> The honest one-liner for the paper: **K4 holds outright for the enum/numeric fraction
-> of the perimeter, and conditionally — discharged by fuzzing — for the rich-syntax
-> fraction.** "Currently testable by fuzzing" is acceptable for practical deployment
-> precisely *because the split tells you which fraction needs it.*
+> The honest one-liner for the paper: **for the defined predicate language over
+> contracted fields, T4 is decided by a procedure; every other consumer needs a
+> separate argument.** Not "all strings are undecidable", not "an enum is
+> automatically safe", not "fuzzing proves faithfulness".
 
-The framing to land is *not* "the theorem is fuzz-tested" — that concedes the whole
-claim to a test. It is: **K4 is discharged by a decision procedure on the enum/numeric
-fraction, and the weird-machine residual is *localized* to a named rich-syntax
-fraction, where fuzzing is the discharge.** Fuzzing covers a bounded sub-perimeter the
-split identifies up front, not the theorem as a whole.
+The measured content of this section is the gap between a correct verdict and a
+forbidden execution: `tests/adversarial/test_check_vs_consumer.py` runs a real handler
+behind the real loop with and without a contract (absent amount → balance sweep,
+alias field → redirected transfer, list in a scalar field, allowlisted path that is a
+symlink out of the root: executed without a contract, refused with one; exponent and
+comma-joined strings are refused either way and are kept as controls).
 
 **5.5 The two axes, asymmetric by design — and asymmetric in how they are demonstrated
 (say this out loud; it pre-empts the "why no floor benchmark?" question).**
@@ -372,7 +379,8 @@ crosswalk table (kernel-theorem §5) in an appendix — it is the paper's credib
 > "fraction of tasks solved *with* a by-construction guarantee," i.e. the **utility
 > cost** of the guarantee, well-defined on a dumb *and* a smart model. axor has the
 > same by-construction nature (the gate denies by projection, framing-invariant,
-> ASR→0 structurally — enum/numeric outright, rich-syntax fuzz-discharged; §5.4), so it
+> ASR→0 structurally — enum/numeric on contracted fields; rich-syntax fields remain an
+> open, fuzz-tested obligation; §5.4), so it
 > makes the same *type* of claim:
 > - **Primary (§6.2): structural guarantee at utility-cost Y** — the load-bearing
 >   result and the direct answer to "motivation for adoption": *motivation = the
@@ -409,8 +417,8 @@ of CaMeL numbers we must *not* cite are pinned in `paper-decisions.md`.)
 **6.2 The guarantee and its measured cost — the PRIMARY result (lead §6 with this).**
 State the guarantee first, in §5's vocabulary: axor's gate denies by *projection*, so on
 every declared egress sink the exfiltration path is refused **structurally** —
-framing-invariant, ASR→0 by construction (enum/numeric outright; rich-syntax
-fuzz-discharged, §5.4), independent of whether the model would have fallen. The empirical
+framing-invariant, ASR→0 by construction (enum/numeric on contracted fields; rich-syntax
+fields an open, fuzz-tested obligation, §5.4), independent of whether the model would have fallen. The empirical
 question is then CaMeL's question, not a scoreboard: **what does the guarantee cost in
 benign utility?** Measured per suite on the *benign* task list:
 

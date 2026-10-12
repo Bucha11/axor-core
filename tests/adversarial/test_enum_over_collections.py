@@ -89,6 +89,7 @@ def test_strict_egress_obligation_is_satisfiable_for_a_list_destination():
     # declared here: the obligation under test is the allowlist one.
     gov = _governor(
         require_egress_allowlist=True,
+        consumption_attested={"send_email"},
         consequence_overrides={"send_email": ConsequenceClass.CONSEQUENTIAL},
     )
     assert gov.evaluate("send_email", {"recipients": [APPROVED[1]]}).allowed is True

@@ -43,6 +43,7 @@ from axor_core.policy.gates import (
     GateDecision,
     carrier_gate,
     consequence_gate,
+    consumption_gate,
     integrity_superseded_by_decidable,
     positional_gate,
     ssrf_gate,
@@ -60,6 +61,11 @@ from axor_core.policy.provenance import (
     seed_operator_trusted,
     result_payload,
     source_tokens,
+)
+from axor_core.kernel.consumption import (
+    ConformanceObligation,
+    conformance_obligations,
+    validate_consumption_contracts,
 )
 from axor_core.kernel.registration import (
     validate_driving_arg_allowlists,
@@ -85,6 +91,9 @@ GATE_OF_CATEGORY: dict[str, str] = {
     "taint_enforcement": "taint_floor",
     "consequence_gate": "consequence",
     "value_policy": "value_policies",
+    # a call outside its sink's consumption contract is refused where the value
+    # predicates are registered: the contract is the projection they consume.
+    "consumption_contract": "value_policies",
     "ssrf_gate": "ssrf",
     "positional_gate": "positional",
     "carrier_gate": "carrier",
@@ -125,6 +134,12 @@ class GovernanceDecision:
     allowed: bool
     reason: str = "approved"
     category: str = "approved"
+    # The argument set every gate decided on: the call put into its sink's
+    # consumption contract (defaults materialised, declared conversions applied).
+    # An allowed call must be EXECUTED with these, not with the arguments the
+    # model proposed — otherwise the value checked is not the value consumed.
+    # Identical to the proposed arguments for a sink with no contract.
+    args: dict[str, Any] | None = None
     # The normalized intent for this call, kept so register_output can reuse it
     # without advancing the normalizer's provenance state twice.
     _normalized: NormalizedIntent | None = field(default=None, repr=False)
@@ -142,7 +157,7 @@ class ToolCallGovernor:
         decision = gov.evaluate(tool_name, args)
         if not decision.allowed:
             return denial(decision.reason)
-        output = run_the_tool(tool_name, args)
+        output = run_the_tool(tool_name, decision.args)  # the prepared set
         gov.register_output(decision, output)
     """
 
@@ -160,6 +175,8 @@ class ToolCallGovernor:
         integrity_sinks: "set[str] | frozenset[str] | None" = None,
         benign_tools: "set[str] | frozenset[str] | None" = None,
         driving_args: "dict[str, list[str]] | None" = None,
+        field_contracts: "dict | None" = None,
+        consumption_attested: "set[str] | frozenset[str] | None" = None,
         require_egress_allowlist: bool = False,
         require_tool_roles: bool = False,
         integrity_default: "str | None" = None,
@@ -212,6 +229,17 @@ class ToolCallGovernor:
         # instruction field so untrusted content to a trusted destination is not
         # over-blocked.
         self._driving_args = {k: frozenset(v) for k, v in (driving_args or {}).items()}
+        # Consumption contracts (T4 made a contract, kernel/consumption.py): per
+        # sink, the fields its handler reads and how. Checked against the value
+        # predicates here; applied to every call before the first gate.
+        self._field_contracts = dict(field_contracts or {})
+        self._consumption_attested = frozenset(consumption_attested or ())
+        _cc_errors = validate_consumption_contracts(
+            self._value_policies, self._field_contracts, self._consumption_attested,
+            strict=self._strict,
+        )
+        if _cc_errors:
+            raise ValueError("invalid consumption contracts: " + "; ".join(_cc_errors))
         # STRICT obligation: every egress sink must carry a destination allowlist
         # (an enum value_policy) — the sound, paraphrase-proof control. Fail closed
         # at construction rather than ship an egress sink on content-derivation alone.
@@ -290,7 +318,12 @@ class ToolCallGovernor:
 
     def evaluate(self, tool_name: str, args: dict[str, Any]) -> GovernanceDecision:
         """Decide whether this tool call may execute. Pure — no side effects on
-        the ledger (call :meth:`register_output` after a tool actually runs)."""
+        the ledger (call :meth:`register_output` after a tool actually runs).
+
+        The first step puts ``args`` into the sink's consumption contract; every
+        gate decides on that prepared set, and an allowed decision carries it in
+        ``decision.args`` for the caller to execute."""
+        args, contract_denial = consumption_gate(tool_name, args, self._field_contracts)
         intent = Intent(
             kind=IntentKind.TOOL_CALL,
             payload={"tool": tool_name, "args": args},
@@ -323,6 +356,11 @@ class ToolCallGovernor:
 
         def _deny(gd: GateDecision) -> GovernanceDecision:
             return _denied(gd.reason, gd.category)
+
+        # 00. consumption contract — the call is refused outright when it cannot
+        #     be put into the representation its handler consumes.
+        if contract_denial is not None:
+            return _deny(contract_denial)
 
         # 0. STRICT role completeness (lazy): an unclassified tool fails closed
         #    rather than defaulting to a clean benign read. This is the fix for the
@@ -404,7 +442,7 @@ class ToolCallGovernor:
                     payload=self._call_payload(tool_name, args, normalized),
                 )
             )
-        return GovernanceDecision(allowed=True, _normalized=normalized)
+        return GovernanceDecision(allowed=True, args=dict(args), _normalized=normalized)
 
     @property
     def trace_events(self) -> "list[TraceEvent]":
@@ -491,6 +529,14 @@ class ToolCallGovernor:
     ) -> None:
         """Record an operator-vouched value as trusted (context-default integrity)."""
         self._taint.register_trusted(value, origin)
+
+    @property
+    def conformance_obligations(self) -> "list[ConformanceObligation]":
+        """What each guarded argument's faithfulness rests on: a consumption
+        contract (checked), an attestation (stated premise) or nothing."""
+        return conformance_obligations(
+            self._value_policies, self._field_contracts, self._consumption_attested
+        )
 
     def confidentiality_floor_active(self) -> bool:
         """True once a secret read has armed the egress floor this session."""

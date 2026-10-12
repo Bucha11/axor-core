@@ -50,6 +50,7 @@ def test_governor_strict_passes_with_allowlist_and_enforces_both():
     gov = ToolCallGovernor(
         egress_sinks={"send_email"},
         value_policies={"send_email": [enum("to", {"alice@corp.com"})]},
+        consumption_attested={"send_email"},
         driving_args={"send_email": ["to"]},
         consequence_overrides={"send_email": ConsequenceClass.CONSEQUENTIAL},
         require_egress_allowlist=True,
@@ -92,6 +93,7 @@ def test_strict_session_constructs_with_allowlist():
     s = _session(
         egress_sinks={"send_email"},
         value_policies={"send_email": [enum("to", {"alice@corp.com"})]},
+        consumption_attested={"send_email"},
         driving_args={"send_email": ["to"]},
     )
     assert s is not None
@@ -172,6 +174,7 @@ def test_strict_session_fails_on_unclassified_tool():
             ["search_docs", "send_email", "get_time"],
             untrusted_sources={"search_docs"}, egress_sinks={"send_email"},
             value_policies={"send_email": [enum("to", {"a@b.com"})]},
+            consumption_attested={"send_email"},
             driving_args={"send_email": ["to"]},
         )  # get_time unclassified
 
@@ -181,6 +184,7 @@ def test_strict_session_constructs_with_full_classification():
         ["search_docs", "send_email", "get_time"],
         untrusted_sources={"search_docs"}, egress_sinks={"send_email"},
         value_policies={"send_email": [enum("to", {"a@b.com"})]},
+        consumption_attested={"send_email"},
         driving_args={"send_email": ["to"]},
         benign_tools={"get_time"},
         danger={"search_docs": ConsequenceClass.BENIGN,
@@ -206,22 +210,25 @@ def test_strict_governor_requires_driving_args_under_context():
     pols = {"send_email": [enum("to", {"alice@corp.com"})]}
     with pytest.raises(ValueError, match="declares no driving_args"):
         ToolCallGovernor(egress_sinks={"send_email"}, value_policies=pols,
+                         consumption_attested={"send_email"},
                          require_egress_allowlist=True)
     # the explicit legacy opt-out does not carry the obligation
-    ToolCallGovernor(egress_sinks={"send_email"}, value_policies=pols,
+    ToolCallGovernor(egress_sinks={"send_email"}, value_policies=pols, consumption_attested={"send_email"},
                      require_egress_allowlist=True, integrity_default="clean")
 
 
 def test_strict_session_requires_driving_args_under_context():
     with pytest.raises(ValueError, match="declares no driving_args"):
         _session(egress_sinks={"send_email"},
-                 value_policies={"send_email": [enum("to", {"alice@corp.com"})]})
+                 value_policies={"send_email": [enum("to", {"alice@corp.com"})]},
+                 consumption_attested={"send_email"})
 
 
 def test_strict_with_driving_args_admits_a_summary_to_the_allowlisted_address():
     gov = ToolCallGovernor(
         untrusted_sources={"read_inbox"}, egress_sinks={"send_email"},
         value_policies={"send_email": [enum("to", {"boss@corp.example"})]},
+        consumption_attested={"send_email"},
         driving_args={"send_email": ["to"]},
         consequence_overrides={"read_inbox": ConsequenceClass.BENIGN,
                                "send_email": ConsequenceClass.CONSEQUENTIAL},

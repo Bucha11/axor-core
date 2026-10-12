@@ -11,9 +11,12 @@ kind + a consumption mode). The kernel then decides the faithfulness obligation 
                  predicate and must instead ride the fuzz obligation and/or the
                  positional (instruction-incomplete) gate.
 
-This makes the classifier load-bearing: ``validate_value_policies`` rejects a
-configuration that tries to guard a fuzz-required field with a decidable predicate
-(the silent misconfiguration that would give false assurance).
+``validate_value_policies`` checks a predicate against its OWN kind (an unknown
+kind fails closed). It cannot see the field the predicate guards — that check is
+:func:`axor_core.kernel.consumption.validate_consumption_contracts`, which compares
+each predicate with the consumption contract of the field (an ``enum`` on a path
+field is FUZZ_REQUIRED there), and is what makes the classifier reach a real
+consumer. Both run at construction on every wrapping path.
 """
 
 from __future__ import annotations

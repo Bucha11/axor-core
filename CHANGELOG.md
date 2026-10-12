@@ -2,6 +2,50 @@
 
 ## Unreleased
 
+### Added (consumption contracts — T4 reaches the consumer)
+
+- **`field_contracts`** (`axor_core/kernel/consumption.py`) — per sink, every field
+  the handler reads, its consumption kind (`number`, `flag`, `identifier`,
+  `identifier_list`, `path`, `interpreted`, `text`) and what the handler does when
+  it is absent (required / declared `default` / `unused_when_absent`). A value
+  predicate is now checked against the contract of the field it guards: an `enum`
+  on a `path` / `interpreted` / `text` field is refused (FUZZ_REQUIRED — the branch
+  that was latent in `validate_value_policies`), as is a range on an identifier or
+  a predicate on a field the contract does not name.
+- **Preparation before the first gate.** Every call to a contracted sink is put
+  into its contract (closed field set, declared defaults materialised, declared
+  numeric conversion applied once) before capability, consequence, value and taint
+  run. The prepared set is the one gated, digested for a call-bound approval, and
+  executed. `ToolCallGovernor` returns it as `GovernanceDecision.args` — execute
+  with it. A call outside its contract is denied with category
+  `consumption_contract` (gate `value_policies`). Replay re-prepares
+  (`KernelConfig.field_contracts`); preparation is idempotent.
+- **`consumption_attested`** and `conformance_obligations()` — a guarded sink with
+  no contract rests on the operator's statement that the handler consumes the
+  guarded fields as the predicates assume; the report names, per guarded argument,
+  whether it rests on a contract, an attestation, or nothing.
+- **`axor_core/kernel/grounds.py`** — the permitting-ground audit of
+  kernel-theorem §3b as data (issuer, permits, check, absence behaviour, what it
+  does not override). The doc table is rendered from it and a test fails on drift,
+  on a missing mechanism, or on a missing pinning test.
+- **End-to-end chain tests** (`tests/integration/test_end_to_end_chain.py`): an
+  arbitrary and an adaptive proposer against a real handler, fault injection in
+  the integrity labeler, supersession against the other obligations, and two
+  producer negative controls (model-backed approver, model-carried mark).
+- **`docs/guarantees.md`** — one table of guarantees, conditions, premises and
+  evidence.
+
+### Changed (breaking under STRICT)
+
+- **STRICT requires a ground for every guarded sink**: a sink with value
+  predicates needs `field_contracts[sink]` or an entry in `consumption_attested`;
+  construction fails otherwise (`invalid consumption contracts: …`). Existing
+  STRICT configs fix with one line (`consumption_attested: [sink, …]`).
+- Docs no longer say "fuzz-discharged", "machine-checked" for Hypothesis runs, or
+  that equal projections imply equal effects without naming the consumer;
+  supersession is described as membership standing in for the origin ground (the
+  attacker can still choose a member), not as having no security cost.
+
 ### Added (integrity sinks)
 
 - **`integrity_sinks`** — operator-declared state-changing sinks (password /

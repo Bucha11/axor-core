@@ -54,6 +54,17 @@ def test_example_yaml_loads():
         assert any(p.kind == "enum" for p in cfg.value_policies.get(sink, []))
 
 
+def test_example_yaml_builds_a_strict_governor_with_every_guard_grounded():
+    """The template must construct under STRICT, which now includes the
+    consumption-contract obligation — and every guarded argument in it names its
+    ground (a contract or an explicit attestation, never nothing)."""
+    from axor_core.governor import ToolCallGovernor
+
+    gov = ToolCallGovernor(**GovernanceConfig.from_yaml(_EXAMPLE).as_governor_kwargs())
+    grounds = {r.ground for r in gov.conformance_obligations}
+    assert grounds <= {"contract", "attested"} and "contract" in grounds
+
+
 # ── fail-closed validation ────────────────────────────────────────────────────
 
 def test_unknown_top_level_key_fails_closed():
@@ -134,6 +145,7 @@ def test_from_config_builds_session():
             "send_email": [{"arg": "to", "kind": "enum", "allowed": ["a@b.com"]}]
         },
         "driving_args": {"send_email": ["to"]},
+        "consumption_attested": ["send_email"],
     })
     # empty capability executor → STRICT role-completeness check is skipped
     session = GovernedSession.from_config(

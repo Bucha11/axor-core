@@ -8,15 +8,19 @@ depends on the codomain **and** the consumer, and it splits cleanly:
   • DECIDABLE — discharged by a decision procedure (not fuzzing) — for
     low-capacity codomains: a **finite enum** consumed as a finite case-split, and
     a **bounded numeric** range consumed *numerically* (comparison/arithmetic/
-    range-check only). Two inputs with equal projections cannot be split by the
-    consumer into distinct effects, so no residual channel can exist — by
-    construction.
+    range-check only). IF the consumer really consumes the value that way, two
+    inputs with equal projections cannot be split into distinct effects. That
+    premise is about the handler, not the predicate: it is registered per field by
+    a consumption contract (:mod:`axor_core.kernel.consumption`), which also
+    prepares every call into that representation before it is checked. Without a
+    contract it is an operator attestation, not a result.
 
   • FUZZING ONLY — undecidable in general — for rich-syntax codomains: **path**
     (a filesystem resolver: `..`, symlinks, newline, unicode), **string
     subfields** (a shell/SQL/URL/template interpreter) and **carrier over free
-    text**. Here faithfulness stays a fuzz obligation; the classic real bugs
-    (newline injection, `../` traversal) live exactly here, as the split predicts.
+    text**. Here faithfulness stays an open obligation; fuzzing yields evidence over
+    the inputs drawn, not a discharge. The classic real bugs (newline injection,
+    `../` traversal) live exactly here, as the split predicts.
 
 Decidability of the enum/numeric branch is **conditional on the consumption mode
 being known**: it must be a registered, surveyable property of a finite sink —
@@ -93,9 +97,9 @@ def is_decidable(kind: CodomainKind, mode: ConsumptionMode) -> bool:
 def verify_enum(value: object, admissible: Iterable[object]) -> DecidabilityResult:
     """Decision procedure for an enum codomain consumed as a case-split.
 
-    Decidable: membership in a finite admissible set. effective ⊆ nominal iff the
-    value is in the declared set; nothing the consumer does to an in-set value can
-    manufacture an out-of-set effect (finite case-split).
+    Decidable: membership in a finite admissible set. This decides the VALUE; that
+    the consumer turns an in-set value into an in-set effect holds only when it
+    consumes it as a finite case-split — the field's consumption contract.
     """
     admissible_set = set(admissible)
     if value in admissible_set:
@@ -109,8 +113,9 @@ def verify_bounded_numeric(value: object, lo: Real, hi: Real) -> DecidabilityRes
     """Decision procedure for a bounded-numeric codomain consumed numerically.
 
     Decidable: a real in [lo, hi]. Numeric consumption (compare/arithmetic/range)
-    cannot decode a number into an instruction, so effective = nominal by
-    construction — provided the value is genuinely numeric and in range.
+    cannot decode a number into an instruction — provided the consumer receives
+    this number (not a string it parses itself, nor its own default when the
+    argument is absent), which the field's consumption contract arranges.
     """
     if isinstance(value, bool) or not isinstance(value, Real):
         return DecidabilityResult(DecidabilityVerdict.DECIDABLE_FAIL, f"{value!r} is not a real number")

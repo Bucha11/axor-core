@@ -155,6 +155,8 @@ class GovernedSession:
         integrity_sinks: "set[str] | frozenset[str] | None" = None,
         benign_tools: "set[str] | frozenset[str] | None" = None,
         driving_args: "dict[str, list[str]] | None" = None,
+        field_contracts: "dict | None" = None,
+        consumption_attested: "set[str] | frozenset[str] | None" = None,
         trajectory_observers: "list | None" = None,
         value_policies: "dict | None" = None,
         detection_floor: float | None = None,
@@ -197,6 +199,10 @@ class GovernedSession:
         # Operator-declared state-changing sinks (integrity only, no floor).
         self._integrity_sinks = frozenset(integrity_sinks or ())
         self._driving_args = dict(driving_args or {})
+        # Consumption contracts — the fields each sink's handler reads and how
+        # (kernel/consumption.py). Validated below; applied per call by the loop.
+        self._field_contracts = dict(field_contracts or {})
+        self._consumption_attested = frozenset(consumption_attested or ())
         self._trajectory_observers = list(trajectory_observers or [])
         self._value_policies = dict(value_policies or {})
         self._detection_floor = detection_floor  # opt-in; None = detection observe-only
@@ -236,6 +242,16 @@ class GovernedSession:
             integrity_origins, strict=(mode == ExecutionMode.STRICT)
         )
         self._benign_tools = frozenset(benign_tools or ())
+        # Every predicate is checked against the contract of the field it guards;
+        # under STRICT a guarded sink needs a contract or an explicit attestation.
+        # Fail at construction, not at the first call.
+        from axor_core.kernel.consumption import validate_consumption_contracts
+        _cc_errors = validate_consumption_contracts(
+            self._value_policies, self._field_contracts, self._consumption_attested,
+            strict=(mode == ExecutionMode.STRICT),
+        )
+        if _cc_errors:
+            raise ValueError("invalid consumption contracts: " + "; ".join(_cc_errors))
         if self._require_egress_allowlist:
             from axor_core.kernel.registration import (
                 validate_egress_allowlists,
@@ -936,6 +952,8 @@ class GovernedSession:
             integrity_sinks=self._integrity_sinks,
             benign_tools=self._benign_tools,
             driving_args=self._driving_args,
+            field_contracts=self._field_contracts,
+            consumption_attested=self._consumption_attested,
             trajectory_observers=self._trajectory_observers,
             invocation_recorder=(
                 self._record_invocation if self._session_sink is not None else None
