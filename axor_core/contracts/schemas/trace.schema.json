@@ -187,7 +187,7 @@
         },
         "call_id": {
           "type": "string",
-          "description": "correlates a tool_call_intent with its gate_decision so replay pairs them by id (not just node order) and can detect a missing or duplicated decision"
+          "description": "correlates a tool_call_intent with its gate_decision so replay pairs them by id (not just node order) and can detect a missing or duplicated decision. On a tool_result it names the call whose execution produced the result; it is present when the execution followed a DENY that an observe-only arm ran anyway (see arg_bindings)."
         },
         "produces_value_ids": {
           "type": "array",
@@ -198,7 +198,7 @@
         },
         "arg_bindings": {
           "type": "object",
-          "description": "tool_call_intent: maps each argument name to the value_id supplying it — THIS is the link that lets the gate see a sink arg's provenance",
+          "description": "tool_call_intent: maps each argument name to the value_id supplying it — THIS is the link that lets the gate see a sink arg's provenance; these are the arguments the kernel CHECKED. tool_result (with call_id): the arguments actually EXECUTED, present only when they are not the checked ones — a DENY that an observe-only arm executed anyway (decision.enforced=false) runs the agent's raw proposal, so a reader must not attribute the effect to the checked set.",
           "additionalProperties": {
             "type": "string"
           }

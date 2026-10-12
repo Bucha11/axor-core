@@ -2,6 +2,96 @@
 
 ## Unreleased
 
+### Added
+
+- **`falsy_is_absent`** on a field contract: a handler that tests a field by
+  truthiness (`if amount:` — AgentDojo's stock `update_scheduled_transaction` and
+  `update_user_info`) treats `0`, `""` and `[]` as "leave unchanged". The field is
+  dropped from the prepared call, so the gates see what the handler does.
+
+### Changed (STRICT: record closure is checked, not assumed)
+
+- **STRICT now defaults to `integrity_origins: request-only`.** Under any-trusted a
+  declared benign tool's output is a trusted ground at an integrity sink, which is
+  sound only if no admitted call can write an attacker-chosen value into what that
+  tool reads (record closure; the add → list laundering measured in axor-eval
+  `experiments/rope_comparison`). Outside STRICT the default is unchanged
+  (any-trusted), and so is the origin-only arm (role completeness without the
+  egress allowlist), so recorded runs reproduce. **Behaviour change:** a STRICT
+  deployment that relied on a TOOL-cleared value at an integrity sink is now denied
+  unless it opts back in as below.
+- **`records`** (config key; `RecordDecl(readers, writers)`) and
+  `kernel/registration.validate_record_closure`. An explicit
+  `integrity_origins: any-trusted` under STRICT is refused at construction unless
+  every benign tool names the record(s) it reads and every writer of such a record
+  is a declared integrity sink. Checked on every STRICT construction path
+  (`ToolCallGovernor`, `GovernedSession`, `IntentLoop`). That the declared writers
+  are all the writers remains the operator's statement.
+
+### Added (consumption contracts — T4 reaches the consumer)
+
+- **`field_contracts`** (`axor_core/kernel/consumption.py`) — per sink, every field
+  the handler reads, its consumption kind (`number`, `flag`, `identifier`,
+  `identifier_list`, `path`, `interpreted`, `text`) and what the handler does when
+  it is absent (required / declared `default` / `unused_when_absent`). A value
+  predicate is now checked against the contract of the field it guards: an `enum`
+  on a `path` / `interpreted` / `text` field is refused (FUZZ_REQUIRED — the branch
+  that was latent in `validate_value_policies`), as is a range on an identifier or
+  a predicate on a field the contract does not name.
+- **Preparation before the first gate.** Every call to a contracted sink is put
+  into its contract (closed field set, declared defaults materialised, declared
+  numeric conversion applied once) before capability, consequence, value and taint
+  run. The prepared set is the one gated, digested for a call-bound approval, and
+  executed. `ToolCallGovernor` returns it as `GovernanceDecision.args` — execute
+  with it. A call outside its contract is denied with category
+  `consumption_contract` (gate `value_policies`). Replay re-prepares
+  (`KernelConfig.field_contracts`); preparation is idempotent.
+- **`consumption_attested`** and `conformance_obligations()` — a guarded sink with
+  no contract rests on the operator's statement that the handler consumes the
+  guarded fields as the predicates assume; the report names, per guarded argument,
+  whether it rests on a contract, an attestation, or nothing.
+- **`axor_core/kernel/grounds.py`** — the permitting-ground audit of
+  kernel-theorem §3b as data (issuer, permits, check, absence behaviour, what it
+  does not override). The doc table is rendered from it and a test fails on drift,
+  on a missing mechanism, or on a missing pinning test.
+- **End-to-end chain tests** (`tests/integration/test_end_to_end_chain.py`): an
+  arbitrary and an adaptive proposer against a real handler, fault injection in
+  the integrity labeler, supersession against the other obligations, and two
+  producer negative controls (model-backed approver, model-carried mark).
+- **`docs/guarantees.md`** — one table of guarantees, conditions, premises and
+  evidence.
+
+- **`GovernanceDecision.args` on denials too** — the set the kernel judged
+  (prepared, or the proposal as received when preparation refused it), so a host
+  that executes a denied call in an observe-only arm can record what it ran apart
+  from what was checked. Execute only on `allowed`.
+- **trace/v1 schema (descriptions only, no structural change):** on a
+  `tool_result`, `call_id` + `arg_bindings` name the call and the arguments
+  actually executed when an observe-only arm ran a DENY; `arg_bindings` on a
+  `tool_call_intent` are the checked arguments.
+
+### Changed (examples)
+
+- **AgentDojo origin arm relabelled, not changed.** The `*_origin.yaml` configs
+  are an origin-only baseline (role completeness + complete consequence table, no
+  egress allowlist by design); they declared `mode: strict`, which requires an
+  allowlist, and failed to construct outside the runner. They now declare
+  `mode: production` with an explicit guarantees header, and
+  `examples/agentdojo/origin_arm.py` adds the two STRICT obligations the arm
+  carries. The governor kwargs the runner builds are byte-identical before and
+  after.
+
+### Changed (breaking under STRICT)
+
+- **STRICT requires a ground for every guarded sink**: a sink with value
+  predicates needs `field_contracts[sink]` or an entry in `consumption_attested`;
+  construction fails otherwise (`invalid consumption contracts: …`). Existing
+  STRICT configs fix with one line (`consumption_attested: [sink, …]`).
+- Docs no longer say "fuzz-discharged", "machine-checked" for Hypothesis runs, or
+  that equal projections imply equal effects without naming the consumer;
+  supersession is described as membership standing in for the origin ground (the
+  attacker can still choose a member), not as having no security cost.
+
 ### Added (integrity sinks)
 
 - **`integrity_sinks`** — operator-declared state-changing sinks (password /

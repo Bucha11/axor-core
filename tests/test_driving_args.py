@@ -78,6 +78,7 @@ def test_strict_requires_allowlist_on_the_driving_arg():
             untrusted_sources={"read_doc"}, egress_sinks={"send_email"},
             driving_args={"send_email": ["to"]},
             value_policies={"send_email": [enum("cc", {"audit@corp.com"})]},
+            consumption_attested={"send_email"},
             require_egress_allowlist=True,
         )
 
@@ -89,6 +90,7 @@ def test_strict_driving_arg_with_matching_allowlist_constructs_and_blocks_attack
         untrusted_sources={"read_doc"}, egress_sinks={"send_email"},
         driving_args={"send_email": ["to"]},
         value_policies={"send_email": [enum("to", {"alice@corp.com"})]},
+        consumption_attested={"send_email"},
         consequence_overrides={"read_doc": ConsequenceClass.BENIGN,
                                "send_email": ConsequenceClass.CONSEQUENTIAL},
         require_egress_allowlist=True,

@@ -86,13 +86,18 @@ INTEGRITY_ORIGIN_MODES = frozenset({"request-only", "any-trusted"})
 def resolve_integrity_origins(requested: "str | None", *, strict: bool) -> str:
     """The integrity-origin mode a governed session runs with.
 
-    ``None`` means the mode's default. NOTE: the default is deliberately
-    ``"any-trusted"`` in both modes for now, so that turning this knob on does
-    not silently change results measured before it existed. Flipping STRICT to
-    ``"request-only"`` is a separate, explicit decision.
+    ``None`` means the mode's default: ``"request-only"`` under STRICT,
+    ``"any-trusted"`` otherwise. Under ``any-trusted`` a value cleared by a
+    benign tool's read is a trusted ground, which is sound only if no admitted
+    call can write an attacker-chosen value into what that tool reads (record
+    closure). STRICT therefore does not assume it: it runs request-only unless
+    the operator asks for any-trusted explicitly *and* declares the records the
+    closure is checked over (kernel/registration.validate_record_closure).
+    Outside STRICT the default is unchanged, so results measured before this
+    knob existed reproduce.
     """
     if requested is None:
-        return "any-trusted"
+        return "request-only" if strict else "any-trusted"
     if requested not in INTEGRITY_ORIGIN_MODES:
         raise ValueError(
             f"integrity_origins must be one of {sorted(INTEGRITY_ORIGIN_MODES)}, "

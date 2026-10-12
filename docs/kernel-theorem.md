@@ -51,9 +51,11 @@ The *safety content* of clause (2) rests on two per-projection obligations:
 
 The honest footing, sharpened by the decidability split (§4):
 
-> **K4 holds outright for the enum/numeric fraction of the perimeter, and
-> conditionally — discharged by fuzzing — for the rich-syntax (path / carrier /
-> string-subfield) fraction.**
+> **For the defined predicate language (enum / numeric / relational) over fields
+> whose consumption is fixed by a registered consumption contract, T4 is decided
+> by a procedure. Every other consumer — rich-syntax fields (path / carrier /
+> string-subfield), and guarded fields whose handler conformance is only attested
+> — needs a separate argument; fuzzing there is evidence, not a discharge.**
 
 The weird-machine class did not disappear; it is *localized* to the rich-syntax
 codomains. Both real bugs ever found in this layer (newline injection in path
@@ -104,8 +106,9 @@ Neither half implies the other. A correct lattice says nothing about a labeller 
 a normalizer admitting an effect outside what is in force; complete mediation says
 nothing about where the ceiling came from.
 
-**Status.** The containment half is machine-checked over random interleavings of
-the real engines (not a model of them: every view is read back through
+**Status.** The containment half is property-tested (Hypothesis) over random
+interleavings of the real engines — evidence over the drawn interleavings, not a
+machine-checked proof (not a model of them: every view is read back through
 `axor_core/node/authority_probe.py` from the policy, the degradation engine, the
 capability resolver and the escalation manager's own tables). The enforcement half
 is O1/O3 above. What is *not* claimed: that the authority a transition restores is
@@ -294,21 +297,78 @@ on which the call was admitted, whatever `allow` itself calls.
 So the chain is audited end to end: for every input that can turn a call from
 denied into allowed, what is the admissible ground, and what actually produces it.
 
-| Permitting input | Admissible ground | Produced by | Status |
-|---|---|---|---|
-| Capability surface, path ceiling, consequence ceiling (`A₀`) | trusted operator configuration | `policy=` / `default_policy=` / profile overlay — else `PolicySelector` over `TaskAnalyzer` | **STRICT: refused** unless operator-supplied (`GovernedSession.run` raises `PolicyError`). Other modes: legacy — classification selects it, and an operator-supplied external classifier **may be a model** |
-| Delegation ceiling (`G`) | operator configuration | `escalation_policy.grantable_tools`, narrowed by parent/overlay composition | ✅ classifier presets carry none (K5-4) |
-| Action class (consequence axis) | registered declaration, keyed on the sink name | built-in table + `consequence_overrides`; unknown → `CONSEQUENTIAL`; name-token raising tightens only | ✅ the name is model-supplied, but it resolves against a declaration and dispatches the same name |
-| Sink roles — egress / integrity / imperative / positional / benign | operator declaration | session kwargs or YAML; STRICT validates role completeness; a positional declaration of an instruction-complete sink is refused at construction | ✅ under STRICT; outside it, role completeness is not required |
-| Enum / relational predicate satisfied | exact membership in a closed operator set | `verify_enum`, `verify_bounded_numeric`, `closed_allowlist_args` | ✅ |
-| Integrity supersession | every driving arg present **and** covered by a closed codomain | `integrity_superseded_by_decidable` | ✅ `numeric_range` deliberately inadmissible |
-| Confidentiality floor down | a registered sensitive-read event; lifted only by an unforgeable `GovernanceAuthority`, by fingerprint | `TaintEngine` outstanding map, `endorse_value` | ✅ |
-| "Trusted value" (`TrustedOrigin`) | TASK: the principal's task at depth 0 · OPERATOR: enum members · TOOL: a **declared** benign tool · ENDORSED: governance | `register_trusted`; a child's task at depth > 0 is trusted only if the inherited context is clean | ⚠️ `TOOL` is declaration-backed **only under STRICT roles**: `is_trusted_tool` returns True for *any* tool when `require_tool_roles` is False, so outside STRICT the ground is "the normalizer did not classify the read as external" |
-| Model-generated value carrying no registered fragment | — | `integrity_default`: `context` under STRICT (carries the context root), `clean` otherwise | ⚠️ STRICT closes it; otherwise this is the known O2 model-edge gap (§2) |
-| Approval (the governance gate for an over-ceiling sink) | a trusted human, or a rule whose correctness is checkable | operator-supplied `EscalationCallback` | ⚠️ **premise, uncheckable in core**: nothing prevents an operator from backing the callback with a model, which puts the model back in the trusted base. Stated in `contracts/approval.py` and governance-model §2 |
-| Projection features (carrier, path class, provenance label, normalized intent) | deterministic structural function | the six T0 producers | ✅ §3 |
-| Peer provenance labels | a signed receipt; across keysets only a bounded discount, never label authority | `federation/receipt.py`, `federation/ladder.py` | ✅ opt-in |
-| *Absence* of a model-carried mark (datamarking read at the gate) | — | the model, which must reproduce the sentinel onto the argument | ❌ **inadmissible as a positive ground**: the producer is the model, and a value the model *derives* rather than copies carries no mark by construction. Admissible only in the deny direction, as detection. [paper-model-carried-labels](paper-model-carried-labels.md) |
+The audit is kept as data — `axor_core/kernel/grounds.py` (`GROUNDS`) — and
+the table below is rendered from it (`render_markdown()`); a test fails when the two
+differ, when a named mechanism does not import, or when a named pinning test does
+not exist (`tests/invariants/test_permitting_grounds.py`). For each ground it states
+who may issue it, what it permits, how it is checked, what happens when it is
+absent or fails, and what it does **not** override.
+
+<!-- grounds:begin -->
+| Permitting input | Issued by | Permits | Checked by core | Absent / fails | Does not override | Premise (not checked by core) | Status |
+|---|---|---|---|---|---|---|---|
+| Operator policy (A₀: tools, paths, consequence ceiling) | operator configuration (policy= / default_policy=) | the capability surface and the unattended consequence ceiling | STRICT refuses to run without an operator-supplied policy | STRICT: PolicyError, nothing runs; other modes: classifier-selected, not covered | every per-call gate | the operator's policy is the intended one | enforced-under-strict |
+| Delegation ceiling (G) | operator configuration (escalation_policy.grantable_tools) | which tools a grant or approval may ever reach | grants and leases validated against available ∪ grantable | no escalation surface: an over-ceiling tool stays unreachable | per-call gates; a grant only adds the tool to the capability set | the operator's ceiling is the intended one | enforced |
+| Action class (consequence axis) | built-in table + operator consequence_overrides, keyed on the sink name | an unattended call whose class is within the ceiling | exact-name lookup; STRICT: unclassified ⇒ CATASTROPHIC | STRICT: refused at construction / treated as catastrophic | value, taint, floor, carrier, SSRF gates | the declared class matches the tool's real irreversibility | enforced-under-strict |
+| Sink roles (egress / integrity / imperative / positional / benign) | operator declaration | which gates a tool is subject to; a positional sink admits only structured carriers | STRICT role completeness; an instruction-complete sink cannot be declared positional | STRICT: an unclassified tool is refused | the floor and the value gates | the declared role matches what the tool does (a mis-declared sensitive source arms no floor) | enforced-under-strict |
+| Consumption contract (T4 for a guarded field) | operator declaration per sink field (field_contracts) | a value predicate to count as faithful for the field it guards | predicate role vs field kind at registration; every call prepared into the contract before the first gate; the prepared set is what executes | see the attestation row; outside STRICT, nothing — reported 'unverified' | every gate after preparation | the handler consumes each field as its contract states (its defaults, aliases and parsing are the ones declared) | enforced |
+| Consumption attestation | operator statement per sink (consumption_attested) | a guarded sink with no contract to construct under STRICT | none beyond presence: core does not compare the predicates with any field description and prepares nothing | STRICT: construction refused for a guarded sink with neither contract nor attestation | every gate — but the gates decide the raw proposal, which is also what executes | the whole of T4 for that sink: the handler consumes the guarded fields exactly as the predicates assume | premise |
+| Integrity supersession | operator, by declaring a closed allowlist on every driving arg | skipping the origin (integrity-taint) check: membership in the pre-authorised set satisfies that obligation instead | every driving arg present and covered by a closed codomain (enum / tuple_enum / keyed key) | origin check applies; numeric_range never supersedes | the confidentiality floor, consequence, value ranges, capability | the operator's set is the intended one; T4 for the covered arg rests on that sink's contract, or on its attestation | enforced |
+| Confidentiality floor down | no sensitive read outstanding; lifted only by GovernanceAuthority endorsement | egress | outstanding-read map; endorsement verifies the authority token, per value fingerprint | egress denied while a sensitive read is outstanding | integrity, consequence, value gates | the governance authority is not reachable by the agent | enforced |
+| Trusted value (TrustedOrigin) | TASK: the principal's task at depth 0 · OPERATOR: allowlist members · TOOL: a declared benign tool · ENDORSED: governance | a model-emitted value to escape the context root at an integrity sink | register_trusted from kernel-side code only; TOOL requires a benign declaration under STRICT | the value carries the context root (STRICT) and is denied at an integrity sink | the floor, consequence, value gates | a declared benign tool's output is in fact not attacker-writable — including by an earlier ADMITTED call (record closure, cf. ROPE Lemma 1). STRICT defaults to request-only, where TOOL is no ground at an integrity sink; an explicit any-trusted under STRICT is refused at construction unless every benign tool names the records it reads and every writer of such a record is an integrity sink. Outside STRICT the condition is neither stated nor checked (laundering measured in axor-eval experiments/rope_comparison); that the declared writers are all the writers is the operator's statement | enforced-under-strict |
+| Call-bound approval | the operator-supplied EscalationCallback | one call over the consequence ceiling | call digest over every prepared argument; volatile state re-checked after the answer; claimed atomically, one use | the consequence denial stands | every other gate (asked only after all of them pass) | the callback is a trusted party or a checkable rule — not a model | premise |
+| Projection features (carrier, path class, provenance label, normalized intent) | the T0 producer modules | the per-value gates' inputs | import contract (no model surface) + determinism tests | — | — | — | enforced |
+| Peer provenance label | a peer, by signed receipt | restoring a peer value's trust level | signature, nonce, binding to the value; across keysets only a bounded discount | the value is untrusted | every gate | the peer's key is held by the peer | enforced |
+| Absence of a model-carried mark | the model (it must reproduce the mark onto the argument) | nothing — inadmissible as a positive ground | — | admissible only in the deny direction, as detection | — | — | inadmissible |
+<!-- grounds:end -->
+
+**What the table is, and what it is not.** It is a specification: each row is held
+to the code (the mechanism imports, the pinning tests exist, the document matches
+the data). "Checked by core" and "Premise" are separate columns so that nothing a
+ground merely *rests on* reads as something core verified — in particular a
+consumption **attestation** is its own row, status `premise`: core prepares
+nothing for an attested sink and compares its predicates with no field
+description, so the gates decide the raw proposal and the operator's sentence is
+the whole of T4 there.
+
+The tests do **not** show the table is complete. Completeness — every input that
+can turn a denial into an allow has a row — is argued by enumerating what the allow
+path reads. In `IntentLoop._resolve_tool_intent` (and the same predicates in
+`ToolCallGovernor.evaluate` and `kernel/replay.evaluate_call`) a call is executed
+only if every one of these admits it, and each admission reads only the listed
+inputs:
+
+| Step on the allow path | Inputs it reads that can admit | Row |
+|---|---|---|
+| consumption preparation | the sink's contract (or none) | contract / attestation |
+| capability (`_evaluate_tool_intent`, executor re-check) | policy `A₀`, leases and grants within `G` | operator policy, delegation ceiling, call-bound approval |
+| STRICT role check | role declarations | sink roles |
+| consequence | class table + overrides, ceiling; deferred approval | action class, call-bound approval |
+| value policies | operator predicates over the prepared call | contract / attestation (T4) |
+| degradation, SSRF, positional, carrier | structural projections of the call | projection features, sink roles |
+| per-value taint | driving root (ledger, context root, trusted index), floor state, supersession | trusted value, floor, supersession, peer label |
+| adjudicator, budget, admission | tighten only — cannot admit | — |
+
+The argument is only as good as this enumeration, and nothing mechanical keeps
+the enumeration current: a new admitting input added to the allow path needs a
+row here and a line in this table, and no test will notice if it gets neither.
+
+Two readings of the table matter for the claim:
+
+- **Determinism is not correctness.** A deterministic producer can still issue the
+  wrong ground; the "Checked by core" column is the check, and the "Status" column says
+  where the check cannot be made in core (`premise`). The negative controls in
+  `tests/integration/test_end_to_end_chain.py` build two such grounds on purpose —
+  an approver whose codomain is {yes, no} but which follows the call's arguments,
+  and a datamark whose absence would admit a re-typed value — and show the first
+  executing an unattended consequential call while every other constraint still
+  holds, and the second refused by the context-root integrity ground.
+- **Supersession is a substitution, not a security-free relaxation.** The attacker
+  *can* choose a member of the operator's allowlist (a statement can name the
+  approved payee). Supersession means: the operator pre-authorised that set, and
+  membership satisfies the integrity obligation in place of an origin ground. The
+  floor, consequence, value ranges and capability remain in force
+  (`test_supersession_relaxes_integrity_only`).
 
 **The result of the audit is a mode statement, not a global one.** The three
 inputs whose ground is a heuristic or a default rather than a declaration —
@@ -346,8 +406,11 @@ executed (`tests/node/test_transform_is_gated.py`; the suite fails without it).
 
 T4 (effective = nominal) is the obligation where the theorem's safety content lives.
 Whether it is *decidable* depends on the codomain **and** the consumer, and it splits
-cleanly. This split is the kernel's one genuinely new (if modest) result; it is
-implemented in `axor_core/kernel/decidability.py`.
+cleanly. The split itself is a classification (`axor_core/kernel/decidability.py`);
+what makes it say something about execution is that the consumer is *registered*
+per field and every call is put into that registration before it is checked
+(`axor_core/kernel/consumption.py`, below). A claim of novelty rests on that
+mechanism and on what it measurably prevents, not on the statement of the split.
 
 **Admissible codomains (the closed whitelist, Def. 3b).** `allow` reads only
 projections drawn from a closed set of *kinds*:
@@ -373,22 +436,49 @@ is case-split / numeric (not re-parsing).
 
 This is decidable **only because the consumption mode is a registered property of a
 finite, surveyable sink (K2)** — otherwise it would be whole-program analysis (Rice),
-undecidable. So: *T4 is a theorem for enum/bounded-numeric, conditional on K2.*
-`axor_core/kernel/registration.py` (`validate_value_policies`) makes this load-bearing — it
-**rejects** any value predicate whose *declared projection* is not decidable. The check keys on
-the predicate's projection (from `_PREDICATE_PROJECTION`), **not** on the sink field's runtime
-codomain: today the only predicates are `enum` / `numeric_range` (both decidable by
-construction), so the reachable rejection is an **unknown/unregistered predicate kind failing
-closed** (the fuzz-projection reject branch is present but latent — no fuzz predicate exists to
-hit it). The corollary "you cannot guard a fuzz-required field with a decidable predicate" thus
-holds because a fuzz *predicate* cannot be **expressed**, not because a mis-typed field is
-detected — the silent misconfiguration is structurally prevented rather than caught.
+undecidable. And "equal projections cannot be split into distinct effects" is a
+statement about the *consumer*, not about the predicate: an exact `enum` check says
+nothing about a handler that defaults an absent argument, reads an alias, formats a
+list where it expects a scalar, or resolves the checked string against a
+filesystem. So the consumption mode is now registered **per field**, not inferred
+from the predicate's kind:
+
+- **Consumption contracts** (`axor_core/kernel/consumption.py`). Per sink, the
+  operator names every field the handler reads, its kind (`number`, `flag`,
+  `identifier`, `identifier_list`, `path`, `interpreted`, `text`) and what the
+  handler does when it is absent (refuse, a declared default, not consumed).
+- **Registration** (`validate_consumption_contracts`) checks each predicate against
+  the contract of the field it guards: an `enum` on a `path` field is refused with
+  the classifier's FUZZ_REQUIRED verdict (the branch that used to be latent is now
+  reached through a real field), a range on an identifier is refused, a predicate on
+  a field the contract does not name is refused. `validate_value_policies` (the
+  predicate-kind check) still runs, and still fails an unknown kind closed.
+- **Preparation** (`prepare_args`) runs before the first gate on both wrapping paths
+  and in replay: closed field set, declared defaults materialised, the declared
+  numeric conversion applied once. The prepared set is the one every gate reads,
+  the call-bound approval digests, and the handler receives (`ToolCallGovernor`
+  returns it as `decision.args`).
+- **Without a contract** the handler's conformance is a premise. Under STRICT it
+  must be stated per sink (`consumption_attested`); `conformance_obligations()`
+  reports, per guarded argument, whether it rests on a contract, an attestation, or
+  nothing.
+
+What the contract does **not** establish: that the handler honours it. The kernel
+makes the check and the dispatch agree with the contract; whether the handler's code
+agrees with the contract is the operator's statement. The measured cases — a real
+handler behind the real loop, with and without a contract — are in
+`tests/adversarial/test_check_vs_consumer.py`: an absent amount the handler turns
+into a balance sweep, an alias field that redirects the transfer, a list booked as
+an account string, and an allowlisted path that is a symlink out of the root all
+execute without a contract and are refused with one; an exponent string and a
+comma-joined recipient are refused either way (controls — not gaps today).
 
 **Fuzzing only — undecidable in general.** For **path** (a filesystem resolver),
 **string subfields** (a shell / SQL / URL / template interpreter), and **carrier over
 free text**, the consumer *is* a rich-syntax interpreter; effective can exceed
-nominal, and T4 stays a **fuzzing obligation**. The two historical bugs live exactly
-here:
+nominal, and T4 stays a **fuzzing obligation** — fuzzing produces evidence over the
+inputs it drew, it does not discharge the obligation. The two historical bugs live
+exactly here:
 
 - newline injection in path extraction — fixed in `axor_core/node/canonicalizer.py`
 - `../` traversal in lease validation — fixed in
@@ -411,8 +501,10 @@ fails if the premise is violated. Test paths are relative to the repo root.
 | **O2** scope boundary | implicit/control-flow leaks are *out of scope* — claimed, not silently missed | `tests/adversarial/test_implicit_flow_gap.py` (sound behaviour asserted `xfail(strict=True)`: the suite trips the moment a sound backend closes the gap) |
 | **O3** complete mediation | no effect bypasses `allow`; unknown sink fails closed; ceilings cannot be widened | `axor_core/capability/locked.py` (`GovernanceBypassError`); `tests/invariants/test_security_invariants.py` inv15 (denied tool never reaches executor); `tests/adversarial/test_unknown_sink_posture.py`; `tests/adversarial/test_critical_bypasses.py`; `tests/adversarial/test_e2e_gate.py` (lethal-trifecta egress denied) |
 | **T0** non-interpreting producer | no model / network / subprocess produces a trusted-path projection | `.importlinter` `t0-producers-non-interpreting` contract (run by `lint-imports`); `tests/invariants/test_t0_producers_non_interpreting.py` (import scan + determinism); `tests/invariants/test_pure_allow.py` (`test_no_probabilistic_component_in_the_loop`) |
-| **T4 decidable** enum/numeric | faithfulness by construction; a predicate with a non-decidable declared projection is rejected (unknown kind fails closed — a fuzz predicate cannot be expressed) | `axor_core/kernel/decidability.py` (`verify_enum`, `verify_bounded_numeric`); `axor_core/kernel/registration.py` (`validate_value_policies`); `tests/kernel/test_decidability.py`, `tests/adversarial/test_projection_validators.py` |
-| **T4 fuzzing** path/carrier/string | effective codomain stays in-bounds under fuzzing | `tests/kernel/test_decidability.py` (`test_path_normalizer_fuzz_floor_no_escape`, floor = 8); `tests/adversarial/test_property_fuzz.py` (allowlist never false-accepts; carrier never admits a dangerous bare string) |
+| **T4 decidable** enum/numeric | decided for the predicate language over fields with a registered consumption contract; a predicate is checked against its field's contract (an enum on a path field fails with FUZZ_REQUIRED); every call is prepared into the contract before the first gate; without a contract STRICT requires an explicit attestation | `axor_core/kernel/decidability.py` (`verify_enum`, `verify_bounded_numeric`); `axor_core/kernel/registration.py` (`validate_value_policies`); `axor_core/kernel/consumption.py` (`validate_consumption_contracts`, `prepare_args`); `tests/kernel/test_decidability.py`, `tests/adversarial/test_projection_validators.py`, `tests/kernel/test_consumption.py`, `tests/adversarial/test_check_vs_consumer.py` |
+| **Permitting grounds** | every input that can permit a call has a stated issuer, check, absence behaviour and non-overridden obligations | `axor_core/kernel/grounds.py`; `tests/invariants/test_permitting_grounds.py` |
+| **End-to-end chain** | ground → projection → consumption → dispatch → observed effect, with an arbitrary and an adaptive proposer, and with a failed integrity labeler | `tests/integration/test_end_to_end_chain.py` (property-tested, not proved) |
+| **T4 fuzzing** path/carrier/string | effective codomain stays in-bounds over the fuzzed inputs (evidence, not a discharge) | `tests/kernel/test_decidability.py` (`test_path_normalizer_fuzz_floor_no_escape`, floor = 8); `tests/adversarial/test_property_fuzz.py` (allowlist never false-accepts; carrier never admits a dangerous bare string) |
 | **"Any trust model"** | the decision factors through the trust model's projection — swap the model, K4 still holds | `tests/contracts/test_value_provenance.py` (`test_noninterference_through_alt_trust_model`, `test_complete_mediation_through_alt_trust_model`): a second trust model with a *different* tainting rule re-proves non-interference + mediation; interface is `axor_core/contracts/provenance.py` |
 | **Non-interference caveats** | adjudicator memoization is "T1 modulo cache state"; detection stays out of `allow` | `axor_core/kernel/adjudicator.py`; `tests/adversarial/test_detection_degradation.py`; [governance-model §8](governance-model.md) |
 
@@ -464,8 +556,12 @@ Stated as boundaries of the claim, not as incidental gaps:
   regression, fix specified in
   [rfc-integrity-context-default](rfc-integrity-context-default.md).
 - **Stated and pinned:** O1, O2 (explicit-flow scope, kernel constructors), O3, T0 (import contract +
-  scan/determinism test, §3), T4 (both branches), the non-interference invariant and
-  its caveats — each with a named regression in §5.
+  scan/determinism test, §3; the permitting-ground specification, §3b), T4 (the
+  decidable branch through consumption contracts; the fuzz branch as tested
+  evidence), the non-interference invariant and its caveats — each with a named
+  regression in §5.
+- **Premises, stated as such:** handler conformance to its consumption contract;
+  an approval callback that is not model-backed.
 - **Demonstrated on two instances:** the trust-model-agnostic claim — a substitution
   test re-proves non-interference + mediation under a second trust model (§5/§6).
 - **Argued, not mechanized:** universality over *all* conforming trust models; the

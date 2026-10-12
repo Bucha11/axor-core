@@ -17,6 +17,7 @@ from axor_core.contracts.policy import PolicyDecision, PolicyDecisionKind
 from axor_core.policy.consequence import consequence_class
 from axor_core.policy.value_policy import check_value_policies
 from axor_core.policy.gates import (
+    consumption_gate,
     carrier_gate,
     consequence_gate,
     integrity_superseded_by_decidable,
@@ -24,12 +25,14 @@ from axor_core.policy.gates import (
     ssrf_gate,
     taint_gate,
 )
+from axor_core.kernel.consumption import validate_consumption_contracts
 from axor_core.kernel.registration import (
     validate_value_policies,
     validate_egress_allowlists,
     validate_driving_arg_allowlists,
     validate_egress_driving_args,
     tool_is_classified,
+    validate_record_closure,
 )
 from axor_core.taint.engine import TaintEngine
 from axor_core.policy.sinks import INSTRUCTION_COMPLETE_SINKS
@@ -173,9 +176,12 @@ class IntentLoop:
         integrity_sinks: "frozenset[str] | set[str] | None" = None,
         benign_tools: "frozenset[str] | set[str] | None" = None,
         driving_args: "dict[str, list[str]] | None" = None,
+        field_contracts: "dict | None" = None,
+        consumption_attested: "frozenset[str] | set[str] | None" = None,
         require_egress_allowlist: bool = False,
         require_tool_roles: bool = False,
         integrity_origins: "str | None" = None,
+        records: "dict | None" = None,
         trajectory_observers: "list | None" = None,
         invocation_recorder: "Callable[[str, dict, bool], None] | None" = None,
         admission: "AdmissionController | None" = None,
@@ -196,6 +202,7 @@ class IntentLoop:
         self._escalation = EscalationManager(
             escalation_callback=escalation_callback,
             driving_args=driving_args,
+            field_contracts=field_contracts,
         )
         # Default to a real engine when none is supplied: the per-value/carrier/
         # taint/floor cascade is guarded on `self._taint_engine is not None`, so a
@@ -204,7 +211,7 @@ class IntentLoop:
         # cascade always runs (fail-closed).
         self._taint_engine = taint_engine if taint_engine is not None else TaintEngine(
             integrity_origins=resolve_integrity_origins(
-                integrity_origins, strict=require_egress_allowlist or require_tool_roles,
+                integrity_origins, strict=require_egress_allowlist,
             )
         )
         self._degradation_engine = degradation_engine
@@ -295,6 +302,28 @@ class IntentLoop:
         # (whole-args by default). Narrows over-blocking of untrusted content sent
         # to a trusted destination.
         self._driving_args = {k: frozenset(v) for k, v in (driving_args or {}).items()}
+        # Consumption contracts (kernel/consumption.py): the fields each sink's
+        # handler reads and how. Checked against the value predicates here; every
+        # call is put into its contract before the first gate, and that prepared
+        # set is the one gated, approved and executed.
+        self._field_contracts = dict(field_contracts or {})
+        self._consumption_attested = frozenset(consumption_attested or ())
+        _cc_errors = validate_consumption_contracts(
+            self._value_policies, self._field_contracts, self._consumption_attested,
+            strict=self._strict,
+        )
+        if _cc_errors:
+            raise ValueError("invalid consumption contracts: " + "; ".join(_cc_errors))
+        # Record closure: under STRICT an explicit any-trusted is admitted only
+        # with the records it is checked over (kernel/registration).
+        if require_egress_allowlist and resolve_integrity_origins(
+            integrity_origins, strict=True
+        ) == "any-trusted":
+            _rc_errors = validate_record_closure(
+                benign_tools, integrity_sinks, records,
+            )
+            if _rc_errors:
+                raise ValueError("strict record closure: " + "; ".join(_rc_errors))
         # Stateful, domain-supplied trajectory observers (tighten-only). Shared
         # instances so their state persists across the session's runs.
         self._trajectory_observers = list(trajectory_observers or [])
@@ -581,6 +610,31 @@ class IntentLoop:
                 result=_denial_result(tool_name, reason),
             )
 
+        # Consumption contract FIRST: the call is put into the representation its
+        # handler consumes (closed field set, declared defaults, declared numeric
+        # conversion) before anything reads it. From here on `tool_args` IS that
+        # prepared set — the one every gate sees, the approval is bound to, and the
+        # executor receives. A call that does not fit is refused outright.
+        tool_args, contract_denial = consumption_gate(
+            tool_name, tool_args, self._field_contracts
+        )
+        if contract_denial is not None:
+            self._record_denial(intent, contract_denial.reason, envelope, contract_denial.category)
+            denial_resp = _make_denial_response(contract_denial.reason, contract_denial.category)
+            self._record_degradation_signal(intent, denial_resp)
+            return ResolvedIntent(
+                intent=intent,
+                approved=False,
+                reason=contract_denial.reason,
+                result=denial_resp.to_tool_result(),
+            )
+        intent = Intent(
+            kind=intent.kind,
+            payload={**intent.payload, "args": tool_args},
+            node_id=intent.node_id,
+            sequence=intent.sequence,
+        )
+
         decision, pending_consumption = self._evaluate_tool_intent(intent, envelope)
 
         # A TRANSFORM decision rewrites the call. Resolve it HERE, before anything
@@ -591,7 +645,24 @@ class IntentLoop:
         # bug being fixed — but the contract admits it and the executor honoured
         # it, which is exactly the shape of an unexamined premise.
         if decision.transformed_payload is not None:
-            tool_args = dict(decision.transformed_payload)
+            # A rewritten call is held to the same contract as a proposed one.
+            tool_args, contract_denial = consumption_gate(
+                tool_name, dict(decision.transformed_payload), self._field_contracts
+            )
+            if contract_denial is not None:
+                self._record_denial(
+                    intent, contract_denial.reason, envelope, contract_denial.category
+                )
+                denial_resp = _make_denial_response(
+                    contract_denial.reason, contract_denial.category
+                )
+                self._record_degradation_signal(intent, denial_resp)
+                return ResolvedIntent(
+                    intent=intent,
+                    approved=False,
+                    reason=contract_denial.reason,
+                    result=denial_resp.to_tool_result(),
+                )
             intent = Intent(
                 kind=intent.kind,
                 payload={**intent.payload, "args": tool_args},
