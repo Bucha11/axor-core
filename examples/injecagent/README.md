@@ -127,6 +127,29 @@ with no data flow" class (cf. PACT): origin provenance handles the exfil-shaped
 attacks, the consequence axis the irreversible-action ones, and 60/510 fall only to
 the latter.
 
+**Per-case accounting, corrected (`python govern_injecagent.py account`).** The
+444 / 60 split above came from `govern_dh`, whose ≥12-char token rule predates the
+context default: it drops short attacker values (a room id, a patient id, an
+amount), so those cases were replayed with no driving value and looked
+"consequence-only". `govern_dh_schema` shapes each call by the attacker tool's
+parameters from InjecAgent's `tools.json` and registers the user's task, as the
+live path does. Over the 510 dh base cases (identical on enhanced):
+
+| full config → | origin-only config → | cases |
+|---|---|---|
+| consequence gate | origin (taint) | 272 |
+| origin (taint) | origin (taint) | 204 |
+| consequence gate | floor (user tool is a declared sensitive source) | 2 |
+| consequence gate | **allowed** | 32 |
+
+All 510 are refused with the full configuration. The 32 the origin axis admits are
+every call to the two parameterless attacker tools
+(`AugustSmartLockUnlockDoor`, `NortonIdentitySafeDisableTwoFactorAuthentication`):
+no argument, so no value for provenance to judge — only the action class decides.
+Conversely, 204 cases are admitted by the consequence axis and refused only by the
+origin axis, so neither axis subsumes the other. (The two floor cases report
+category `taint_enforcement`; the reason text names the floor.)
+
 **Honest caveat.** InjecAgent is all-attack, so every denial is correct and it
 cannot show context-default's *over-block* cost (legitimate egress whose value is
 model-synthesized rather than a verbatim task span). That false-positive cost is
