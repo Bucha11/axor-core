@@ -32,6 +32,7 @@ from axor_core.kernel.registration import (
     validate_driving_arg_allowlists,
     validate_egress_driving_args,
     tool_is_classified,
+    validate_record_closure,
 )
 from axor_core.taint.engine import TaintEngine
 from axor_core.policy.sinks import INSTRUCTION_COMPLETE_SINKS
@@ -180,6 +181,7 @@ class IntentLoop:
         require_egress_allowlist: bool = False,
         require_tool_roles: bool = False,
         integrity_origins: "str | None" = None,
+        records: "dict | None" = None,
         trajectory_observers: "list | None" = None,
         invocation_recorder: "Callable[[str, dict, bool], None] | None" = None,
         admission: "AdmissionController | None" = None,
@@ -209,7 +211,7 @@ class IntentLoop:
         # cascade always runs (fail-closed).
         self._taint_engine = taint_engine if taint_engine is not None else TaintEngine(
             integrity_origins=resolve_integrity_origins(
-                integrity_origins, strict=require_egress_allowlist or require_tool_roles,
+                integrity_origins, strict=require_egress_allowlist,
             )
         )
         self._degradation_engine = degradation_engine
@@ -312,6 +314,16 @@ class IntentLoop:
         )
         if _cc_errors:
             raise ValueError("invalid consumption contracts: " + "; ".join(_cc_errors))
+        # Record closure: under STRICT an explicit any-trusted is admitted only
+        # with the records it is checked over (kernel/registration).
+        if require_egress_allowlist and resolve_integrity_origins(
+            integrity_origins, strict=True
+        ) == "any-trusted":
+            _rc_errors = validate_record_closure(
+                benign_tools, integrity_sinks, records,
+            )
+            if _rc_errors:
+                raise ValueError("strict record closure: " + "; ".join(_rc_errors))
         # Stateful, domain-supplied trajectory observers (tighten-only). Shared
         # instances so their state persists across the session's runs.
         self._trajectory_observers = list(trajectory_observers or [])

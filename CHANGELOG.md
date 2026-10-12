@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+### Changed (STRICT: record closure is checked, not assumed)
+
+- **STRICT now defaults to `integrity_origins: request-only`.** Under any-trusted a
+  declared benign tool's output is a trusted ground at an integrity sink, which is
+  sound only if no admitted call can write an attacker-chosen value into what that
+  tool reads (record closure; the add → list laundering measured in axor-eval
+  `experiments/rope_comparison`). Outside STRICT the default is unchanged
+  (any-trusted), and so is the origin-only arm (role completeness without the
+  egress allowlist), so recorded runs reproduce. **Behaviour change:** a STRICT
+  deployment that relied on a TOOL-cleared value at an integrity sink is now denied
+  unless it opts back in as below.
+- **`records`** (config key; `RecordDecl(readers, writers)`) and
+  `kernel/registration.validate_record_closure`. An explicit
+  `integrity_origins: any-trusted` under STRICT is refused at construction unless
+  every benign tool names the record(s) it reads and every writer of such a record
+  is a declared integrity sink. Checked on every STRICT construction path
+  (`ToolCallGovernor`, `GovernedSession`, `IntentLoop`). That the declared writers
+  are all the writers remains the operator's statement.
+
 ### Added (consumption contracts — T4 reaches the consumer)
 
 - **`field_contracts`** (`axor_core/kernel/consumption.py`) — per sink, every field

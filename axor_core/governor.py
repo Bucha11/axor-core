@@ -72,6 +72,7 @@ from axor_core.kernel.registration import (
     validate_egress_allowlists,
     validate_egress_driving_args,
     tool_is_classified,
+    validate_record_closure,
 )
 from axor_core.taint.engine import TaintEngine
 
@@ -184,6 +185,7 @@ class ToolCallGovernor:
         require_tool_roles: bool = False,
         integrity_default: "str | None" = None,
         integrity_origins: "str | None" = None,
+        records: "dict | None" = None,
         trace: bool = True,
         node_id: str = "",
     ) -> None:
@@ -251,9 +253,21 @@ class ToolCallGovernor:
         resolved_integrity = resolve_integrity_default(
             integrity_default, strict=require_egress_allowlist or require_tool_roles,
         )
+        # The origin default and the record-closure obligation key on the full
+        # STRICT configuration (the egress-allowlist obligation), not on role
+        # completeness alone: the origin-only baseline carries roles without the
+        # allowlist and keeps the any-trusted setting its runs were recorded under.
         resolved_origins = resolve_integrity_origins(
-            integrity_origins, strict=require_egress_allowlist or require_tool_roles,
+            integrity_origins, strict=require_egress_allowlist,
         )
+        # STRICT with an explicit any-trusted: a benign read is a trusted ground
+        # only under record closure, which is checked here, not assumed.
+        if require_egress_allowlist and resolved_origins == "any-trusted":
+            _rc_errors = validate_record_closure(
+                self._benign_tools, self._integrity_sinks, records,
+            )
+            if _rc_errors:
+                raise ValueError("strict record closure: " + "; ".join(_rc_errors))
         if require_egress_allowlist:
             errors = validate_egress_allowlists(self._egress_sinks, self._value_policies)
             errors += validate_driving_arg_allowlists(

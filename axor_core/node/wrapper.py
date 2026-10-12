@@ -133,6 +133,7 @@ class GovernedNode:
         require_egress_allowlist: bool = False,
         require_tool_roles: bool = False,
         integrity_origins: "str | None" = None,
+        records: "dict | None" = None,
         trajectory_observers: "list | None" = None,
         invocation_recorder: "Callable[[str, dict, bool], None] | None" = None,
         adjudicator=None,
@@ -161,9 +162,10 @@ class GovernedNode:
         self._depth = current_depth
         self._escalation_callback = escalation_callback  # None → auto-deny escalation
         self._integrity_origins = integrity_origins
+        self._records = dict(records or {})
         self._taint_engine = taint_engine if taint_engine is not None else TaintEngine(
             integrity_origins=resolve_integrity_origins(
-                integrity_origins, strict=require_egress_allowlist or require_tool_roles,
+                integrity_origins, strict=require_egress_allowlist,
             )
         )
         self._degradation_engine = degradation_engine
@@ -414,6 +416,7 @@ class GovernedNode:
             require_egress_allowlist=self._require_egress_allowlist,
             require_tool_roles=self._require_tool_roles,
             integrity_origins=self._integrity_origins,
+            records=self._records,
             trajectory_observers=self._trajectory_observers,
             invocation_recorder=self._invocation_recorder,
             adjudicator=self._adjudicator,
@@ -636,6 +639,7 @@ class GovernedNode:
             require_egress_allowlist=self._require_egress_allowlist,
             require_tool_roles=self._require_tool_roles,
             integrity_origins=self._integrity_origins,
+            records=self._records,
             trajectory_observers=self._trajectory_observers,
             invocation_recorder=self._invocation_recorder,
             adjudicator=self._adjudicator,

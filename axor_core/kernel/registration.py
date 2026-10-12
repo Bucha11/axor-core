@@ -21,6 +21,9 @@ consumer. Both run at construction on every wrapping path.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from typing import Any
+
 from axor_core.kernel.decidability import (
     CodomainKind,
     ConsumptionMode,
@@ -323,3 +326,89 @@ def field_obligation(kind: CodomainKind, mode: ConsumptionMode) -> str:
     """Operator-facing helper: 'predicate' if a sink field can be guarded by a
     decidable value predicate, else 'fuzz' (must ride the fuzz/positional path)."""
     return "predicate" if is_decidable(kind, mode) else "fuzz"
+
+
+# ── Record closure (the premise behind a trusted TOOL ground) ─────────────────────
+
+@dataclass(frozen=True)
+class RecordDecl:
+    """One piece of state the tools share: which tools read it, which write it.
+
+    A record is the operator's name for what ``list_payees`` returns and
+    ``add_payee`` changes. Reads of it seed the trusted-origin index under
+    ``integrity_origins='any-trusted'``; that is sound only if every writer is
+    itself an integrity sink, so no admitted call can put an attacker-chosen value
+    into it (record closure; cf. ROPE Lemma 1).
+    """
+
+    readers: frozenset[str] = frozenset()
+    writers: frozenset[str] = frozenset()
+
+
+def parse_records(raw: Any) -> "dict[str, RecordDecl]":
+    """``{record: {readers: [...], writers: [...]}}`` -> ``{record: RecordDecl}``.
+    Fails closed on any other shape or key."""
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise ValueError(f"records must be a mapping, got {type(raw).__name__}")
+    out: dict[str, RecordDecl] = {}
+    for name, spec in raw.items():
+        if not isinstance(spec, dict):
+            raise ValueError(f"record {name!r} must be a mapping with readers/writers")
+        unknown = set(spec) - {"readers", "writers"}
+        if unknown:
+            raise ValueError(f"record {name!r}: unknown key(s) {sorted(unknown)}")
+        sides: dict[str, frozenset[str]] = {}
+        for side in ("readers", "writers"):
+            v = spec.get(side) or []
+            if not isinstance(v, list) or not all(isinstance(t, str) for t in v):
+                raise ValueError(f"record {name!r}: {side} must be a list of tool names")
+            sides[side] = frozenset(v)
+        if not sides["readers"]:
+            raise ValueError(f"record {name!r} declares no readers")
+        out[str(name)] = RecordDecl(**sides)
+    return out
+
+
+def validate_record_closure(
+    benign_tools: "frozenset[str] | set[str] | None",
+    integrity_sinks: "frozenset[str] | set[str] | None",
+    records: "dict[str, RecordDecl] | None",
+) -> list[str]:
+    """STRICT obligation when ``integrity_origins='any-trusted'`` is asked for.
+
+    Under STRICT only a declared benign tool's output is a trusted ground. For each
+    such tool the operator must name the record(s) it reads (a record with no
+    writers is read-only), and every writer of such a record must be a declared
+    integrity sink — so the value it writes was itself checked for trusted origin,
+    and by induction over admitted calls nothing the attacker chose reaches a
+    trusted read. A benign tool with no declared record is an error: the kernel
+    cannot tell "reads nothing writable" from "forgot to say". Returns one error
+    per violation (empty == closed).
+    """
+    benign = frozenset(benign_tools or ())
+    sinks = frozenset(integrity_sinks or ())
+    recs = dict(records or {})
+    errors: list[str] = []
+    read_somewhere = frozenset().union(*(r.readers for r in recs.values())) if recs else frozenset()
+    for tool in sorted(benign - read_somewhere):
+        errors.append(
+            f"benign tool {tool!r} reads no declared record: under STRICT with "
+            f"integrity_origins='any-trusted' its output is a trusted ground, so the "
+            f"record it reads and that record's writers must be declared "
+            f"(records: {{<name>: {{readers: [{tool}], writers: [...]}}}}), or run "
+            f"integrity_origins='request-only'"
+        )
+    for name in sorted(recs):
+        rec = recs[name]
+        if not (rec.readers & benign):
+            continue
+        for writer in sorted(rec.writers - sinks):
+            errors.append(
+                f"record {name!r} is read by a trusted tool but written by {writer!r}, "
+                f"which is not an integrity sink: an admitted {writer!r} call could "
+                f"write an attacker-chosen value that a later read then launders into "
+                f"a trusted ground — declare {writer!r} in integrity_sinks"
+            )
+    return errors

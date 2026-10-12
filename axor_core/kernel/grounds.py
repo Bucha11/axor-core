@@ -192,11 +192,12 @@ GROUNDS: tuple[PermittingGround, ...] = (
         check="register_trusted from kernel-side code only; TOOL requires a benign declaration under STRICT",
         on_absence="the value carries the context root (STRICT) and is denied at an integrity sink",
         does_not_override="the floor, consequence, value gates",
-        premise="a declared benign tool's output is in fact not attacker-writable — including by an earlier ADMITTED call: no record-closure condition is stated or checked (cf. ROPE Lemma 1; laundering measured in axor-eval experiments/rope_comparison)",
+        premise="a declared benign tool's output is in fact not attacker-writable — including by an earlier ADMITTED call (record closure, cf. ROPE Lemma 1). STRICT defaults to request-only, where TOOL is no ground at an integrity sink; an explicit any-trusted under STRICT is refused at construction unless every benign tool names the records it reads and every writer of such a record is an integrity sink. Outside STRICT the condition is neither stated nor checked (laundering measured in axor-eval experiments/rope_comparison); that the declared writers are all the writers is the operator's statement",
         status="enforced-under-strict",
         verified_by=(
             "axor_core.taint.engine:TaintEngine.register_trusted",
             "axor_core.policy.provenance:is_trusted_tool",
+            "axor_core.kernel.registration:validate_record_closure",
         ),
         pinned_by=(
             "tests/adversarial/test_context_default_integrity.py::test_context_mode_strict_trusts_only_declared_benign_tools",

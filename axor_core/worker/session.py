@@ -168,6 +168,7 @@ class GovernedSession:
         per_node_degradation: bool = False,
         integrity_default: "str | None" = None,
         integrity_origins: "str | None" = None,
+        records: "dict | None" = None,
     ) -> None:
         # Wall-clock the session was constructed — handed to sentinel in the
         # closed-session record (slow-and-low staging compares session start times).
@@ -242,6 +243,7 @@ class GovernedSession:
             integrity_origins, strict=(mode == ExecutionMode.STRICT)
         )
         self._benign_tools = frozenset(benign_tools or ())
+        self._records = dict(records or {})
         # Every predicate is checked against the contract of the field it guards;
         # under STRICT a guarded sink needs a contract or an explicit attestation.
         # Fail at construction, not at the first call.
@@ -270,6 +272,15 @@ class GovernedSession:
                 )
             if _eg_errors:
                 raise ValueError("strict egress allowlist: " + "; ".join(_eg_errors))
+            # Record closure: an explicit any-trusted under STRICT makes a benign
+            # read a trusted ground, so the records it reads must be closed.
+            if self._integrity_origins == "any-trusted":
+                from axor_core.kernel.registration import validate_record_closure
+                _rc_errors = validate_record_closure(
+                    self._benign_tools, self._integrity_sinks, self._records,
+                )
+                if _rc_errors:
+                    raise ValueError("strict record closure: " + "; ".join(_rc_errors))
             # STRICT role completeness: every registered tool needs an explicit
             # data-flow role — no silent clean-read default. Validated against the
             # registered handler universe (empty for the daemon path, which carries
@@ -954,6 +965,7 @@ class GovernedSession:
             driving_args=self._driving_args,
             field_contracts=self._field_contracts,
             consumption_attested=self._consumption_attested,
+            records=self._records,
             trajectory_observers=self._trajectory_observers,
             invocation_recorder=(
                 self._record_invocation if self._session_sink is not None else None
