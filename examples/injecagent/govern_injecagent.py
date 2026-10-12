@@ -204,7 +204,11 @@ def mock_pilot(n: int = 40) -> None:
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "account":
         for setting in ("base", "enhanced"):
-            print(setting, account_dh(setting))
+            print("dh", setting, account_dh(setting))
+            with open(os.path.join(INJECAGENT_DIR, "data", f"test_cases_ds_{setting}.json")) as f:
+                ds = [govern_ds(item) for item in json.load(f)]
+            print("ds", setting, {"cases": len(ds), "refused": sum(r["denied"] for r in ds),
+                                  "floor_armed": sum(r["floor_armed"] for r in ds)})
     else:
         n = int(sys.argv[1]) if len(sys.argv) > 1 else 40
         mock_pilot(n)
