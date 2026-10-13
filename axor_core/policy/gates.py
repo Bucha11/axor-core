@@ -20,6 +20,8 @@ pure decision layer with no engine dependency.
 """
 from __future__ import annotations
 
+from typing import Any
+
 from dataclasses import dataclass
 
 from axor_core.contracts.anomaly import NormalizedIntent
@@ -235,6 +237,7 @@ def taint_gate(
     egress_sinks: frozenset[str] | set[str] = frozenset(),
     integrity_superseded: bool = False,
     integrity_sinks: frozenset[str] | set[str] = frozenset(),
+    floor_extra: bool = False,
 ) -> GateDecision | None:
     """Per-value taint: integrity (untrusted-derived value into a high-risk
     operation) plus the confidentiality floor (egress while a secret read is
@@ -247,7 +250,10 @@ def taint_gate(
     here; the confidentiality floor still applies.
 
     ``integrity_sinks`` are operator-declared state-changing sinks (a password or
-    profile update, a role grant): integrity only, never the floor."""
+    profile update, a role grant): integrity only, never the floor — unless the
+    operator widened the floor's scope (``floor_extra``: see :func:`floor_scope_hit`),
+    in which case a write in that scope is held like an egress while a secret read
+    is outstanding."""
     exfil = (
         tool_name in egress_sinks
         or normalized.destination_kind in EXFIL_DESTINATIONS
@@ -261,15 +267,17 @@ def taint_gate(
         or exfil
         or tool_name in integrity_sinks
     )
-    confidentiality_risk = exfil and floor_active
+    confidentiality_risk = (exfil or floor_extra) and floor_active
     if not (integrity_risk or confidentiality_risk):
         return None
-    axis = (
-        "confidentiality (egress under the sound floor — a secret read is "
-        "outstanding; release requires governance endorsement)"
-        if confidentiality_risk
-        else "integrity (untrusted-derived value into a high-risk operation)"
-    )
+    if confidentiality_risk and exfil:
+        axis = ("confidentiality (egress under the sound floor — a secret read is "
+                "outstanding; release requires governance endorsement)")
+    elif confidentiality_risk:
+        axis = ("confidentiality (a write to a store in the floor's scope while a "
+                "secret read is outstanding)")
+    else:
+        axis = "integrity (untrusted-derived value into a high-risk operation)"
     return GateDecision(
         reason=(
             f"taint enforcement (per-value): the driving argument of "
@@ -277,6 +285,49 @@ def taint_gate(
         ),
         category="taint_enforcement",
     )
+
+
+FLOOR_SCOPES = frozenset({"addressee", "shared_stores", "all_mutating"})
+
+
+def floor_scope_hit(
+    tool_name: str,
+    args: dict,
+    scope: str,
+    integrity_sinks: frozenset[str] | set[str] = frozenset(),
+    shared_stores: "dict[str, Any] | None" = None,
+) -> bool:
+    """Whether a NON-egress call falls under the confidentiality floor.
+
+    ``addressee`` (default): never — the floor covers the egress sinks only.
+    ``all_mutating``: every declared integrity sink (every state change).
+    ``shared_stores``: a call on an operator-declared store visible to third
+    parties. ``shared_stores`` maps tool -> ``"always"`` or {arg: [ids]}: the call
+    is in scope when that arg's value (any element of a list) is a declared id."""
+    if scope == "all_mutating":
+        return tool_name in integrity_sinks
+    if scope != "shared_stores" or not shared_stores or tool_name not in shared_stores:
+        return False
+    rule = shared_stores[tool_name]
+    if rule == "always":
+        return True
+    for arg, ids in rule.items():
+        v = args.get(arg)
+        vals = v if isinstance(v, (list, tuple, set, frozenset)) else [v]
+        if any(x is not None and str(x) in ids for x in vals):
+            return True
+    return False
+
+
+def validate_shared_stores(shared_stores: "dict[str, Any] | None") -> list[str]:
+    errors = []
+    for tool, rule in (shared_stores or {}).items():
+        if rule == "always":
+            continue
+        if not isinstance(rule, dict) or not rule or not all(
+                isinstance(ids, (list, tuple, set, frozenset)) for ids in rule.values()):
+            errors.append(f"shared_stores[{tool!r}]: expected 'always' or {{arg: [ids]}}, got {rule!r}")
+    return errors
 
 
 def grant_gate(

@@ -51,6 +51,8 @@ _KNOWN_KEYS = frozenset({
     "grant_templates",
     "bounded_damage",
     "grant_quotas",
+    "floor_scope",
+    "shared_stores",
 })
 _CONSEQUENCE_BY_NAME = {c.name.lower(): c for c in ConsequenceClass}
 
@@ -101,6 +103,10 @@ class GovernanceConfig:
     bounded_damage: dict[str, list[str]] = field(default_factory=dict)
     # Operator rule: uses per L1 (request-literal) grant, per sink (default 1).
     grant_quotas: dict[str, int] = field(default_factory=dict)
+    # Confidentiality floor scope (addressee | shared_stores | all_mutating) and the
+    # operator's declaration of stores visible to third parties.
+    floor_scope: str = "addressee"
+    shared_stores: dict[str, Any] = field(default_factory=dict)
 
     # ── construction ─────────────────────────────────────────────────────────────
 
@@ -160,6 +166,7 @@ class GovernanceConfig:
             ),
             **_parse_federation(data.get("federation")),
             **_parse_grants(data),
+            **_parse_floor(data),
         )
 
     @classmethod
@@ -230,10 +237,28 @@ class GovernanceConfig:
             "grant_templates": dict(self.grant_templates),
             "bounded_damage": dict(self.bounded_damage),
             "grant_quotas": dict(self.grant_quotas),
+            "floor_scope": self.floor_scope,
+            "shared_stores": dict(self.shared_stores),
         }
 
 
 # ── parsing helpers (each fails closed on a malformed entry) ─────────────────────
+
+def _parse_floor(data: dict[str, Any]) -> dict[str, Any]:
+    from axor_core.policy.gates import FLOOR_SCOPES, validate_shared_stores
+    scope = data.get("floor_scope", "addressee")
+    if scope not in FLOOR_SCOPES:
+        raise ValueError(f"unknown floor_scope {scope!r}; expected one of {sorted(FLOOR_SCOPES)}")
+    stores = data.get("shared_stores") or {}
+    if not isinstance(stores, dict):
+        raise ValueError("shared_stores must be a mapping of tool -> 'always' | {arg: [ids]}")
+    errors = validate_shared_stores(stores)
+    if errors:
+        raise ValueError("; ".join(errors))
+    if stores and scope != "shared_stores":
+        raise ValueError("shared_stores is declared but floor_scope is not 'shared_stores'")
+    return {"floor_scope": scope, "shared_stores": dict(stores)}
+
 
 def _as_set(value: Any, field_name: str) -> frozenset[str]:
     if value is None:

@@ -41,6 +41,7 @@ from axor_core.contracts.trace import (
 )
 from axor_core.policy.gates import (
     GateDecision,
+    floor_scope_hit,
     carrier_gate,
     grant_gate,
     grant_gate_confirmable,
@@ -190,6 +191,8 @@ class ToolCallGovernor:
         handle_table: "HandleTable | None" = None,
         confirmer: Any = None,
         strict_handles: bool = False,
+        floor_scope: str = "addressee",
+        shared_stores: "dict[str, Any] | None" = None,
     ) -> None:
         self._positional_sinks = frozenset(positional_sinks or ())
         illegal = {
@@ -217,6 +220,18 @@ class ToolCallGovernor:
         # State-changing sinks whose driving args the attacker must not choose
         # (integrity check only — no confidentiality floor, no allowlist obligation).
         self._integrity_sinks = frozenset(integrity_sinks or ())
+        # What the confidentiality floor holds while a secret read is outstanding:
+        # the egress sinks (addressee), + declared shared stores, or every state change.
+        from axor_core.policy.gates import FLOOR_SCOPES, validate_shared_stores
+        if floor_scope not in FLOOR_SCOPES:
+            raise ValueError(f"unknown floor_scope {floor_scope!r}; expected one of {sorted(FLOOR_SCOPES)}")
+        errs = validate_shared_stores(shared_stores)
+        if errs:
+            raise ValueError("; ".join(errs))
+        self._floor_scope = floor_scope
+        self._shared_stores = {t: (r if r == "always" else {a: frozenset(str(x) for x in ids)
+                                                           for a, ids in r.items()})
+                               for t, r in (shared_stores or {}).items()}
         # Explicitly-benign reads (trusted output that need not be tainted). Kept so
         # the per-call STRICT role check can tell "declared benign" from "forgot to
         # classify" — without it, both would fail open to a clean read.
@@ -435,6 +450,8 @@ class ToolCallGovernor:
                 tool_name, args, self._driving_args, self._value_policies
             ) or self._integrity_superseded_by_grant(tool_name),
             integrity_sinks=self._integrity_sinks,
+            floor_extra=floor_scope_hit(tool_name, args, self._floor_scope,
+                                        self._integrity_sinks, self._shared_stores),
         )
         if gd is not None:
             return _deny(gd)
