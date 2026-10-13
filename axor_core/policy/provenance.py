@@ -98,6 +98,7 @@ def derive_driving_root(
     driving: "frozenset[str] | set[str] | list[str] | None",
     *,
     integrity_sink: bool = False,
+    origins: "str | None" = None,
 ) -> object:
     """The driving root the taint gate decides on — shared by both paths and by
     the recorded payload, so decision and record cannot disagree.
@@ -113,6 +114,10 @@ def derive_driving_root(
     if integrity_sink and getattr(taint, "integrity_default", None) == "context":
         # integrity_sink=True applies the integrity-origin mode (request-only vs
         # any-trusted); include_scalars makes a named amount a checked value too.
+        # ``origins`` overrides the integrity-origin mode for this sink (sink_origins)
+        if origins is not None:
+            return taint.derive_value(  # type: ignore[attr-defined]
+                subset, include_scalars=True, integrity_sink=True, origins=origins)
         return taint.derive_value(  # type: ignore[attr-defined]
             subset, include_scalars=True, integrity_sink=True)
     return taint.derive_value(subset)  # type: ignore[attr-defined]

@@ -319,6 +319,14 @@ def floor_scope_hit(
     return False
 
 
+SINK_ORIGIN_MODES = frozenset({"request-only", "any-trusted", "none"})
+
+
+def validate_sink_origins(sink_origins: "dict[str, str] | None") -> list[str]:
+    return [f"sink_origins[{t!r}]: {m!r} is not one of {sorted(SINK_ORIGIN_MODES)}"
+            for t, m in (sink_origins or {}).items() if m not in SINK_ORIGIN_MODES]
+
+
 def validate_shared_stores(shared_stores: "dict[str, Any] | None") -> list[str]:
     errors = []
     for tool, rule in (shared_stores or {}).items():

@@ -183,7 +183,7 @@ class TaintEngine:
         return (self._session_any_tainted, self._session_any_sensitive)
 
     def derive_value(self, value: object, *, include_scalars: bool = False,
-                     integrity_sink: bool = False) -> CausalRoot:
+                     integrity_sink: bool = False, origins: str | None = None) -> CausalRoot:
         """Per-value causal root of `value`.
 
         The ledger match attributes the untrusted/sensitive sources the value
@@ -211,7 +211,8 @@ class TaintEngine:
             # first untrusted read too: a value no trusted origin fixed is unproven,
             # whether or not the context holds untrusted data yet.
             if self._trusted.covers(value, include_scalars=include_scalars,
-                                    accept=self._integrity_origins):
+                                    accept=(integrity_origins_for(origins) if origins
+                                            else self._integrity_origins)):
                 return matched
             context = self._context_root if self._context_root.is_tainted else UNPROVEN
             return CausalRoot.mint(matched, context)

@@ -194,6 +194,7 @@ class ToolCallGovernor:
         floor_scope: str = "addressee",
         shared_stores: "dict[str, Any] | None" = None,
         access_control_sinks: "set[str] | frozenset[str] | None" = None,
+        sink_origins: "dict[str, str] | None" = None,
     ) -> None:
         self._positional_sinks = frozenset(positional_sinks or ())
         illegal = {
@@ -230,6 +231,13 @@ class ToolCallGovernor:
         if errs:
             raise ValueError("; ".join(errs))
         self._floor_scope = floor_scope
+        # Per-sink integrity-origin mode (O4'): request-only | any-trusted | none
+        # (none: no origin check on the sink's driving args). Default: the global mode.
+        from axor_core.policy.gates import validate_sink_origins
+        errs = validate_sink_origins(sink_origins)
+        if errs:
+            raise ValueError("; ".join(errs))
+        self._sink_origins = dict(sink_origins or {})
         self._shared_stores = {t: (r if r == "always" else {a: frozenset(str(x) for x in ids)
                                                            for a, ids in r.items()})
                                for t, r in (shared_stores or {}).items()}
@@ -426,10 +434,12 @@ class ToolCallGovernor:
         if gd is not None:
             return _deny(gd)
 
+        _mode = self._sink_origins.get(tool_name)
         driving_root = derive_driving_root(
             self._taint, args, self._driving_args.get(tool_name),
             integrity_sink=(tool_name in self._integrity_sinks
                             or tool_name in self._egress_sinks),
+            origins=None if _mode in (None, "none") else _mode,
         )
 
         # 4. positional admission — for declared instruction-incomplete sinks.
@@ -451,7 +461,8 @@ class ToolCallGovernor:
             self._taint.confidentiality_floor_active(), self._egress_sinks,
             integrity_superseded=integrity_superseded_by_decidable(
                 tool_name, args, self._driving_args, self._value_policies
-            ) or self._integrity_superseded_by_grant(tool_name),
+            ) or self._integrity_superseded_by_grant(tool_name)
+            or self._sink_origins.get(tool_name) == "none",  # O4' low: no origin check
             integrity_sinks=self._integrity_sinks,
             floor_extra=floor_scope_hit(tool_name, args, self._floor_scope,
                                         self._integrity_sinks, self._shared_stores),

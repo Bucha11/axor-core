@@ -54,6 +54,7 @@ _KNOWN_KEYS = frozenset({
     "floor_scope",
     "shared_stores",
     "access_control_sinks",
+    "sink_origins",
 })
 _CONSEQUENCE_BY_NAME = {c.name.lower(): c for c in ConsequenceClass}
 
@@ -110,6 +111,8 @@ class GovernanceConfig:
     shared_stores: dict[str, Any] = field(default_factory=dict)
     # Credential changes: grants only from L3 (structured) or L4 (confirmation).
     access_control_sinks: frozenset[str] = frozenset()
+    # Per-sink integrity-origin mode (request-only | any-trusted | none).
+    sink_origins: dict[str, str] = field(default_factory=dict)
 
     # ── construction ─────────────────────────────────────────────────────────────
 
@@ -163,6 +166,7 @@ class GovernanceConfig:
             integrity_sinks=_as_set(data.get("integrity_sinks"), "integrity_sinks"),
             benign_tools=_as_set(data.get("benign_tools"), "benign_tools"),
             access_control_sinks=_as_set(data.get("access_control_sinks"), "access_control_sinks"),
+            sink_origins=_parse_sink_origins(data.get("sink_origins")),
             value_policies=_parse_value_policies(data.get("value_policies")),
             driving_args=_parse_driving_args(data.get("driving_args")),
             consequence_overrides=_parse_consequence_overrides(
@@ -244,10 +248,23 @@ class GovernanceConfig:
             "floor_scope": self.floor_scope,
             "shared_stores": dict(self.shared_stores),
             "access_control_sinks": set(self.access_control_sinks),
+            "sink_origins": dict(self.sink_origins),
         }
 
 
 # ── parsing helpers (each fails closed on a malformed entry) ─────────────────────
+
+def _parse_sink_origins(value: Any) -> dict[str, str]:
+    from axor_core.policy.gates import validate_sink_origins
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise ValueError("sink_origins must be a mapping of tool -> request-only | any-trusted | none")
+    errs = validate_sink_origins(value)
+    if errs:
+        raise ValueError("; ".join(errs))
+    return {str(k): str(v) for k, v in value.items()}
+
 
 def _parse_floor(data: dict[str, Any]) -> dict[str, Any]:
     from axor_core.policy.gates import FLOOR_SCOPES, validate_shared_stores
