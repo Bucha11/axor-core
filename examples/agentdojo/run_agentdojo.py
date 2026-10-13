@@ -83,6 +83,12 @@ def make_governor() -> ToolCallGovernor:
     integrity = os.environ.get("AXOR_BENCH_INTEGRITY")
     if integrity:
         cfg = dataclasses.replace(cfg, integrity_default=integrity)
+    # AXOR_BENCH_ORIGINS selects the integrity-origin mode ("request-only" or
+    # "any-trusted"). A YAML without integrity_origins loads as any-trusted, so the
+    # *_origin configs ran any-trusted unless this is set.
+    origins = os.environ.get("AXOR_BENCH_ORIGINS")
+    if origins:
+        cfg = dataclasses.replace(cfg, integrity_origins=origins)
     kw = cfg.as_governor_kwargs()
     # AXOR_BENCH_ORIGIN=1 = the rope_bridge "origin" combo: STRICT tool roles
     # (fail-closed on an unclassified tool/consequence) but NO egress allowlist
