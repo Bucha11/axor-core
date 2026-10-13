@@ -8,7 +8,8 @@ mismatched version at handshake time so the error is explicit, not silent.
 
 Connection lifecycle:
   1. Client connects to Unix socket
-  2. Client → {"v": 1, "type": "hello", "mode": "library"|"production"|"strict"}
+  2. Client → {"v": 1, "type": "hello", "mode": "library"|"production"|"strict",
+                "task"?: <the user's request, optional; seeds a governing daemon>}
   3. Server → {"v": 1, "type": "ready"} or {"v": 1, "type": "rejected", "reason": str}
   4. Per tool call:
      Client → {"v": 1, "type": "tool_call", "call_id": str, "tool": str,

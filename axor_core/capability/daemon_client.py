@@ -57,8 +57,12 @@ class DaemonCapabilityClient:
         mode: str = "library",
         connect_timeout: float = 3.0,
         call_timeout: float = 30.0,
+        task: str | None = None,
     ) -> None:
         self._socket_path = os.path.expanduser(socket_path)
+        # The user's request, sent once in the handshake. A daemon running the
+        # kernel gates seeds its trusted-origin index and L1 request grants from it.
+        self._task = task
         self._mode = mode
         self._connect_timeout = connect_timeout
         self._call_timeout = call_timeout
@@ -209,6 +213,8 @@ class DaemonCapabilityClient:
 
         # handshake
         hello = {"type": "hello", "mode": self._mode}
+        if self._task:
+            hello["task"] = self._task
         try:
             self._writer.write(encode_message(hello))
             await self._writer.drain()
