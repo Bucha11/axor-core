@@ -106,9 +106,11 @@ def test_context_records_carry_the_parts_of_the_verdict():
     assert allowed.payload["arg_provenance"]["iban"]["trusted_origin"] == "task"
     assert denied.payload["arg_provenance"]["iban"]["trusted"] is False
     assert denied.payload["arg_provenance"]["iban"]["trusted_origin"] is None
-    # a scalar carries no identifier: vacuously trusted, but it has no origin
-    assert denied.payload["arg_provenance"]["amount"]["trusted"] is True
+    # on a sink numbers are checked too: an amount no trusted origin fixed is not
+    # trusted, and it has no origin
+    assert denied.payload["arg_provenance"]["amount"]["trusted"] is False
     assert denied.payload["arg_provenance"]["amount"]["trusted_origin"] is None
+    assert allowed.payload["driving_sink"] is True and denied.payload["driving_sink"] is True
     assert denied.payload["driving_root"] == {"sources": ["web"], "sensitive": False}
 
 

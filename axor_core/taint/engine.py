@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 
 from axor_core.contracts.taint import (
     INTEGRITY_DEFAULTS,
+    TaintSource,
     TrustedOrigin,
     integrity_origins_for,
 )
@@ -54,6 +55,11 @@ def _is_valid_governance_authority(authority: GovernanceAuthority) -> bool:
         and authority.reason_code
         and authority.authority_type in _VALID_GOVERNANCE_AUTHORITY_TYPES
     )
+
+
+# The root of a sink's driving value that no trusted origin fixed, before the
+# context holds untrusted data: unproven, so it cannot clear an integrity check.
+UNPROVEN = CausalRoot(sources=frozenset({TaintSource.UNKNOWN_EXTERNAL}))
 
 
 class TaintEngine:
@@ -187,18 +193,31 @@ class TaintEngine:
         every string leaf of it is a registered trusted value — and, with
         ``include_scalars`` (an integrity sink's driving args), every number too.
 
-        ``integrity_sink`` marks a driving arg of a declared integrity sink: only
-        then is the integrity-origin mode applied, so a value cleared only by a
-        trusted TOOL read is admitted under ``any-trusted`` but not under
-        ``request-only``. It is a distinct flag from ``include_scalars`` on
-        purpose — the scalar check must not double as the sink marker, or the mode
-        would silently leak onto egress sinks and non-sink derivations.
+        ``integrity_sink`` marks a driving arg of a declared sink — egress or
+        integrity. There the integrity-origin mode decides, from the first call:
+        under ``request-only`` an argument clears only where the request or the
+        operator's configuration fixed it (a trusted TOOL read clears it only under
+        ``any-trusted``), and a value no trusted origin fixed carries the context
+        root — or, before any untrusted read, the UNPROVEN root. Non-sink
+        derivations keep the historical rule (context root only once the context
+        is tainted, any trusted origin clears).
         """
         matched = self._ledger.derive(value)
-        if self._integrity_default != "context" or not self._context_root.is_tainted:
+        if self._integrity_default != "context":
             return matched
-        accept = self._integrity_origins if integrity_sink else None
-        if self._trusted.covers(value, include_scalars=include_scalars, accept=accept):
+        if integrity_sink:
+            # A sink's driving arg clears only by a trusted origin the mode accepts
+            # (request-only: the request and operator config). That holds before the
+            # first untrusted read too: a value no trusted origin fixed is unproven,
+            # whether or not the context holds untrusted data yet.
+            if self._trusted.covers(value, include_scalars=include_scalars,
+                                    accept=self._integrity_origins):
+                return matched
+            context = self._context_root if self._context_root.is_tainted else UNPROVEN
+            return CausalRoot.mint(matched, context)
+        if not self._context_root.is_tainted:
+            return matched
+        if self._trusted.covers(value, include_scalars=include_scalars):
             return matched
         return CausalRoot.mint(matched, self._context_root)
 

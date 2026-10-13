@@ -143,6 +143,9 @@ class ContextRecord:
     context_root: CausalRoot
     driving_carried: CausalRoot
     trusted_args: frozenset[str]
+    # The call was a declared sink: its driving args were checked against the
+    # origin mode even with an untainted context (absent in older records).
+    sink: bool = False
 
 
 def context_record(payload: dict[str, Any], *, where: str = "") -> ContextRecord | None:
@@ -173,6 +176,7 @@ def context_record(payload: dict[str, Any], *, where: str = "") -> ContextRecord
             name for name, entry in provenance.items()
             if isinstance(entry, dict) and entry.get("trusted") is True
         ),
+        sink=payload.get("driving_sink") is True,
     )
 
 
@@ -200,7 +204,10 @@ def context_driving_root(
     if extra_context is not None:
         context = CausalRoot.mint(context, extra_context)
     if not context.is_tainted:
-        return base
+        if not record.sink:
+            return base
+        # a sink's unproven driving value carries the UNPROVEN root (TaintEngine)
+        context = CausalRoot(sources=frozenset({TaintSource.UNKNOWN_EXTERNAL}))
     names = driving_subset(dict(args or {}), drivers).keys()
     if all(name in record.trusted_args for name in names):
         return base

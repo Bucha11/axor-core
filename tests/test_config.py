@@ -109,7 +109,13 @@ def test_agentdojo_suite_configs_load_and_build_governors():
     for path in paths:
         cfg = GovernanceConfig.from_yaml(path)
         assert cfg.untrusted_sources and cfg.egress_sinks
-        governor = ToolCallGovernor(**cfg.as_governor_kwargs())
+        kw = cfg.as_governor_kwargs()
+        if path.endswith("_origin.yaml") or path.endswith("_origin_v2.yaml"):
+            # The origin configs are built as run_agentdojo's AXOR_BENCH_ORIGIN=1
+            # combo: STRICT tool roles, no egress-allowlist obligation (the origin
+            # axis, not an enum, decides each driving value).
+            kw["require_egress_allowlist"] = False
+        governor = ToolCallGovernor(**kw)
         assert governor is not None
 
 

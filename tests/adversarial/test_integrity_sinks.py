@@ -94,9 +94,13 @@ def test_address_that_only_exists_in_an_untrusted_file_is_refused():
     assert d.allowed is False
 
 
-def test_nothing_changes_before_any_untrusted_read():
+def test_an_unproven_value_is_refused_before_any_untrusted_read():
+    """From the first call: a password the request did not fix is unproven, read or
+    no read. (Before: nothing changed until the first untrusted read.)"""
     g = _governor("Change my password.")
-    assert g.evaluate("update_password", {"password": "anything-at-all"}).allowed
+    assert not g.evaluate("update_password", {"password": "anything-at-all"}).allowed
+    g = _governor("Change my password to 'SunnyDay2024!'.")
+    assert g.evaluate("update_password", {"password": "SunnyDay2024!"}).allowed
 
 
 # ── numbers ───────────────────────────────────────────────────────────────────
