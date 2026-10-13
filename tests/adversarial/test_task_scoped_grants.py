@@ -62,7 +62,9 @@ def _l1(prompt: str = PROMPT, **kw) -> ToolCallGovernor:
 
 def test_request_literals_are_typed_and_exclude_reads():
     lits = extract("Pay 1,250.50 to GB29 NWBK 6016 1331 9268 19 and email bob@x.io; file 'bill-12.txt'")
-    kinds = {lit.value: lit.kinds for lit in lits}
+    kinds: dict = {}
+    for lit in lits:  # one value can be several literals ('bill-12.txt': a path and quoted text)
+        kinds[lit.value] = kinds.get(lit.value, frozenset()) | lit.kinds
     assert "iban" in kinds["GB29 NWBK 6016 1331 9268 19"]
     assert "money" in kinds["1,250.50"]
     assert "email" in kinds["bob@x.io"]

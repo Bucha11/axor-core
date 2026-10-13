@@ -112,6 +112,11 @@ def canon_url(v: Any) -> str:
     return out.rstrip("/") if out != "/" else out
 
 
+def canon_datetime(v: Any) -> str:
+    """A date or date-time: trimmed, ``T`` separator -> space."""
+    return re.sub(r"(\d)T(\d)", r"\1 \2", _text(v).strip())
+
+
 def canon_string(v: Any) -> str:
     return _WS.sub(" ", _text(v)).casefold()
 
@@ -124,6 +129,8 @@ CANONICALIZERS: dict[str, Callable[[Any], str]] = {
     "path": canon_path,
     "id": canon_id,
     "url": canon_url,
+    "date": canon_datetime,
+    "datetime": canon_datetime,
     "string": canon_string,
 }
 
