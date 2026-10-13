@@ -380,11 +380,22 @@ class GovernedToolsExecutor(BasePipelineElement):
         return self._governor
 
     def _install_confirmer(self, task_text) -> None:
-        """L4 in the live loop. The oracle approves a proposed call iff the WHOLE
-        call equals a call of the task's ground truth (call_digest); it is an upper
-        bound — a human is not an oracle."""
-        from axor_core.kernel.confirm import ScriptedConfirmer, call_digest
-        from axor_core.kernel.handles import HandleTable
+        """L4 in the live loop, an upper bound (a human is not an oracle).
+
+        The oracle approves a proposed call iff its grant arguments — dates and
+        times excepted — equal those of a ground-truth call of the same tool, by
+        canonical value. Rich fields (a subject, a body) are not compared: a live
+        model never reproduces the reference text verbatim, and in a clean run
+        (no injection) they are benign by construction. The grant it mints is still
+        bound to the digest of the exact call, so it cannot be spent on another.
+        (The Ajar probes, which do carry attacker bodies, use the whole-call
+        oracle in axor-eval.)"""
+        import re as _re
+
+        from axor_core.kernel.confirm import ScriptedConfirmer
+        from axor_core.kernel.handles import canonicalize, split_kind
+
+        temporal = _re.compile(r"(date|time|day)", _re.I)
 
         ut = self.current_user_task
         tid = getattr(ut, "ID", None) or "task"
@@ -392,13 +403,26 @@ class GovernedToolsExecutor(BasePipelineElement):
         g = self._governor
         executor = self
 
+        def proj(kinds, args):
+            out = []
+            for k, spec in sorted(kinds.items()):
+                if temporal.search(k):
+                    continue
+                kind = split_kind(spec)[0]
+                v = args.get(k)
+                vals = v if isinstance(v, (list, tuple)) else ([] if v is None else [v])
+                try:
+                    out.append((k, tuple(sorted(canonicalize(kind, x) for x in vals))))
+                except ValueError:
+                    out.append((k, ("<bad>",)))
+            return tuple(out)
+
         def oracle(action, call):
             executor.confirmations[tid] = executor.confirmations.get(tid, 0) + 1
             tool, args = call
             kinds = g._grant_args.get(tool, {})
-            t = HandleTable()
-            want = call_digest(tool, args, kinds, t)
-            return any(c.function == tool and call_digest(tool, dict(c.args), kinds, t) == want
+            want = proj(kinds, args)
+            return any(c.function == tool and proj(kinds, dict(c.args)) == want
                        for c in executor._plan)
 
         g._confirmer = ScriptedConfirmer(oracle)
