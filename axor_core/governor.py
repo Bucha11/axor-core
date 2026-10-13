@@ -461,7 +461,7 @@ class ToolCallGovernor:
             self._taint.confidentiality_floor_active(), self._egress_sinks,
             integrity_superseded=integrity_superseded_by_decidable(
                 tool_name, args, self._driving_args, self._value_policies
-            ) or self._integrity_superseded_by_grant(tool_name)
+            ) or self._integrity_superseded_by_grant(tool_name, args)
             or self._sink_origins.get(tool_name) == "none",  # O4' low: no origin check
             integrity_sinks=self._integrity_sinks,
             floor_extra=floor_scope_hit(tool_name, args, self._floor_scope,
@@ -509,13 +509,19 @@ class ToolCallGovernor:
             confirmed=confirmed,
         )
 
-    def _integrity_superseded_by_grant(self, tool_name: str) -> bool:
+    def _integrity_superseded_by_grant(self, tool_name: str, args: dict | None = None) -> bool:
         """A grant sink whose every driving arg is a grant arg carries its integrity
         axis on the grant (step 7 denies an uncovered call), so content-taint
-        integrity is superseded there, as for a decidable value policy."""
+        integrity is superseded there, as for a decidable value policy — unless the
+        call has an empty leading tuple (no grant arg passed): then no grant decides
+        and the integrity check stays."""
         kinds = self._grant_args.get(tool_name)
         if not kinds:
             return False
+        if args is not None:
+            from axor_core.policy.gates import empty_grant_tuple
+            if empty_grant_tuple(tool_name, args, self._grant_args):
+                return False
         driving = self._driving_args.get(tool_name)
         return driving is not None and set(driving) <= set(kinds)
 

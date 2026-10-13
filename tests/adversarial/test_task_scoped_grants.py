@@ -467,10 +467,13 @@ def test_optional_arg_admits_absence_and_covers_present_values():
     assert find({"title": "lunch", "participants": ["bob@x.io", "eve@evil.io"]}) is None
 
 
-def test_optional_arg_without_literal_admits_only_absence():
+def test_optional_arg_without_literal_mints_no_grant():
+    """No grant for an empty leading tuple: with no literal for its only (optional) arg
+    nothing is minted; a call without the arg is left to the origin/class checks, a
+    call with it finds no grant."""
     store, table = GrantStore(), HandleTable()
-    GrantMinter(store, table, _CAL).from_request("block two hours for focus time")
-    assert store.find("create_calendar_event", {"title": "focus"}, table)
+    issued = GrantMinter(store, table, _CAL).from_request("block two hours for focus time")
+    assert issued == []
     assert store.find("create_calendar_event", {"participants": ["eve@evil.io"]}, table) is None
 
 

@@ -338,6 +338,21 @@ def validate_shared_stores(shared_stores: "dict[str, Any] | None") -> list[str]:
     return errors
 
 
+def empty_grant_tuple(tool_name: str, args: dict, grant_args: "dict[str, dict[str, str]]") -> bool:
+    """A call on a grant sink that passes no value for any grant arg: there is no
+    leading tuple for a grant to cover, so the grant gate does not apply and the call
+    is decided by the origin / class checks (the integrity axis is not superseded)."""
+    kinds = grant_args.get(tool_name)
+    if not kinds:
+        return False
+    for arg in kinds:
+        v = args.get(arg)
+        if v is None or v == "" or (isinstance(v, (list, tuple, set, frozenset)) and not v):
+            continue
+        return False
+    return True
+
+
 def grant_gate(
     tool_name: str,
     args: dict,
@@ -365,6 +380,8 @@ def grant_gate(
     kinds = grant_args.get(tool_name)
     if not kinds:
         return None, None
+    if empty_grant_tuple(tool_name, args, grant_args):
+        return None, None  # no leading tuple: origin / class checks decide
     if strict_handles:
         for arg in kinds:
             if args.get(arg) is None:

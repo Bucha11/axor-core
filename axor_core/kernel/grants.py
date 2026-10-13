@@ -437,6 +437,8 @@ class GrantMinter:
                 names = list(cands)
                 # an optional arg with no literal contributes "absent" (an empty set)
                 for combo in itertools.product(*((cands[a] or [None]) for a in names)):
+                    if all(v is None for v in combo):
+                        continue  # an empty leading tuple: no L1 grant (origin/class checks decide)
                     out.append(self._mint(
                         sink, {a: (ArgConstraint.fragment(request, optional=opt[a]) if v is _FRAGMENT
                                    else ArgConstraint(ConstraintKind.EXACT, kinds[a],
@@ -455,6 +457,8 @@ class GrantMinter:
                 raise ValueError(f"template for {sink}: an access-control sink takes L3/L4 grants only")
             kinds = self.grant_args.get(sink, {})
             for entry in entries:
+                if not entry:
+                    continue  # an empty leading tuple: no L2 grant
                 cs: dict[str, ArgConstraint] = {}
                 for arg, spec in entry.items():
                     if isinstance(spec, Mapping) and "max" in spec:
