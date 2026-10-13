@@ -58,3 +58,60 @@ def test_unseen_destination_before_any_read_is_admitted_today(origins):
 def test_unseen_destination_before_any_read_should_be_denied(origins):
     g = _gov(origins)
     assert not g.evaluate("send_money", {"recipient": UNSEEN, "amount": 0.01}).allowed
+
+
+# ── integrity_origins="request-only" ───────────────────────────────────────────
+#
+# The paper describes request-only as "an argument clears only where the request or
+# the operator's configuration fixed it". In the code the origin mode is consulted
+# only (a) on a driving arg of a declared INTEGRITY sink (provenance.py,
+# integrity_sink=True), and (b) once the context root is tainted (engine.py). So on
+# an egress sink request-only is any-trusted, and before the first untrusted read
+# it is clean. These pins record that; the xfail states the paper's rule.
+
+def _gov_sinks(origins: str, integrity_sinks: list[str]) -> ToolCallGovernor:
+    cfg = dataclasses.replace(
+        GovernanceConfig.from_yaml("examples/agentdojo/config/banking.yaml"),
+        integrity_default="context", integrity_origins=origins,
+        integrity_sinks=frozenset(integrity_sinks),
+    )
+    g = ToolCallGovernor(**cfg.as_governor_kwargs())
+    g.register_task(PROMPT)
+    return g
+
+
+def _tool_read_carrying(g: ToolCallGovernor, value: str, untrusted_first: bool) -> None:
+    if untrusted_first:
+        g.register_output(g.evaluate("read_file", {"file_path": "b"}), "Car rental 98.70")
+    g.register_output(g.evaluate("get_iban", {}), value)  # a trusted (benign) TOOL read
+
+
+def test_request_only_refuses_a_tool_origin_value_on_an_integrity_sink_after_a_read():
+    g = _gov_sinks("request-only", ["send_money"])
+    _tool_read_carrying(g, UNSEEN, untrusted_first=True)
+    assert not g.evaluate("send_money", {"recipient": UNSEEN, "amount": 1}).allowed
+    g2 = _gov_sinks("any-trusted", ["send_money"])
+    _tool_read_carrying(g2, UNSEEN, untrusted_first=True)
+    assert g2.evaluate("send_money", {"recipient": UNSEEN, "amount": 1}).allowed
+
+
+def test_request_only_is_any_trusted_on_an_egress_sink_today():
+    g = _gov_sinks("request-only", [])  # banking.yaml: send_money is egress, not integrity
+    _tool_read_carrying(g, UNSEEN, untrusted_first=True)
+    assert g.evaluate("send_money", {"recipient": UNSEEN, "amount": 1}).allowed
+
+
+def test_request_only_on_an_integrity_sink_is_clean_before_any_untrusted_read_today():
+    g = _gov_sinks("request-only", ["send_money"])
+    assert g.evaluate("send_money", {"recipient": UNSEEN, "amount": 1}).allowed
+    _tool_read_carrying(g, UNSEEN, untrusted_first=False)
+    assert g.evaluate("send_money", {"recipient": UNSEEN, "amount": 1}).allowed
+
+
+@pytest.mark.xfail(strict=True, reason="request-only is consulted only on integrity sinks "
+                   "and only after an untrusted read; the paper's rule is not what the code does")
+@pytest.mark.parametrize("integrity_sinks", [[], ["send_money"]])
+def test_request_only_should_clear_only_request_or_operator_values(integrity_sinks):
+    g = _gov_sinks("request-only", integrity_sinks)
+    _tool_read_carrying(g, UNSEEN, untrusted_first=False)
+    assert not g.evaluate("send_money", {"recipient": UNSEEN, "amount": 1}).allowed
