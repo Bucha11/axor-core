@@ -328,6 +328,7 @@ def validate_grant_config(
     grant_args: "dict[str, dict[str, str]] | None",
     grant_templates: "dict[str, list[dict]] | None" = None,
     bounded_damage: "dict[str, list[str]] | None" = None,
+    grant_quotas: "dict[str, int] | None" = None,
 ) -> list[str]:
     """Refuse grant declarations that would give false assurance.
 
@@ -368,4 +369,9 @@ def validate_grant_config(
                         )
                 elif arg not in grant_args[sink]:
                     errors.append(f"grant_templates[{sink!r}][{arg!r}]: not a grant arg of {sink!r}")
+    for sink, n in (grant_quotas or {}).items():
+        if sink not in grant_args:
+            errors.append(f"grant_quotas[{sink!r}]: sink has no grant_args")
+        if isinstance(n, bool) or not isinstance(n, int) or n < 1:
+            errors.append(f"grant_quotas[{sink!r}] must be a positive integer, got {n!r}")
     return errors

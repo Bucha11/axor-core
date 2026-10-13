@@ -50,6 +50,7 @@ _KNOWN_KEYS = frozenset({
     "grant_args",
     "grant_templates",
     "bounded_damage",
+    "grant_quotas",
 })
 _CONSEQUENCE_BY_NAME = {c.name.lower(): c for c in ConsequenceClass}
 
@@ -98,6 +99,8 @@ class GovernanceConfig:
     grant_args: dict[str, dict[str, str]] = field(default_factory=dict)
     grant_templates: dict[str, list[dict]] = field(default_factory=dict)
     bounded_damage: dict[str, list[str]] = field(default_factory=dict)
+    # Operator rule: uses per L1 (request-literal) grant, per sink (default 1).
+    grant_quotas: dict[str, int] = field(default_factory=dict)
 
     # ── construction ─────────────────────────────────────────────────────────────
 
@@ -226,6 +229,7 @@ class GovernanceConfig:
             "grant_args": dict(self.grant_args),
             "grant_templates": dict(self.grant_templates),
             "bounded_damage": dict(self.bounded_damage),
+            "grant_quotas": dict(self.grant_quotas),
         }
 
 
@@ -246,6 +250,9 @@ def _parse_grants(data: dict[str, Any]) -> dict[str, Any]:
     ga = data.get("grant_args") or {}
     gt = data.get("grant_templates") or {}
     bd = data.get("bounded_damage") or {}
+    gq = data.get("grant_quotas") or {}
+    if not isinstance(gq, dict):
+        raise ValueError("grant_quotas must be a mapping of tool -> positive integer")
     if not isinstance(ga, dict) or not all(isinstance(v, dict) for v in ga.values()):
         raise ValueError("grant_args must be a mapping of tool -> {arg: kind}")
     if not isinstance(gt, dict) or not all(isinstance(v, list) for v in gt.values()):
@@ -255,10 +262,12 @@ def _parse_grants(data: dict[str, Any]) -> dict[str, Any]:
     grant_args = {str(t): {str(a): str(k) for a, k in v.items()} for t, v in ga.items()}
     templates = {str(t): [dict(e) for e in v] for t, v in gt.items()}
     bounded = {str(t): [str(a) for a in v] for t, v in bd.items()}
-    errors = validate_grant_config(grant_args, templates, bounded)
+    quotas = {str(t): n for t, n in gq.items()}
+    errors = validate_grant_config(grant_args, templates, bounded, quotas)
     if errors:
         raise ValueError("grant config: " + "; ".join(errors))
-    return {"grant_args": grant_args, "grant_templates": templates, "bounded_damage": bounded}
+    return {"grant_args": grant_args, "grant_templates": templates, "bounded_damage": bounded,
+            "grant_quotas": quotas}
 
 
 def _parse_driving_args(raw: Any) -> dict[str, list[str]]:

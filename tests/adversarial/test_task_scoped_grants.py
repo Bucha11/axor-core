@@ -508,3 +508,55 @@ def test_the_rendered_confirmation_shows_the_rich_fields_in_full():
     action = render("send_money", {"recipient": BOB, "amount": 5, "subject": long_body},
                     GA["send_money"], HandleTable())
     assert long_body in action.text()
+
+
+def test_confirmation_grant_keeps_the_whole_canonical_call():
+    store, table = GrantStore(), HandleTable()
+    g = GrantMinter(store, table, GA).from_confirmation(
+        "send_money", {"recipient": BOB, "amount": 5, "subject": "Lunch"})
+    import json as _json
+    call = _json.loads(g.call_canonical)
+    assert call["sink"] == "send_money" and call["args"]["subject"] == "Lunch"
+    assert call["args"]["recipient"] == canonicalize("iban", BOB)
+
+
+# ── L4 does not open the floor ───────────────────────────────────────────────
+
+def test_a_confirmation_grant_does_not_open_the_confidentiality_floor():
+    """Confirmed before a secret read, then spent after it: the floor still denies,
+    and a confirmation asked after the read is never asked at all."""
+    asked = ScriptedConfirmer(lambda a, c: True)
+    g = _l1(confirmer=asked, sensitive_sources={"read_secret"})
+    call = {"recipient": BOB, "amount": 5, "subject": "hi"}
+    d = g.evaluate("send_money", call)
+    assert d.allowed and d.grant_source == "L4"
+    g.register_output(g.evaluate("read_secret", {}), "API_KEY=sk-live-123")
+    d2 = g.evaluate("send_money", call)  # the L4 grant is still live (not spent)
+    assert not d2.allowed and d2.category == "taint_enforcement"
+    assert asked.asked == 1
+
+
+# ── L1 quota is an operator rule per sink ────────────────────────────────────
+
+def test_l1_quota_comes_from_the_operator_rule_per_sink():
+    g = _gov(grant_args=GA, grant_quotas={"send_money": 2})
+    g.register_task(PROMPT)
+    g.grants.from_request(PROMPT)
+    call = {"recipient": ALICE, "amount": 100}
+    for _ in range(2):
+        d = g.evaluate("send_money", call)
+        assert d.allowed
+        g.grant_store.commit(g.spend(d, call))
+    assert not g.evaluate("send_money", call).allowed
+    # a sink without a rule keeps the default of one use
+    s = GrantStore()
+    GrantMinter(s, HandleTable(), GA, quotas={"send_money": 2}).from_request(
+        f"schedule 100 to {ALICE}")
+    assert {g.sink: g.uses for g in s.grants()}["schedule_transaction"] == 1
+
+
+def test_grant_quota_must_be_a_positive_integer_on_a_grant_sink():
+    with pytest.raises(ValueError, match="positive integer"):
+        _gov(grant_args=GA, grant_quotas={"send_money": 0})
+    with pytest.raises(ValueError, match="no grant_args"):
+        GovernanceConfig.from_dict({"grant_args": GA, "grant_quotas": {"read_file": 3}})

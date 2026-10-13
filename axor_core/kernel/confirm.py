@@ -95,12 +95,12 @@ def _canon_leaf(v: Any) -> Any:
     return str(v)
 
 
-def call_digest(sink: str, args: Mapping[str, Any], grant_args: Mapping[str, str],
-                table: HandleTable | None) -> str:
-    """SHA-256 of the canonical call: the sink and every argument. Grant args are
-    taken by canonical value (a handle and the raw value it names digest alike);
-    every other argument — rich fields included — by its NFKC text. Absent and
-    None are the same."""
+def canonical_call(sink: str, args: Mapping[str, Any], grant_args: Mapping[str, str],
+                   table: HandleTable | None) -> str:
+    """The canonical call as JSON: the sink and every argument. Grant args are
+    taken by canonical value (a handle and the raw value it names canonicalize
+    alike); every other argument — rich fields included — by its NFKC text. Absent
+    and None are the same."""
     canon: dict[str, Any] = {}
     for k, v in args.items():
         if v is None:
@@ -116,9 +116,14 @@ def call_digest(sink: str, args: Mapping[str, Any], grant_args: Mapping[str, str
             canon[k] = sorted(res, key=repr) if isinstance(v, (list, tuple, set, frozenset)) else res[0]
         else:
             canon[k] = _canon_leaf(v)
-    blob = json.dumps({"sink": sink, "args": canon}, sort_keys=True, ensure_ascii=False,
+    return json.dumps({"sink": sink, "args": canon}, sort_keys=True, ensure_ascii=False,
                       separators=(",", ":"))
-    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+
+def call_digest(sink: str, args: Mapping[str, Any], grant_args: Mapping[str, str],
+                table: HandleTable | None) -> str:
+    """SHA-256 of :func:`canonical_call`."""
+    return hashlib.sha256(canonical_call(sink, args, grant_args, table).encode("utf-8")).hexdigest()
 
 
 class ConfirmationProvider(Protocol):

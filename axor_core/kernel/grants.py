@@ -122,6 +122,9 @@ class Grant:
     # set, the grant covers only that exact call — rich fields included.
     call_digest: str | None = None
     grant_args: Mapping[str, str] | None = None
+    # ... and the canonical call itself (kernel.confirm.canonical_call), kept with
+    # the grant so an audit shows exactly what was confirmed, rich fields included.
+    call_canonical: str | None = None
 
     def covers(self, sink: str, args: Mapping[str, Any], table: HandleTable | None) -> bool:
         if sink != self.sink:
@@ -325,6 +328,9 @@ class GrantMinter:
     task: str = "task"
     tuple_grants: bool = True
     default_uses: int | None = 1
+    # Operator rule: how many uses an L1 (request) grant gets, per sink. A sink not
+    # listed gets default_uses. A model never sets this.
+    quotas: Mapping[str, int] = field(default_factory=dict)
     issued: list[Grant] = field(default_factory=list)
 
     def _mint(self, sink: str, constraints: dict[str, ArgConstraint], uses: int | None,
@@ -341,8 +347,9 @@ class GrantMinter:
         grant per tuple of literals (or one per-arg grant in the ablation). A sink
         with a grant arg the request does not spell out gets no L1 grant."""
         out: list[Grant] = []
-        uses = self.default_uses if uses is None else uses
+        explicit = uses
         for sink, args in self.grant_args.items():
+            uses = explicit if explicit is not None else self.quotas.get(sink, self.default_uses)
             cands: dict[str, list[str]] = {}
             opt: dict[str, bool] = {}
             for arg, spec in args.items():
@@ -412,13 +419,14 @@ class GrantMinter:
     def from_confirmation(self, sink: str, args: Mapping[str, Any]) -> Grant | None:
         """L4: a human confirmed this exact action. One use, bound to the digest of
         the whole canonical call — not just its driving arguments."""
-        from axor_core.kernel.confirm import call_digest
+        from axor_core.kernel.confirm import call_digest, canonical_call
 
         g = self._exact(sink, args, TrustedChannel.CONFIRMATION, 1, dry=True)
         if g is None:
             return None
         kinds = dict(self.grant_args.get(sink, {}))
         g = dataclasses.replace(g, call_digest=call_digest(sink, args, kinds, self.table),
+                                call_canonical=canonical_call(sink, args, kinds, self.table),
                                 grant_args=kinds)
         self.store._issue(g)
         self.issued.append(g)

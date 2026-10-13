@@ -185,6 +185,7 @@ class ToolCallGovernor:
         grant_args: "dict[str, dict[str, str]] | None" = None,
         grant_templates: "dict[str, list[dict]] | None" = None,
         bounded_damage: "dict[str, list[str]] | None" = None,
+        grant_quotas: "dict[str, int] | None" = None,
         grant_store: Any = None,
         handle_table: "HandleTable | None" = None,
         confirmer: Any = None,
@@ -261,14 +262,16 @@ class ToolCallGovernor:
         # covering its driving tuple; grants are minted from trusted inputs only
         # (GrantMinter), never from anything register_output sees (O4).
         self._grant_args = {k: dict(v) for k, v in (grant_args or {}).items()}
-        grant_errors = validate_grant_config(self._grant_args, grant_templates, bounded_damage)
+        grant_errors = validate_grant_config(self._grant_args, grant_templates, bounded_damage,
+                                             grant_quotas)
         if grant_errors:
             raise ValueError("grant config: " + "; ".join(grant_errors))
         self._handles = handle_table if handle_table is not None else HandleTable()
         self._grants = grant_store if grant_store is not None else GrantStore()
         # The kernel store or the locked spend-side wrapper; both expose find/reserve.
         inner = getattr(self._grants, "inner", self._grants)
-        self._minter = GrantMinter(inner, self._handles, self._grant_args)
+        self._minter = GrantMinter(inner, self._handles, self._grant_args,
+                                   quotas=dict(grant_quotas or {}))
         if grant_templates:
             self._minter.from_templates(grant_templates)
         self._confirmer = confirmer
