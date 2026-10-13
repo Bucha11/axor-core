@@ -201,6 +201,49 @@ def _messages_to_openai(messages: Sequence[ChatMessage]) -> list[dict]:
     return out
 
 
+# ── spend accounting (AXOR_BENCH_SPEND_LOG / AXOR_BENCH_SPEND_CAP) ───────────────
+#
+# Every OpenRouter call appends its reported cost (USD) to a JSONL ledger shared by
+# all runner processes; before each call the ledger is summed and the run stops if
+# the cap is reached. The cap is checked before a call, so the overshoot is at most
+# one call per running process.
+
+class SpendCapReached(RuntimeError):
+    pass
+
+
+def _spend_total() -> float:
+    path = os.environ.get("AXOR_BENCH_SPEND_LOG")
+    if not path or not os.path.exists(path):
+        return 0.0
+    total = 0.0
+    with open(path) as f:
+        for line in f:
+            try:
+                total += float(json.loads(line).get("cost") or 0.0)
+            except (ValueError, json.JSONDecodeError):
+                continue
+    return total
+
+
+def _spend_guard() -> None:
+    cap = os.environ.get("AXOR_BENCH_SPEND_CAP")
+    if cap and _spend_total() >= float(cap):
+        raise SpendCapReached(f"spend cap ${float(cap):.2f} reached (${_spend_total():.4f})")
+
+
+def _spend_record(model: str, usage: dict) -> None:
+    path = os.environ.get("AXOR_BENCH_SPEND_LOG")
+    if not path:
+        return
+    rec = {"model": model, "cost": usage.get("cost"),
+           "prompt_tokens": usage.get("prompt_tokens"),
+           "completion_tokens": usage.get("completion_tokens"),
+           "reasoning_tokens": (usage.get("completion_tokens_details") or {}).get("reasoning_tokens")}
+    with open(path, "a") as f:
+        f.write(json.dumps(rec) + "\n")
+
+
 class OpenRouterLLM(BasePipelineElement):
     """An AgentDojo LLM element backed by OpenRouter (OpenAI-compatible API),
     over raw urllib. Use to drive injection-susceptible open models (e.g. Qwen)
@@ -266,7 +309,10 @@ class OpenRouterLLM(BasePipelineElement):
         if tools:
             body["tools"] = tools
             body["tool_choice"] = "auto"
+        _spend_guard()
+        body["usage"] = {"include": True}  # OpenRouter reports the call's cost
         resp = self._post(body)
+        _spend_record(self.model, resp.get("usage") or {})
 
         choice = resp["choices"][0]
         msg = choice["message"]
@@ -299,12 +345,21 @@ class GovernedToolsExecutor(BasePipelineElement):
     message list resetting to its first tool turn).
     """
 
-    def __init__(self, governor_factory) -> None:
+    def __init__(self, governor_factory, grant_levels: str = "", confirm: str = "oracle") -> None:
         self._make_governor = governor_factory
         self._governor: ToolCallGovernor | None = None
         self._seen_ids: set[str] = set()
         self.denied_count = 0
         self.denials: list[str] = []
+        # Task-scoped grants (AXOR_BENCH_GRANT_LEVELS, e.g. "L1+L2s+L4"): L1 grants
+        # from the user's request at task start; L4 through a scripted confirmer.
+        # The runner sets current_user_task before each task so the oracle can
+        # compare a proposed call with that task's ground truth.
+        self.grant_levels = set(filter(None, grant_levels.split("+")))
+        self.confirm = confirm
+        self.current_user_task = None
+        self.confirmations: dict[str, int] = {}
+        self._plan: list = []
 
     def _governor_for(self, messages, task_text) -> ToolCallGovernor:
         # New task: the very first tool-execution turn has exactly one assistant
@@ -318,7 +373,35 @@ class GovernedToolsExecutor(BasePipelineElement):
             # value derived from an untrusted read is not. No-op under "clean" mode.
             if isinstance(task_text, str) and task_text:
                 self._governor.register_task(task_text)
+                if "L1" in self.grant_levels and self._governor._grant_args:
+                    self._governor.grants.from_request(task_text)
+            if "L4" in self.grant_levels and self._governor._grant_args:
+                self._install_confirmer(task_text)
         return self._governor
+
+    def _install_confirmer(self, task_text) -> None:
+        """L4 in the live loop. The oracle approves a proposed call iff the WHOLE
+        call equals a call of the task's ground truth (call_digest); it is an upper
+        bound — a human is not an oracle."""
+        from axor_core.kernel.confirm import ScriptedConfirmer, call_digest
+        from axor_core.kernel.handles import HandleTable
+
+        ut = self.current_user_task
+        tid = getattr(ut, "ID", None) or "task"
+        self.confirmations.setdefault(tid, 0)
+        g = self._governor
+        executor = self
+
+        def oracle(action, call):
+            executor.confirmations[tid] = executor.confirmations.get(tid, 0) + 1
+            tool, args = call
+            kinds = g._grant_args.get(tool, {})
+            t = HandleTable()
+            want = call_digest(tool, args, kinds, t)
+            return any(c.function == tool and call_digest(tool, dict(c.args), kinds, t) == want
+                       for c in executor._plan)
+
+        g._confirmer = ScriptedConfirmer(oracle)
 
     def query(self, query, runtime, env=EmptyEnv(), messages=[], extra_args={}):
         if not messages or messages[-1]["role"] != "assistant":
@@ -327,6 +410,12 @@ class GovernedToolsExecutor(BasePipelineElement):
         if not tool_calls:
             return query, runtime, env, messages, extra_args
 
+        if self.current_user_task is not None and not any(m["role"] == "tool" for m in messages[:-1]):
+            # task start: freeze the ground truth on the untouched environment
+            try:
+                self._plan = list(self.current_user_task.ground_truth(env.model_copy(deep=True)))
+            except Exception:
+                self._plan = []
         governor = self._governor_for(messages, query)
         results: list[ChatToolResultMessage] = []
         for tool_call in tool_calls:
@@ -348,6 +437,10 @@ class GovernedToolsExecutor(BasePipelineElement):
                 continue
 
             tool_result, error = runtime.run_function(env, tool_call.function, tool_call.args)
+            if getattr(decision, "grant_id", None) is not None:
+                key = governor.spend(decision, dict(tool_call.args))
+                if key is not None:
+                    governor.grant_store.commit(key)
             if error is None:
                 governor.register_output(decision, tool_result_to_str(tool_result))
             results.append(ChatToolResultMessage(

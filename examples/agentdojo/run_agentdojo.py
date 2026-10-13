@@ -89,6 +89,17 @@ def make_governor() -> ToolCallGovernor:
     # obligation, so the integrity/origin axis — not an enum — decides each driving
     # value. mode:strict alone would also force require_egress_allowlist=True, which
     # the no-oracle origin config must not carry, so override it here.
+    # Task-scoped grants: AXOR_BENCH_GRANT_ARGS = a JSON file {suite: {sink: {arg:
+    # kind}}} (e.g. derive_grants R0), AXOR_BENCH_GRANT_TEMPLATES = JSON {suite:
+    # templates} (L2/L2s). L1 and L4 are wired in GovernedToolsExecutor.
+    if os.environ.get("AXOR_BENCH_GRANT_ARGS"):
+        import json as _json
+        ga = _json.load(open(os.environ["AXOR_BENCH_GRANT_ARGS"])).get(SUITE, {})
+        kw["grant_args"] = ga
+        if os.environ.get("AXOR_BENCH_GRANT_TEMPLATES"):
+            tpl = _json.load(open(os.environ["AXOR_BENCH_GRANT_TEMPLATES"])).get(SUITE)
+            if tpl:
+                kw["grant_templates"] = tpl
     if os.environ.get("AXOR_BENCH_ORIGIN") == "1":
         kw["require_tool_roles"] = True
         kw["require_egress_allowlist"] = False
@@ -197,7 +208,8 @@ else:
 def build_pipeline(governed: bool):
     llm = _make_llm()
     if governed:
-        tools_executor = GovernedToolsExecutor(make_governor)
+        tools_executor = GovernedToolsExecutor(
+            make_governor, grant_levels=os.environ.get("AXOR_BENCH_GRANT_LEVELS", ""))
     else:
         tools_executor = ToolsExecutor()
     loop = ToolsExecutionLoop([tools_executor, llm])
@@ -247,6 +259,8 @@ def run_benign(governed: bool, suite):
     label = "GOVERNED " if governed else "UNDEFENDED"
     for ut_id in USER_TASKS:
         user_task = suite.get_user_task_by_id(ut_id)
+        if hasattr(tools_executor, "current_user_task"):
+            tools_executor.current_user_task = user_task
         try:
             utility, _ = suite.run_task_with_pipeline(pipeline, user_task, None, {})
         except Exception as exc:
@@ -291,6 +305,9 @@ def main_camel() -> int:
             cu, exec_ = run_benign(True, suite)
             print(f"\ngoverned  {_pct(cu):.1f}%  ({sum(cu)}/{len(cu)})")
             print(f"benign denials:  {exec_.denied_count} ({exec_.denials})")
+            if getattr(exec_, "grant_levels", None):
+                c = exec_.confirmations
+                print(f"confirmations:  {sum(c.values())} over {len(USER_TASKS)} tasks ({c})")
         return 0
     print("BENIGN / UNDEFENDED ...")
     ub_util, _ = run_benign(False, suite)
