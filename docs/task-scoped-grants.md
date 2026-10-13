@@ -18,6 +18,11 @@ Grant = (task, sink, {arg: constraint}, uses, expiry, source ∈ {L1, L2, L3, L4
 | L3 | a typed intent from the application | 1 | `GrantMinter.from_structured` |
 | L4 | a human confirmed the exact action | 1 | `confirmer=` on the governor |
 
+**A confirmation grant covers the whole call, not only the driving arguments.** It is
+bound to `kernel.confirm.call_digest` — the sink and every argument, rich fields
+included — and the confirmation renders every field in full. Bound only to the driving
+tuple, a confirmed message could be sent to the same recipient with another body.
+
 A grant arg declared with a trailing `?` (`participants: "email?"`) is optional: a call
 may omit it, since absence carries no value anywhere, but a value that is passed must be
 covered. A structured or confirmed action that omits an arg yields a grant admitting only

@@ -118,10 +118,18 @@ class Grant:
     source: TrustedChannel
     expiry: float | None = None  # wall-clock seconds; None = the task's lifetime
     note: str = ""
+    # L4: the digest of the whole confirmed call (kernel.confirm.call_digest). When
+    # set, the grant covers only that exact call — rich fields included.
+    call_digest: str | None = None
+    grant_args: Mapping[str, str] | None = None
 
     def covers(self, sink: str, args: Mapping[str, Any], table: HandleTable | None) -> bool:
         if sink != self.sink:
             return False
+        if self.call_digest is not None:
+            from axor_core.kernel.confirm import call_digest
+            if call_digest(sink, args, self.grant_args or {}, table) != self.call_digest:
+                return False
         for arg, c in self.constraints.items():
             v = args.get(arg)
             if v is None or (isinstance(v, (list, tuple, set, frozenset)) and not v):
@@ -402,11 +410,22 @@ class GrantMinter:
                            self.default_uses if uses is None else uses)
 
     def from_confirmation(self, sink: str, args: Mapping[str, Any]) -> Grant | None:
-        """L4: a human confirmed this exact action. One use."""
-        return self._exact(sink, args, TrustedChannel.CONFIRMATION, 1)
+        """L4: a human confirmed this exact action. One use, bound to the digest of
+        the whole canonical call — not just its driving arguments."""
+        from axor_core.kernel.confirm import call_digest
+
+        g = self._exact(sink, args, TrustedChannel.CONFIRMATION, 1, dry=True)
+        if g is None:
+            return None
+        kinds = dict(self.grant_args.get(sink, {}))
+        g = dataclasses.replace(g, call_digest=call_digest(sink, args, kinds, self.table),
+                                grant_args=kinds)
+        self.store._issue(g)
+        self.issued.append(g)
+        return g
 
     def _exact(self, sink: str, args: Mapping[str, Any], channel: TrustedChannel,
-               uses: int | None) -> Grant | None:
+               uses: int | None, dry: bool = False) -> Grant | None:
         kinds = self.grant_args.get(sink)
         if not kinds:
             return None
@@ -433,4 +452,6 @@ class GrantMinter:
                 cs[arg] = dataclasses.replace(c, optional=optional)
             except (ValueError, IndexError):
                 return None
+        if dry:  # built, not issued: the caller completes it first
+            return Grant(self.store.next_id(channel.value), self.task, sink, cs, uses, channel)
         return self._mint(sink, cs, uses, channel)

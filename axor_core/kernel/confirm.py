@@ -9,11 +9,20 @@ the recipient argument is the attacker's IBAN shows the attacker's IBAN, unmarke
 
 ``ScriptedConfirmer`` stands in for the human in benchmarks: a policy over the
 rendered action, with a log, so every confirmation is counted.
+
+A confirmation grant covers the WHOLE call, not just its driving arguments: it is
+bound to ``call_digest`` of the canonical call (sink + every argument, rich fields
+included), and the rendering shows every field in full. Otherwise a confirmed
+"send Bob the minutes" could be spent on the same recipient with another body.
 """
 
 from __future__ import annotations
 
+import hashlib
+import json
+import unicodedata
 from dataclasses import dataclass, field
+from decimal import Decimal, InvalidOperation
 from typing import Any, Callable, Mapping, Protocol
 
 from axor_core.kernel.handles import HandleTable, is_handle_ref, split_kind
@@ -45,7 +54,8 @@ class RenderedAction:
 def render(sink: str, args: Mapping[str, Any], grant_args: Mapping[str, str],
            table: HandleTable) -> RenderedAction:
     """Render from the table, never from model text (the ``description`` a model
-    attaches to a proposal is not an input here)."""
+    attaches to a proposal is not an input here). Every argument is shown in full —
+    the rich fields too: the grant this confirmation mints covers the whole call."""
     shown: list[RenderedArg] = []
     for arg, spec in grant_args.items():
         kind = split_kind(spec)[0]
@@ -64,6 +74,51 @@ def render(sink: str, args: Mapping[str, Any], grant_args: Mapping[str, str],
             shown.append(RenderedArg(arg, raw, trusted))
     other = tuple((k, str(v)) for k, v in args.items() if k not in grant_args)
     return RenderedAction(sink, tuple(shown), other)
+
+
+def _canon_leaf(v: Any) -> Any:
+    if isinstance(v, bool) or v is None:
+        return v
+    if isinstance(v, (int, float, Decimal)):
+        try:
+            return format(Decimal(str(v)).normalize(), "f")
+        except InvalidOperation:
+            return str(v)
+    if isinstance(v, str):
+        return unicodedata.normalize("NFKC", v)
+    if isinstance(v, Mapping):
+        return {str(k): _canon_leaf(x) for k, x in v.items()}
+    if isinstance(v, (list, tuple)):
+        return [_canon_leaf(x) for x in v]
+    if isinstance(v, (set, frozenset)):
+        return sorted((_canon_leaf(x) for x in v), key=repr)
+    return str(v)
+
+
+def call_digest(sink: str, args: Mapping[str, Any], grant_args: Mapping[str, str],
+                table: HandleTable | None) -> str:
+    """SHA-256 of the canonical call: the sink and every argument. Grant args are
+    taken by canonical value (a handle and the raw value it names digest alike);
+    every other argument — rich fields included — by its NFKC text. Absent and
+    None are the same."""
+    canon: dict[str, Any] = {}
+    for k, v in args.items():
+        if v is None:
+            continue
+        spec = grant_args.get(k)
+        if spec is not None:
+            kind = split_kind(spec)[0]
+            vals = v if isinstance(v, (list, tuple, set, frozenset)) else [v]
+            res = []
+            for x in vals:
+                c = table.resolve(x, kind) if table is not None else None
+                res.append(c if c is not None else _canon_leaf(x))
+            canon[k] = sorted(res, key=repr) if isinstance(v, (list, tuple, set, frozenset)) else res[0]
+        else:
+            canon[k] = _canon_leaf(v)
+    blob = json.dumps({"sink": sink, "args": canon}, sort_keys=True, ensure_ascii=False,
+                      separators=(",", ":"))
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
 
 
 class ConfirmationProvider(Protocol):

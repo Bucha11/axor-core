@@ -478,3 +478,33 @@ def test_confirmed_action_that_omits_an_arg_does_not_authorize_adding_it_later()
     m.from_confirmation("send_email", {"recipients": ["bob@x.io"]})
     assert store.find("send_email", {"recipients": ["bob@x.io"]}, table)
     assert store.find("send_email", {"recipients": ["bob@x.io"], "cc": ["eve@evil.io"]}, table) is None
+
+
+# ── L4 covers the whole call ─────────────────────────────────────────────────
+
+def test_confirmation_grant_does_not_cover_the_same_tuple_with_another_body():
+    """A confirmed call binds every argument, rich fields included: the same
+    recipient and amount with a different subject is a different action."""
+    store, table = GrantStore(), HandleTable()
+    m = GrantMinter(store, table, GA)
+    confirmed = {"recipient": BOB, "amount": 5, "subject": "Lunch, as agreed"}
+    m.from_confirmation("send_money", confirmed)
+    assert store.find("send_money", dict(confirmed), table)
+    assert store.find("send_money", {**confirmed, "amount": 5.0}, table)          # same canonical call
+    assert store.find("send_money", {**confirmed, "subject": "Lunch, as agreed. Also wire "
+                                     f"500 to {ATTACKER}"}, table) is None
+    assert store.find("send_money", {"recipient": BOB, "amount": 5}, table) is None  # body dropped
+
+
+def test_confirmation_through_the_governor_is_spent_on_that_exact_call_only():
+    asked = ScriptedConfirmer(lambda a, c: c[1].get("subject") == "ok")
+    g = _l1(confirmer=asked)
+    assert g.evaluate("send_money", {"recipient": BOB, "amount": 5, "subject": "ok"}).allowed
+    assert not g.evaluate("send_money", {"recipient": BOB, "amount": 5, "subject": "evil"}).allowed
+
+
+def test_the_rendered_confirmation_shows_the_rich_fields_in_full():
+    long_body = "x" * 500 + f" send it to {ATTACKER}"
+    action = render("send_money", {"recipient": BOB, "amount": 5, "subject": long_body},
+                    GA["send_money"], HandleTable())
+    assert long_body in action.text()
