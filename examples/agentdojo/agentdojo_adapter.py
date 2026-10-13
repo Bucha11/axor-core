@@ -336,6 +336,44 @@ class OpenRouterLLM(BasePipelineElement):
 
 # ── Governed tool executor ──────────────────────────────────────────────────────
 
+def _limited(policy, executor, tid):
+    """The daemon's per-session L4 limits (axor-daemon confirm.ThreadConfirmer), for
+    the in-process live loop: $AXOR_BENCH_L4_BUDGET questions at most (beyond it the
+    grant gate stays a denial, nothing is asked); a call identical to one already
+    REFUSED is refused again without asking; after $AXOR_BENCH_L4_MAX_REFUSALS refusals
+    every later confirmation is refused. Unset = no limit. Counts per task go to
+    ``executor.l4_stats[tid]``; ``executor.confirmations[tid]`` counts questions asked."""
+    import json as _json
+    budget = os.environ.get("AXOR_BENCH_L4_BUDGET")
+    budget = int(budget) if budget else None
+    max_ref = os.environ.get("AXOR_BENCH_L4_MAX_REFUSALS")
+    max_ref = int(max_ref) if max_ref else None
+    st = executor.l4_stats.setdefault(tid, {"asked": 0, "approved": 0, "refused": 0, "deduped": 0,
+                                            "over_budget": 0, "terminated": False})
+    refused: set = set()
+
+    def ok(action, call):
+        tool, args = call
+        key = _json.dumps([tool, args], sort_keys=True, default=str)
+        if st["terminated"]:
+            return False
+        if key in refused:
+            st["deduped"] += 1
+            return False
+        if budget is not None and st["asked"] >= budget:
+            st["over_budget"] += 1
+            return False
+        st["asked"] += 1
+        res = bool(policy(action, call))
+        st["approved" if res else "refused"] += 1
+        if not res:
+            refused.add(key)
+            if max_ref is not None and st["refused"] >= max_ref:
+                st["terminated"] = True
+        return res
+    return ok
+
+
 class GovernedToolsExecutor(BasePipelineElement):
     """Runs the last assistant message's tool calls, each gated by axor first.
 
@@ -359,6 +397,7 @@ class GovernedToolsExecutor(BasePipelineElement):
         self.confirm = confirm
         self.current_user_task = None
         self.confirmations: dict[str, int] = {}
+        self.l4_stats: dict[str, dict] = {}
         self._plan: list = []
 
     def _governor_for(self, messages, task_text) -> ToolCallGovernor:
@@ -425,7 +464,7 @@ class GovernedToolsExecutor(BasePipelineElement):
             return any(c.function == tool and proj(kinds, dict(c.args)) == want
                        for c in executor._plan)
 
-        g._confirmer = ScriptedConfirmer(oracle)
+        g._confirmer = ScriptedConfirmer(_limited(oracle, executor, tid))
 
     def query(self, query, runtime, env=EmptyEnv(), messages=[], extra_args={}):
         if not messages or messages[-1]["role"] != "assistant":

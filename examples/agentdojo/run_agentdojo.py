@@ -30,6 +30,8 @@ import sys
 from agentdojo.agent_pipeline.agent_pipeline import AgentPipeline, load_system_message
 from agentdojo.agent_pipeline.basic_elements import InitQuery, SystemMessage
 from agentdojo.agent_pipeline.tool_execution import ToolsExecutionLoop, ToolsExecutor
+from agentdojo.agent_pipeline.base_pipeline_element import BasePipelineElement
+from agentdojo.functions_runtime import EmptyEnv
 from agentdojo.attacks.attack_registry import load_attack
 from agentdojo.task_suite.load_suites import get_suites
 
@@ -205,8 +207,38 @@ else:
     _MODEL_NAME_TOKEN = "claude-3-5-sonnet-20241022"
 
 
+class _Recorder(BasePipelineElement):
+    """Wraps the LLM element and keeps the latest conversation, so the run can save
+    each task's trajectory ($AXOR_BENCH_TRAJ_DIR)."""
+
+    def __init__(self, inner):
+        self.inner = inner
+        self.name = getattr(inner, "name", None)
+        self.last: list = []
+
+    def query(self, query, runtime, env=EmptyEnv(), messages=[], extra_args={}):
+        out = self.inner.query(query, runtime, env, messages, extra_args)
+        self.last = list(out[3])
+        return out
+
+
+def _save_trajectory(rec, ut_id, governed, utility, tools_executor):
+    d = os.environ.get("AXOR_BENCH_TRAJ_DIR")
+    if not d:
+        return
+    import json as _j
+    os.makedirs(os.path.join(d, SUITE), exist_ok=True)
+    tid = ut_id
+    rec_out = {"suite": SUITE, "user_task_id": ut_id, "governed": governed, "utility": bool(utility),
+               "model": MODEL, "messages": rec.last,
+               "confirmations": getattr(tools_executor, "confirmations", {}).get(tid),
+               "l4": getattr(tools_executor, "l4_stats", {}).get(tid)}
+    with open(os.path.join(d, SUITE, f"{ut_id}{'' if governed else '_undefended'}.json"), "w") as f:
+        _j.dump(rec_out, f, indent=1, default=str)
+
+
 def build_pipeline(governed: bool):
-    llm = _make_llm()
+    llm = _Recorder(_make_llm())
     if governed:
         tools_executor = GovernedToolsExecutor(
             make_governor, grant_levels=os.environ.get("AXOR_BENCH_GRANT_LEVELS", ""))
@@ -220,6 +252,7 @@ def build_pipeline(governed: bool):
         loop,
     ])
     pipeline.name = f"axor-{'governed' if governed else 'undefended'}-{_MODEL_NAME_TOKEN}"
+    pipeline._recorder = llm
     return pipeline, tools_executor
 
 
@@ -268,6 +301,7 @@ def run_benign(governed: bool, suite):
             continue
         utilities.append(utility)
         print(f"  [{label}] {ut_id:<14} (benign)  utility={'Y' if utility else 'n'}")
+        _save_trajectory(pipeline._recorder, ut_id, governed, utility, tools_executor)
     return utilities, tools_executor
 
 
@@ -308,6 +342,7 @@ def main_camel() -> int:
             if getattr(exec_, "grant_levels", None):
                 c = exec_.confirmations
                 print(f"confirmations:  {sum(c.values())} over {len(USER_TASKS)} tasks ({c})")
+                print(f"l4 limits:  {getattr(exec_, 'l4_stats', {})}")
         return 0
     print("BENIGN / UNDEFENDED ...")
     ub_util, _ = run_benign(False, suite)
