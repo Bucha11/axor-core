@@ -105,6 +105,41 @@ def extract(text: str) -> list[Literal]:
     return out
 
 
+def is_typed_literal(value: str) -> bool:
+    """Whether ``value`` is, by its own syntax, a typed literal (IBAN, e-mail, URL,
+    date/datetime, number, file name) — such a value binds only to its own kind."""
+    v = unicodedata.normalize("NFKC", str(value)).strip()
+    return bool(v) and (any(rx.fullmatch(v) for rx in _TYPED_WHOLE) or bool(_FILE.fullmatch(v)))
+
+
+def _canon_text(text: str) -> str:
+    return re.sub(r"\s+", " ", unicodedata.normalize("NFKC", str(text))).strip().casefold()
+
+
+def is_request_fragment(request: str, value: str) -> bool:
+    """revision 4: an untyped string is an L1 value when, canonicalized (case-folded,
+    whitespace collapsed), it is a contiguous fragment of the canonicalized request
+    that starts and ends at word boundaries — and it is not itself a typed literal."""
+    v = _canon_text(value)
+    if not v or is_typed_literal(value):
+        return False
+    return re.search(r"(?<!\w)" + re.escape(v) + r"(?!\w)", _canon_text(request)) is not None
+
+
+def request_fragments(request: str, max_words: int | None = None) -> set[str]:
+    """Every admissible string value of ``request`` (distinct word-bounded fragments
+    that are not typed literals) — the size of an L1 string grant (R1 metric)."""
+    t = _canon_text(request)
+    spans = [m.span() for m in re.finditer(r"\w+", t)]
+    out: set[str] = set()
+    for i in range(len(spans)):
+        for j in range(i, len(spans) if max_words is None else min(len(spans), i + max_words)):
+            frag = t[spans[i][0]:spans[j][1]]
+            if not is_typed_literal(frag):
+                out.add(frag)
+    return out
+
+
 def literal_values(text: str, kind: str) -> list[str]:
     """The literals of one kind (by syntax, see :func:`extract`), deduplicated, in order."""
     seen: dict[str, None] = {}

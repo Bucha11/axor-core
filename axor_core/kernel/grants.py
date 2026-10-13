@@ -56,6 +56,9 @@ class ConstraintKind(enum.Enum):
     EXACT = "exact"
     ENUM = "enum"
     LIMIT = "limit"
+    # L1 string: any word-bounded fragment of the request that is no typed literal
+    # (values holds the request text). Uses are counted per distinct value.
+    FRAGMENT = "fragment"
 
 
 @dataclass(frozen=True)
@@ -80,10 +83,25 @@ class ArgConstraint:
         return cls(ConstraintKind.ENUM, handle_kind, vs)
 
     @classmethod
+    def fragment(cls, request: str, optional: bool = False) -> "ArgConstraint":
+        return cls(ConstraintKind.FRAGMENT, "string", frozenset({request}), optional=optional)
+
+    @classmethod
     def at_most(cls, bound: Any) -> "ArgConstraint":
         return cls(ConstraintKind.LIMIT, "money", limit=Decimal(canonicalize("money", bound)))
 
     def admits(self, value: Any, table: HandleTable | None) -> bool:
+        if self.kind is ConstraintKind.FRAGMENT:
+            from axor_core.kernel.request_literals import is_request_fragment
+            raw = value
+            if is_handle_ref(value):
+                h = table.get(value) if table is not None else None
+                if h is None:
+                    return False
+                raw = h.raw
+            if not isinstance(raw, str):
+                return False
+            return any(is_request_fragment(req, raw) for req in self.values)
         if self.kind is ConstraintKind.LIMIT:
             if is_handle_ref(value):
                 c = table.resolve(value, "money") if table is not None else None
@@ -126,6 +144,21 @@ class Grant:
     # the grant so an audit shows exactly what was confirmed, rich fields included.
     call_canonical: str | None = None
 
+    def value_key(self, args: Mapping[str, Any], table: HandleTable | None = None) -> str | None:
+        """For a grant with string-fragment args: the canonical tuple of those values
+        (its uses are counted per key); None for any other grant."""
+        frag = sorted(a for a, c in self.constraints.items() if c.kind is ConstraintKind.FRAGMENT)
+        if not frag:
+            return None
+        parts = []
+        for a in frag:
+            v = args.get(a)
+            vals = v if isinstance(v, (list, tuple, set, frozenset)) else [v]
+            parts.append(tuple(sorted("" if x is None else canonicalize("string", table.get(x).raw
+                                      if (table is not None and is_handle_ref(x) and table.get(x)) else x)
+                                      for x in vals)))
+        return repr(tuple(parts))
+
     def covers(self, sink: str, args: Mapping[str, Any], table: HandleTable | None) -> bool:
         if sink != self.sink:
             return False
@@ -164,6 +197,7 @@ class Reservation:
     call_key: str | None
     state: SpendState
     at: float
+    value_key: str | None = None  # fragment grants: the value whose use this is
 
 
 @dataclass
@@ -171,6 +205,8 @@ class _Slot:
     grant: Grant
     remaining: int | None
     spends: int = 0
+    # fragment grants: uses left per distinct string value (absent key = full quota)
+    by_value: dict = field(default_factory=dict)
 
 
 class GrantStore:
@@ -205,10 +241,12 @@ class GrantStore:
     # -- decide (pure) -------------------------------------------------------------
 
     @staticmethod
-    def _live(slot: _Slot, now: float | None) -> bool:
+    def _live(slot: _Slot, now: float | None, key: str | None = None) -> bool:
         g = slot.grant
         if g.expiry is not None and now is not None and now > g.expiry:
             return False
+        if key is not None and g.uses is not None:  # fragment grant: per-value quota
+            return slot.by_value.get(key, g.uses) > 0
         return slot.remaining is None or slot.remaining > 0
 
     def find(self, sink: str, args: Mapping[str, Any], table: HandleTable | None = None,
@@ -216,7 +254,7 @@ class GrantStore:
         """The first live grant covering the call, in issue order; None if none."""
         for gid in self._order:
             s = self._slots[gid]
-            if self._live(s, now) and s.grant.covers(sink, args, table):
+            if s.grant.covers(sink, args, table) and self._live(s, now, s.grant.value_key(args, table)):
                 return s.grant
         return None
 
@@ -237,13 +275,18 @@ class GrantStore:
             return self._res[self._by_call[call_key]]
         for gid in ([grant_id] if grant_id else self._order):
             s = self._slots.get(gid)
-            if s is None or not self._live(s, now) or not s.grant.covers(sink, args, table):
+            if s is None or not s.grant.covers(sink, args, table):
                 continue
-            if s.remaining is not None:
+            vkey = s.grant.value_key(args, table)
+            if not self._live(s, now, vkey):
+                continue
+            if vkey is not None and s.grant.uses is not None:
+                s.by_value[vkey] = s.by_value.get(vkey, s.grant.uses) - 1
+            elif s.remaining is not None:
                 s.remaining -= 1
             s.spends += 1
             r = Reservation(f"{gid}#{s.spends}", gid, call_key, SpendState.RESERVED,
-                            now if now is not None else 0.0)
+                            now if now is not None else 0.0, value_key=vkey)
             self._res[r.key] = r
             if call_key is not None:
                 self._by_call[call_key] = r.key
@@ -264,7 +307,9 @@ class GrantStore:
             return
         r.state = SpendState.RELEASED
         s = self._slots[r.grant_id]
-        if s.remaining is not None:
+        if r.value_key is not None and s.grant.uses is not None:
+            s.by_value[r.value_key] = s.by_value.get(r.value_key, s.grant.uses) + 1
+        elif s.remaining is not None:
             s.remaining += 1
 
     def state(self, key: str) -> SpendState:
@@ -309,6 +354,9 @@ class GrantStore:
              s.remaining)
             for gid, s in ((g, self._slots[g]) for g in self._order)
         )
+
+
+_FRAGMENT = object()  # sentinel: an L1 string arg (fragment constraint)
 
 
 # ── minting: the only way into a GrantStore ────────────────────────────────────
@@ -361,6 +409,10 @@ class GrantMinter:
             for arg, spec in args.items():
                 kind, optional = split_kind(spec)
                 opt[arg] = optional
+                if kind == "string":
+                    # revision 4: any word-bounded request fragment (one constraint)
+                    cands[arg] = [_FRAGMENT]
+                    continue
                 vals = []
                 for v in literal_values(request, kind):
                     try:
@@ -386,9 +438,10 @@ class GrantMinter:
                 # an optional arg with no literal contributes "absent" (an empty set)
                 for combo in itertools.product(*((cands[a] or [None]) for a in names)):
                     out.append(self._mint(
-                        sink, {a: ArgConstraint(ConstraintKind.EXACT, kinds[a],
-                                                frozenset() if v is None else frozenset({v}),
-                                                optional=opt[a])
+                        sink, {a: (ArgConstraint.fragment(request, optional=opt[a]) if v is _FRAGMENT
+                                   else ArgConstraint(ConstraintKind.EXACT, kinds[a],
+                                                      frozenset() if v is None else frozenset({v}),
+                                                      optional=opt[a]))
                                for a, v in zip(names, combo)},
                         uses, TrustedChannel.REQUEST))
         return out

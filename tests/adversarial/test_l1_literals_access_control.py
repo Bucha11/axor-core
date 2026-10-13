@@ -41,16 +41,18 @@ def _gov(**kw):
     return g
 
 
-def test_unquoted_word_is_no_password_grant():
+def test_without_access_control_any_request_word_is_a_password():
+    """revision 4: a string arg takes any word-bounded request fragment — so without
+    the access-control class a password could be any word of the request. That is why
+    a credential change must be an access-control sink (next tests)."""
     g = _gov()
-    assert not g.evaluate("update_password", {"password": "can"}).allowed
-    assert not g.evaluate("update_password", {"password": "Alice"}).allowed
-    # without the access-control class the quoted value is an L1 literal
-    assert g.evaluate("update_password", {"password": "Hunter2!"}).allowed
+    assert g.evaluate("update_password", {"password": "can"}).allowed
 
 
 def test_access_control_sink_gets_no_l1():
     g = _gov(access_control_sinks={"update_password"})
+    for word in ("can", "Alice", "Hunter2!", "bill", "please pay"):
+        assert not g.evaluate("update_password", {"password": word}).allowed
     assert not any(x.sink == "update_password" for x in g.grants.issued)
     d = g.evaluate("update_password", {"password": "Hunter2!"})
     assert not d.allowed and d.category == "grant_gate"
