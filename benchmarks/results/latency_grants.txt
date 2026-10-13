@@ -1,0 +1,8 @@
+host: x86_64 | CPython 3.13.16 (1 thread)
+grants in store: 9
+  match (find)                p50=   4.8  p99=  15.5  µs
+  charge (reserve+commit)     p50=   6.5  p99=  21.6  µs
+  evaluate on a grant sink trace=True   p50= 104.7  p99= 248.2  µs
+  evaluate + charge trace=True       p50= 127.6  p99= 275.5  µs
+  evaluate on a grant sink trace=False  p50=  45.3  p99=  95.9  µs
+  evaluate + charge trace=False      p50=  46.1  p99=  99.9  µs

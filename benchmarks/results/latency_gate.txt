@@ -1,0 +1,19 @@
+host: x86_64 | CPython 3.13.16 (1 thread)
+
+trace=True:
+  allow egress             p50= 115.2  p99= 288.5  µs
+  deny egress              p50= 119.5  p99= 273.8  µs
+  benign read              p50=  47.4  p99= 116.1  µs
+  integrity-sink prompt    p50=  83.0  p99= 182.0  µs
+  integrity-sink injected  p50= 101.6  p99= 255.0  µs
+  unclassified tool        p50=  87.2  p99= 216.4  µs
+  mixed throughput: 8,460 checks/s   worst-call p99 = 288.5 µs
+
+trace=False:
+  allow egress             p50=  25.2  p99=  70.7  µs
+  deny egress              p50=  28.0  p99=  71.8  µs
+  benign read              p50=  20.3  p99=  52.3  µs
+  integrity-sink prompt    p50=  21.8  p99=  50.4  µs
+  integrity-sink injected  p50=  26.3  p99=  64.7  µs
+  unclassified tool        p50=   9.1  p99=  24.1  µs
+  mixed throughput: 36,849 checks/s   worst-call p99 = 71.8 µs
