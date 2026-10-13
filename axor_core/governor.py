@@ -407,7 +407,8 @@ class ToolCallGovernor:
 
         driving_root = derive_driving_root(
             self._taint, args, self._driving_args.get(tool_name),
-            integrity_sink=tool_name in self._integrity_sinks,
+            integrity_sink=(tool_name in self._integrity_sinks
+                            or tool_name in self._egress_sinks),
         )
 
         # 4. positional admission — for declared instruction-incomplete sinks.

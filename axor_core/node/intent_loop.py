@@ -762,7 +762,8 @@ class IntentLoop:
             check_root = (
                 derive_driving_root(
                     self._taint_engine, tool_args, self._driving_args.get(tool_name),
-                    integrity_sink=tool_name in self._integrity_sinks,
+                    integrity_sink=(tool_name in self._integrity_sinks
+                                    or tool_name in self._egress_sinks),
                 )
                 if self._taint_engine is not None
                 else None
@@ -811,7 +812,8 @@ class IntentLoop:
         if normalized is not None:
             driving_root = derive_driving_root(
                 self._taint_engine, tool_args, self._driving_args.get(tool_name),
-                integrity_sink=tool_name in self._integrity_sinks,
+                integrity_sink=(tool_name in self._integrity_sinks
+                                    or tool_name in self._egress_sinks),
             )
 
             # Density telemetry: record, per high-stakes sink firing, the per-value
@@ -1478,7 +1480,8 @@ class IntentLoop:
         driving_root = (
             derive_driving_root(
                 self._taint_engine, tool_args, self._driving_args.get(tool_name),
-                integrity_sink=tool_name in self._integrity_sinks,
+                integrity_sink=(tool_name in self._integrity_sinks
+                                    or tool_name in self._egress_sinks),
             )
             if self._taint_engine is not None
             else None

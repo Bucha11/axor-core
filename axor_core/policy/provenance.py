@@ -102,9 +102,10 @@ def derive_driving_root(
     """The driving root the taint gate decides on — shared by both paths and by
     the recorded payload, so decision and record cannot disagree.
 
-    For an integrity sink under context-default integrity, numbers in the driving
-    args must be trusted values too (``include_scalars``): an amount the attacker
-    names is as much a choice as a recipient.
+    For a declared sink (egress or integrity) under context-default integrity the
+    integrity-origin mode decides each driving arg, and numbers in the driving args
+    must be trusted values too (``include_scalars``): an amount the attacker names
+    is as much a choice as a recipient.
     """
     from axor_core.policy.gates import driving_subset
 
@@ -301,7 +302,9 @@ def call_payload(
             ref = refs.ref_for(value)
             if ref is not None:
                 arg_refs[name] = ref
-    integrity_sink = bool((roles or {}).get("integrity_sink"))
+    # The integrity-origin mode applies to the driving args of every declared
+    # sink, egress or integrity (derive_driving_root(integrity_sink=...)).
+    integrity_sink = bool((roles or {}).get("integrity_sink") or (roles or {}).get("egress_sink"))
     driving_root = derive_driving_root(
         taint, args or {}, driving, integrity_sink=integrity_sink,
     )
@@ -324,7 +327,7 @@ def call_payload(
     if getattr(taint, "integrity_default", "clean") == "context":
         _add_context_fields(
             payload, taint, args or {}, driving_subset(args or {}, driving),
-            include_scalars=integrity_sink,
+            include_scalars=integrity_sink, sink=integrity_sink,
         )
     if normalized is not None:
         payload["normalized"] = normalized_payload(normalized)
@@ -342,7 +345,7 @@ def _root_payload(root: object) -> "dict[str, object]":
 
 def _add_context_fields(
     payload: "dict[str, object]", taint: object, args: dict, driving: dict,
-    *, include_scalars: bool = False,
+    *, include_scalars: bool = False, sink: bool = False,
 ) -> None:
     """Record what a context-mode verdict turned on, so it can be re-derived.
 
@@ -355,6 +358,10 @@ def _add_context_fields(
     Legacy (``"clean"``) payloads are left byte-identical.
     """
     payload["integrity_default"] = "context"
+    # A sink's driving args are checked against the origin mode even before the
+    # context holds untrusted data (replay: ContextRecord.sink).
+    if sink:
+        payload["driving_sink"] = True
     payload["context_root"] = _root_payload(taint.context_root())  # type: ignore[attr-defined]
     payload["driving_carried"] = _root_payload(taint.derive_carried(driving))  # type: ignore[attr-defined]
     provenance = payload.get("arg_provenance")
@@ -365,7 +372,7 @@ def _add_context_fields(
         # Wrapped as {name: value}: the same leaves the gate's check sees for this
         # argument inside the driving subset (a nested dict's keys are data).
         entry["trusted"] = bool(taint.is_trusted(  # type: ignore[attr-defined]
-            {name: value}, include_scalars=include_scalars))
+            {name: value}, include_scalars=include_scalars, integrity_sink=sink))
         origin = taint.trusted_origin(value)  # type: ignore[attr-defined]
         entry["trusted_origin"] = getattr(origin, "value", None)
 

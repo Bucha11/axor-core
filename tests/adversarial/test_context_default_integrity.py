@@ -266,10 +266,16 @@ def test_context_mode_enum_members_are_operator_trusted():
     assert g.evaluate("transfer_money", {"iban": TASK_IBAN, "amount": 1}).allowed
 
 
-def test_context_mode_is_unchanged_before_any_untrusted_read():
+def test_context_mode_refuses_an_unproven_destination_before_any_untrusted_read():
+    """A sink's driving value clears only by a trusted origin, from the first call:
+    an empty context is not a proof. (Before: context mode was clean until the
+    first untrusted read, so a destination no one fixed was admitted at k=0.)"""
     g = ToolCallGovernor(egress_sinks={"transfer_money"},
                          driving_args={"transfer_money": ["iban"]},
                          integrity_default="context")
+    d = g.evaluate("transfer_money", {"iban": IBAN, "amount": 1})
+    assert not d.allowed and d.category == "taint_enforcement"
+    g.register_task(f"Pay 1 EUR to {IBAN}.")
     assert g.evaluate("transfer_money", {"iban": IBAN, "amount": 1}).allowed
 
 
@@ -327,6 +333,10 @@ def test_context_mode_governance_clear_resets_the_context_root():
         authority_id="ops-1", authority_type="human_operator", reason_code="reviewed",
     ))
     assert not g._taint.context_root().is_tainted
+    # the clear resets the root, not the proof obligation: an unproven destination
+    # still needs a trusted origin
+    assert not g.evaluate("transfer_money", {"iban": "FR7630006000011234567890189", "amount": 1}).allowed
+    g.register_task("Pay FR7630006000011234567890189 one euro.")
     assert g.evaluate("transfer_money", {"iban": "FR7630006000011234567890189", "amount": 1}).allowed
 
 
