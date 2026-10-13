@@ -102,6 +102,16 @@ def canon_id(v: Any) -> str:
     return _text(v)
 
 
+def canon_url(v: Any) -> str:
+    """A URL: scheme removed, host lower-cased, trailing ``/`` removed; the path is
+    kept as written. ``https://WWW.X.com/`` == ``www.x.com``."""
+    s = _text(v).strip()
+    s = re.sub(r"^[a-zA-Z][a-zA-Z0-9+.-]*://", "", s)
+    host, sep, rest = s.partition("/")
+    out = host.lower() + (sep + rest if sep else "")
+    return out.rstrip("/") if out != "/" else out
+
+
 def canon_string(v: Any) -> str:
     return _WS.sub(" ", _text(v)).casefold()
 
@@ -113,6 +123,7 @@ CANONICALIZERS: dict[str, Callable[[Any], str]] = {
     "number": canon_number,
     "path": canon_path,
     "id": canon_id,
+    "url": canon_url,
     "string": canon_string,
 }
 

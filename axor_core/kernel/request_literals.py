@@ -10,7 +10,7 @@ a template (L2), a structured request (L3) or a confirmation (L4).
 T0: no model, no network. Over-extraction only widens L1 grants to values the user
 wrote; it can never add a value the user did not write.
 
-Typed kinds (iban, email, money, number, id, path) are recognised by their syntax.
+Typed kinds (iban, email, url, money, number, id, path) are recognised by their syntax.
 The untyped kind ``string`` is taken ONLY from a fragment the user set apart —
 quotes or backticks: an untyped word anywhere in the request ("can", a file name in
 passing, a capitalised word) is not an authority-bearing literal.
@@ -65,7 +65,12 @@ def extract(text: str) -> list[Literal]:
     for m in _EMAIL.finditer(t):
         add(m, {"email", "string"})
     for m in _URL.finditer(t):
-        add(m, {"string", "id"})
+        # a URL is typed by its syntax (scheme or www.); sentence punctuation after
+        # it is not part of it
+        v = m.group(0)
+        trimmed = v.rstrip(".,;:!?)")
+        if trimmed:
+            out.append(Literal(trimmed, frozenset({"url", "string", "id"}), (m.start(), m.start() + len(trimmed))))
     for m in _DATE.finditer(t):
         add(m, {"string", "id"})
     taken = [lit.span for lit in out]
