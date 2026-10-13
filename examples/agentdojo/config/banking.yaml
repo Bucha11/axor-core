@@ -37,3 +37,11 @@ driving_args:
   send_money: [recipient]
   schedule_transaction: [recipient]
   update_scheduled_transaction: [recipient]
+  update_password: [password]
+  update_user_info: [first_name, last_name, street, city]
+
+# Account-state changes the attacker must not choose (integrity only, no floor):
+# a password an injection supplies is an account takeover.
+integrity_sinks:
+  - update_password
+  - update_user_info

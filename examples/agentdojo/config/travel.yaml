@@ -30,6 +30,20 @@ sensitive_sources:
 
 egress_sinks:
   - send_email
+  # A calendar invite delivers the event's title/description to its participants.
+  - create_calendar_event
 
 driving_args:
   send_email: [recipients, cc, bcc]
+  create_calendar_event: [participants]
+  cancel_calendar_event: [event_id]
+  reserve_hotel: [hotel]
+  reserve_car_rental: [company]
+  reserve_restaurant: [restaurant]
+
+# Bookings and cancellations the attacker must not choose (integrity only).
+integrity_sinks:
+  - cancel_calendar_event
+  - reserve_hotel
+  - reserve_car_rental
+  - reserve_restaurant
