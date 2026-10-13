@@ -331,6 +331,10 @@ class GrantMinter:
     # Operator rule: how many uses an L1 (request) grant gets, per sink. A sink not
     # listed gets default_uses. A model never sets this.
     quotas: Mapping[str, int] = field(default_factory=dict)
+    # Access-control sinks (a credential change): authority only from a structured
+    # request (L3) or a confirmation (L4) — never a request literal (L1) or a
+    # template (L2).
+    access_control: frozenset[str] = frozenset()
     issued: list[Grant] = field(default_factory=list)
 
     def _mint(self, sink: str, constraints: dict[str, ArgConstraint], uses: int | None,
@@ -349,6 +353,8 @@ class GrantMinter:
         out: list[Grant] = []
         explicit = uses
         for sink, args in self.grant_args.items():
+            if sink in self.access_control:
+                continue  # access control: L3/L4 only
             uses = explicit if explicit is not None else self.quotas.get(sink, self.default_uses)
             cands: dict[str, list[str]] = {}
             opt: dict[str, bool] = {}
@@ -392,6 +398,8 @@ class GrantMinter:
         uses are unlimited (the existing enum supersession is this with uses = ∞)."""
         out: list[Grant] = []
         for sink, entries in templates.items():
+            if sink in self.access_control:
+                raise ValueError(f"template for {sink}: an access-control sink takes L3/L4 grants only")
             kinds = self.grant_args.get(sink, {})
             for entry in entries:
                 cs: dict[str, ArgConstraint] = {}

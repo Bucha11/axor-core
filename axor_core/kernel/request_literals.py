@@ -9,6 +9,11 @@ a template (L2), a structured request (L3) or a confirmation (L4).
 
 T0: no model, no network. Over-extraction only widens L1 grants to values the user
 wrote; it can never add a value the user did not write.
+
+Typed kinds (iban, email, money, number, id, path) are recognised by their syntax.
+The untyped kind ``string`` is taken ONLY from a fragment the user set apart —
+quotes or backticks: an untyped word anywhere in the request ("can", a file name in
+passing, a capitalised word) is not an authority-bearing literal.
 """
 
 from __future__ import annotations
@@ -34,7 +39,11 @@ _MONEY = re.compile(
     r"(?:[$€£¥]\s?)?(?<![\w.])-?\d+(?:\.\d+)?(?![\w.])"
 )
 _FILE = re.compile(r"(?<![\w/.-])[\w./-]+\.[A-Za-z0-9]{1,6}\b")
-_QUOTED = re.compile(r"'([^'\n]{1,200})'|\"([^\"\n]{1,200})\"|“([^”\n]{1,200})”|‘([^’\n]{1,200})’")
+_QUOTED = re.compile(
+    r"'([^'\n]{1,200})'|\"([^\"\n]{1,200})\"|“([^”\n]{1,200})”|‘([^’\n]{1,200})’|`([^`\n]{1,200})`")
+# marker kind: the literal was set apart by the user (quotes / backticks)
+QUOTED = "quoted"
+
 _NAME = re.compile(r"\b[A-Z][a-z]+(?:\s[A-Z][a-z]+)*\b")
 
 
@@ -72,17 +81,21 @@ def extract(text: str) -> list[Literal]:
             continue
         add(m, {"path", "string", "id"})
     for m in _QUOTED.finditer(t):
-        g = next(i for i in range(1, 5) if m.group(i) is not None)
-        add(m, {"string", "path", "id"}, g)
+        g = next(i for i in range(1, 6) if m.group(i) is not None)
+        add(m, {"string", "path", "id", QUOTED}, g)
     for m in _NAME.finditer(t):
         add(m, {"string"})
     return out
 
 
 def literal_values(text: str, kind: str) -> list[str]:
-    """The literals of one kind, deduplicated, in order."""
+    """The literals of one kind, deduplicated, in order. ``string`` (untyped) comes
+    only from quoted / backticked fragments."""
     seen: dict[str, None] = {}
     for lit in extract(text):
-        if kind in lit.kinds:
-            seen.setdefault(lit.value, None)
+        if kind not in lit.kinds:
+            continue
+        if kind == "string" and QUOTED not in lit.kinds:
+            continue
+        seen.setdefault(lit.value, None)
     return list(seen)

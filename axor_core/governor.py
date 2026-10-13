@@ -193,6 +193,7 @@ class ToolCallGovernor:
         strict_handles: bool = False,
         floor_scope: str = "addressee",
         shared_stores: "dict[str, Any] | None" = None,
+        access_control_sinks: "set[str] | frozenset[str] | None" = None,
     ) -> None:
         self._positional_sinks = frozenset(positional_sinks or ())
         illegal = {
@@ -277,8 +278,9 @@ class ToolCallGovernor:
         # covering its driving tuple; grants are minted from trusted inputs only
         # (GrantMinter), never from anything register_output sees (O4).
         self._grant_args = {k: dict(v) for k, v in (grant_args or {}).items()}
+        self._access_control = frozenset(access_control_sinks or ())
         grant_errors = validate_grant_config(self._grant_args, grant_templates, bounded_damage,
-                                             grant_quotas)
+                                             grant_quotas, self._access_control)
         if grant_errors:
             raise ValueError("grant config: " + "; ".join(grant_errors))
         self._handles = handle_table if handle_table is not None else HandleTable()
@@ -286,7 +288,8 @@ class ToolCallGovernor:
         # The kernel store or the locked spend-side wrapper; both expose find/reserve.
         inner = getattr(self._grants, "inner", self._grants)
         self._minter = GrantMinter(inner, self._handles, self._grant_args,
-                                   quotas=dict(grant_quotas or {}))
+                                   quotas=dict(grant_quotas or {}),
+                                   access_control=self._access_control)
         if grant_templates:
             self._minter.from_templates(grant_templates)
         self._confirmer = confirmer

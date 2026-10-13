@@ -329,8 +329,12 @@ def validate_grant_config(
     grant_templates: "dict[str, list[dict]] | None" = None,
     bounded_damage: "dict[str, list[str]] | None" = None,
     grant_quotas: "dict[str, int] | None" = None,
+    access_control_sinks: "frozenset[str] | set[str] | None" = None,
 ) -> list[str]:
     """Refuse grant declarations that would give false assurance.
+
+    * An access-control sink (a credential change) must be a grant sink, and takes
+      no template and no L1 quota: its authority is L3/L4 only.
 
     * A grant arg must have a structured kind (iban, email, money, ...). A free-text
       field (a message body, a subject) is rich syntax: exact match on it is not
@@ -374,4 +378,13 @@ def validate_grant_config(
             errors.append(f"grant_quotas[{sink!r}]: sink has no grant_args")
         if isinstance(n, bool) or not isinstance(n, int) or n < 1:
             errors.append(f"grant_quotas[{sink!r}] must be a positive integer, got {n!r}")
+    for sink in sorted(access_control_sinks or ()):
+        if grant_args and sink not in grant_args:
+            # with grants declared, an access-control sink must be a grant sink (else
+            # it would run with no grant gate at all); with no grants nothing is minted
+            errors.append(f"access_control_sinks: {sink!r} has no grant_args (L3/L4 need a grant sink)")
+        if sink in (grant_templates or {}):
+            errors.append(f"grant_templates[{sink!r}]: an access-control sink takes L3/L4 grants only")
+        if sink in (grant_quotas or {}):
+            errors.append(f"grant_quotas[{sink!r}]: an access-control sink has no L1 grant to quota")
     return errors

@@ -53,6 +53,7 @@ _KNOWN_KEYS = frozenset({
     "grant_quotas",
     "floor_scope",
     "shared_stores",
+    "access_control_sinks",
 })
 _CONSEQUENCE_BY_NAME = {c.name.lower(): c for c in ConsequenceClass}
 
@@ -107,6 +108,8 @@ class GovernanceConfig:
     # operator's declaration of stores visible to third parties.
     floor_scope: str = "addressee"
     shared_stores: dict[str, Any] = field(default_factory=dict)
+    # Credential changes: grants only from L3 (structured) or L4 (confirmation).
+    access_control_sinks: frozenset[str] = frozenset()
 
     # ── construction ─────────────────────────────────────────────────────────────
 
@@ -159,6 +162,7 @@ class GovernanceConfig:
             imperative_sinks=_as_set(data.get("imperative_sinks"), "imperative_sinks"),
             integrity_sinks=_as_set(data.get("integrity_sinks"), "integrity_sinks"),
             benign_tools=_as_set(data.get("benign_tools"), "benign_tools"),
+            access_control_sinks=_as_set(data.get("access_control_sinks"), "access_control_sinks"),
             value_policies=_parse_value_policies(data.get("value_policies")),
             driving_args=_parse_driving_args(data.get("driving_args")),
             consequence_overrides=_parse_consequence_overrides(
@@ -239,6 +243,7 @@ class GovernanceConfig:
             "grant_quotas": dict(self.grant_quotas),
             "floor_scope": self.floor_scope,
             "shared_stores": dict(self.shared_stores),
+            "access_control_sinks": set(self.access_control_sinks),
         }
 
 
@@ -288,7 +293,8 @@ def _parse_grants(data: dict[str, Any]) -> dict[str, Any]:
     templates = {str(t): [dict(e) for e in v] for t, v in gt.items()}
     bounded = {str(t): [str(a) for a in v] for t, v in bd.items()}
     quotas = {str(t): n for t, n in gq.items()}
-    errors = validate_grant_config(grant_args, templates, bounded, quotas)
+    acs = _as_set(data.get("access_control_sinks"), "access_control_sinks")
+    errors = validate_grant_config(grant_args, templates, bounded, quotas, acs)
     if errors:
         raise ValueError("grant config: " + "; ".join(errors))
     return {"grant_args": grant_args, "grant_templates": templates, "bounded_damage": bounded,
