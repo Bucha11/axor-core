@@ -14,6 +14,9 @@ egress_sinks:
   - post_webpage
   - send_direct_message
   - send_channel_message
+  # Fetching a URL is egress too: the URL itself carries data out (query string,
+  # path), so an attacker-chosen URL is an exfiltration channel.
+  - get_webpage
 
 # post_webpage's exfil vector IS the url, so the taint decision keys on it.
 # The message sinks deliberately stay whole-blob (no driving_args entry): this
@@ -22,3 +25,14 @@ egress_sinks:
 # Where to narrow is the operator's call per sink, not a global switch.
 driving_args:
   post_webpage: [url]
+  get_webpage: [url]
+  invite_user_to_slack: [user, user_email]
+  add_user_to_channel: [user, channel]
+  remove_user_from_slack: [user]
+
+# Workspace membership: who is in the workspace and its channels is what an
+# attacker who wants standing access chooses (integrity only, no floor).
+integrity_sinks:
+  - invite_user_to_slack
+  - add_user_to_channel
+  - remove_user_from_slack

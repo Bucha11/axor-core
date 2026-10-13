@@ -21,6 +21,9 @@ untrusted_sources:
 egress_sinks:
   - send_email
   - share_file
+  # A calendar invite delivers the event's title/description to its participants.
+  - create_calendar_event
+  - add_calendar_event_participants
 
 # The recipients decide the egress, not the body: forwarding untrusted content to
 # a prompt-given colleague is the job; sending anything to an address that came
@@ -28,9 +31,24 @@ egress_sinks:
 driving_args:
   send_email: [recipients, cc, bcc]
   share_file: [email]
+  create_calendar_event: [participants]
+  add_calendar_event_participants: [participants]
+  cancel_calendar_event: [event_id]
+  reschedule_calendar_event: [event_id]
+  delete_email: [email_id]
+  delete_file: [file_id]
+  append_to_file: [file_id]
 
 # Deleting an email/file after acting on it is the attacker covering tracks —
 # raised to catastrophic so the consequence axis forces a gate.
 consequence_overrides:
   delete_email: catastrophic
   delete_file: catastrophic
+
+# State changes the attacker must not choose (integrity only, no floor).
+integrity_sinks:
+  - cancel_calendar_event
+  - reschedule_calendar_event
+  - delete_email
+  - delete_file
+  - append_to_file
