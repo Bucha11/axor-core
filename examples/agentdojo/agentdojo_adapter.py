@@ -275,8 +275,16 @@ class OpenRouterLLM(BasePipelineElement):
                     return json.load(resp)
             except urllib.error.HTTPError as exc:
                 last = exc.read().decode(errors="replace")
-                if exc.code in (429, 500, 502, 503, 529) and attempt < 6:
-                    time.sleep(delay)
+                # 402 in_flight_budget_exhausted: too many concurrent requests for the
+                # credit balance; it clears when in-flight requests settle
+                inflight = exc.code == 402 and "in_flight_budget" in last
+                if (exc.code in (429, 500, 502, 503, 529) or inflight) and attempt < 6:
+                    ra = exc.headers.get("Retry-After") if exc.headers else None
+                    try:
+                        wait = min(float(ra), 120.0) if ra else delay
+                    except ValueError:
+                        wait = delay
+                    time.sleep(wait)
                     delay = min(delay * 2, 60.0)
                     continue
                 raise RuntimeError(f"OpenRouter {exc.code}: {last}") from exc
