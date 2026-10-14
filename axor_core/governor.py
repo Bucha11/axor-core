@@ -71,7 +71,7 @@ from axor_core.kernel.registration import (
     tool_is_classified,
 )
 from axor_core.kernel.registration import validate_grant_config
-from axor_core.kernel.grants import GrantMinter, GrantStore
+from axor_core.kernel.grants import GrantMinter, GrantStore, compile_tuple_templates
 from axor_core.kernel.handles import HandleTable
 from axor_core.kernel.confirm import render
 from axor_core.taint.engine import TaintEngine
@@ -301,6 +301,10 @@ class ToolCallGovernor:
                                    access_control=self._access_control)
         if grant_templates:
             self._minter.from_templates(grant_templates)
+        # L2 tuple templates over the driving args (all-O ones are issued now).
+        self._minter.tuple_templates = compile_tuple_templates(
+            self._value_policies, self._grant_args, self._driving_args, self._access_control)
+        self._minter.from_tuple_templates_start()
         self._confirmer = confirmer
         self._strict_handles = strict_handles
         self.confirmations = 0

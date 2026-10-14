@@ -383,6 +383,8 @@ class GrantMinter:
     # request (L3) or a confirmation (L4) — never a request literal (L1) or a
     # template (L2).
     access_control: frozenset[str] = frozenset()
+    # L2 tuple templates: sink -> {driving arg: O-set (frozenset) | None (= request literal)}.
+    tuple_templates: dict[str, dict[str, Any]] = field(default_factory=dict)
     issued: list[Grant] = field(default_factory=list)
 
     def _mint(self, sink: str, constraints: dict[str, ArgConstraint], uses: int | None,
@@ -446,6 +448,67 @@ class GrantMinter:
                                                       optional=opt[a]))
                                for a, v in zip(names, combo)},
                         uses, TrustedChannel.REQUEST))
+        out += self._mixed_from_request(request, explicit)
+        return out
+
+    def _o_constraint(self, sink: str, arg: str, values: Any) -> ArgConstraint:
+        kind, optional = split_kind(self.grant_args[sink][arg])
+        for v in values:
+            self.table.mint_trusted(v, kind, TrustedChannel.OPERATOR)
+        return dataclasses.replace(ArgConstraint.enum(kind, values), optional=optional)
+
+    def from_tuple_templates_start(self) -> list[Grant]:
+        """L2, all-O tuple templates: one grant per template at session start, uses
+        from the operator quota (default_uses when none is set)."""
+        out: list[Grant] = []
+        for sink, comps in self.tuple_templates.items():
+            if any(v is None for v in comps.values()):
+                continue
+            cs = {a: self._o_constraint(sink, a, vs) for a, vs in comps.items()}
+            out.append(self._mint(sink, cs, self.quotas.get(sink, self.default_uses),
+                                  TrustedChannel.OPERATOR, "tuple"))
+        return out
+
+    def _mixed_from_request(self, request: str, explicit: int | None) -> list[Grant]:
+        """L2, mixed tuple templates: each R component is a request literal (as L1),
+        each O component the O-set; one grant per tuple of R literals."""
+        out: list[Grant] = []
+        for sink, comps in self.tuple_templates.items():
+            r_args = [a for a, v in comps.items() if v is None]
+            if not r_args or len(r_args) == len(comps):
+                continue  # all-O: issued at start; all-R: plain L1
+            uses = explicit if explicit is not None else self.quotas.get(sink, self.default_uses)
+            cands: dict[str, list] = {}
+            opt: dict[str, bool] = {}
+            kinds: dict[str, str] = {}
+            for arg in r_args:
+                kind, optional = split_kind(self.grant_args[sink][arg])
+                opt[arg], kinds[arg] = optional, kind
+                if kind == "string":
+                    cands[arg] = [_FRAGMENT]
+                    continue
+                vals = []
+                for v in literal_values(request, kind):
+                    try:
+                        vals.append(canonicalize(kind, v))
+                    except ValueError:
+                        continue
+                vals = list(dict.fromkeys(vals))
+                if not vals and not optional:
+                    break
+                cands[arg] = vals
+                for v in vals:
+                    self.table.mint_trusted(v, kind, TrustedChannel.REQUEST)
+            else:
+                o_cs = {a: self._o_constraint(sink, a, vs) for a, vs in comps.items() if vs is not None}
+                for combo in itertools.product(*((cands[a] or [None]) for a in r_args)):
+                    cs = dict(o_cs)
+                    for a, v in zip(r_args, combo):
+                        cs[a] = (ArgConstraint.fragment(request, optional=opt[a]) if v is _FRAGMENT
+                                 else ArgConstraint(ConstraintKind.EXACT, kinds[a],
+                                                    frozenset() if v is None else frozenset({v}),
+                                                    optional=opt[a]))
+                    out.append(self._mint(sink, cs, uses, TrustedChannel.OPERATOR, "tuple"))
         return out
 
     def from_templates(self, templates: Mapping[str, list[Mapping[str, Any]]]) -> list[Grant]:
@@ -528,3 +591,28 @@ class GrantMinter:
         if dry:  # built, not issued: the caller completes it first
             return Grant(self.store.next_id(channel.value), self.task, sink, cs, uses, channel)
         return self._mint(sink, cs, uses, channel)
+
+
+def compile_tuple_templates(
+    value_policies: Mapping[str, Any] | None,
+    grant_args: Mapping[str, Mapping[str, str]],
+    driving_args: Mapping[str, Any] | None,
+    access_control: "frozenset[str] | set[str]" = frozenset(),
+) -> dict[str, dict[str, Any]]:
+    """L2 tuple templates (residuals_rules.md revision 9): for each grant sink that is not
+    access-control, each driving arg that is a grant arg takes the O-set of an operator
+    ``enum`` on that (sink, arg), else a request literal (None). A sink with no O-set is
+    plain L1 and gets no template."""
+    out: dict[str, dict[str, Any]] = {}
+    for sink, kinds in grant_args.items():
+        if sink in access_control:
+            continue
+        driving = [a for a in ((driving_args or {}).get(sink) or ()) if a in kinds]
+        osets: dict[str, frozenset] = {}
+        for p in (value_policies or {}).get(sink, ()) or ():
+            if getattr(p, "kind", None) == "enum" and p.arg in driving:
+                vs = frozenset(p.allowed)
+                osets[p.arg] = osets[p.arg] & vs if p.arg in osets else vs
+        if osets:
+            out[sink] = {a: (sorted(osets[a], key=repr) if a in osets else None) for a in sorted(driving)}
+    return out
