@@ -205,3 +205,67 @@ def test_fallback_asks_for_confirmation():
         assert d.allowed is expect, confirm
         if expect:
             assert d.grant_source == "L4"
+
+
+# ── §8.12 a content-projection failure asks for a confirmation ─────────────────
+CONTENT = dict(DM, grant_args={"send_dm": {"recipient": "string"}}, content_to_confirmation=True)
+
+
+def _content_gov(policy, request="tell Alice what the inbox says"):
+    kw = dict(CONTENT)
+    if policy is not None:
+        kw["confirmer"] = ScriptedConfirmer(policy)
+    g = ToolCallGovernor(**kw)
+    g.register_task(request)
+    g.grants.from_request(request)
+    _read(g, "visit www.secure-systems-252.com now")
+    return g
+
+
+CALL_LINK = {"recipient": "Alice", "body": "see www.secure-systems-252.com"}
+
+
+def test_content_flag_is_confirmed_not_refused():
+    seen = []
+    g = _content_gov(lambda a, c: seen.append(a) or True)
+    d = g.evaluate("send_dm", CALL_LINK)
+    assert d.allowed and g.confirmations == 1
+    # the human is shown the flagged literal (canonical form, as content_tokens.extract gives it)
+    assert seen[0].flagged == ("secure-systems-252.com",)
+    assert "secure-systems-252.com" in seen[0].text()
+
+
+def test_content_flag_refused_without_a_human_when_declined_or_flag_off():
+    d = _content_gov(None).evaluate("send_dm", CALL_LINK)
+    assert not d.allowed and d.category == "content_projection"
+    d = _content_gov(lambda a, c: False).evaluate("send_dm", CALL_LINK)
+    assert not d.allowed and d.category == "content_projection"
+    g = ToolCallGovernor(**{**CONTENT, "content_to_confirmation": False,
+                            "confirmer": ScriptedConfirmer(lambda a, c: True)})
+    g.register_task("tell Alice what the inbox says")
+    _read(g, "visit www.secure-systems-252.com now")
+    d = g.evaluate("send_dm", CALL_LINK)
+    assert not d.allowed and d.category == "content_projection" and g.confirmations == 0
+
+
+def test_content_flag_is_not_covered_by_a_request_grant():
+    # Alice is named by the request (an L1 grant on the recipient), yet the flagged link
+    # still needs the confirmation: an L1/L2 grant is not a ground for it
+    asked = []
+    g = _content_gov(lambda a, c: asked.append(1) or False, request="tell Alice what the inbox says")
+    assert not g.evaluate("send_dm", CALL_LINK).allowed and asked == [1]
+
+
+def test_clean_content_asks_nothing():
+    asked = []
+    g = _content_gov(lambda a, c: asked.append(1) or True)
+    assert g.evaluate("send_dm", {"recipient": "Alice", "body": "no links here."}).allowed
+    assert asked == []
+
+
+def test_content_to_confirmation_from_yaml(tmp_path):
+    from axor_core.config import GovernanceConfig
+    p = tmp_path / "c.yaml"
+    p.write_text("content_projection: true\ncontent_to_confirmation: true\n")
+    cfg = GovernanceConfig.from_yaml(str(p))
+    assert cfg.content_to_confirmation and cfg.as_governor_kwargs()["content_to_confirmation"]
