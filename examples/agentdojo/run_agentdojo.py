@@ -184,6 +184,13 @@ if os.environ.get("AXOR_BENCH_TASK_SLICE"):
     _a, _b = os.environ["AXOR_BENCH_TASK_SLICE"].split(":")
     USER_TASKS = USER_TASKS[int(_a):int(_b)]
 
+# AXOR_BENCH_USER_TASKS="user_task_13,user_task_25" runs exactly these user tasks (a re-run of
+# selected episodes; applied after the slice).
+if os.environ.get("AXOR_BENCH_USER_TASKS"):
+    _want = os.environ["AXOR_BENCH_USER_TASKS"].split(",")
+    USER_TASKS = [t for t in USER_TASKS if t in _want]
+    assert len(USER_TASKS) == len(_want), f"unknown user tasks in {_want}"
+
 
 def _make_llm():
     # Reasoning models (o3/o4-mini) spend completion budget on hidden reasoning
