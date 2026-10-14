@@ -91,6 +91,7 @@ from axor_core.taint.engine import TaintEngine
 # Adding a category without adding it here fails `test_gate_vocabulary.py`.
 GATE_OF_CATEGORY: dict[str, str] = {
     "taint_enforcement": "taint_floor",
+    "audience_floor": "taint_floor",
     "consequence_gate": "consequence",
     "value_policy": "value_policies",
     "ssrf_gate": "ssrf",
@@ -171,6 +172,9 @@ class ToolCallGovernor:
         value_policies: dict | None = None,
         consequence_overrides: dict | None = None,
         max_unattended_consequence: ConsequenceClass = ConsequenceClass.CONSEQUENTIAL,
+        floor_mode: str = "session",
+        audience: "set[str] | frozenset[str] | None" = None,
+        destination_args: "dict[str, list[str]] | None" = None,
         untrusted_sources: "set[str] | frozenset[str] | None" = None,
         sensitive_sources: "set[str] | frozenset[str] | None" = None,
         egress_sinks: "set[str] | frozenset[str] | None" = None,
@@ -211,6 +215,11 @@ class ToolCallGovernor:
         self._value_policies = dict(value_policies or {})
         self._consequence_overrides = dict(consequence_overrides or {})
         self._ceiling = max_unattended_consequence
+        if floor_mode not in ("session", "audience"):
+            raise ValueError(f"unknown floor_mode {floor_mode!r}; expected session | audience")
+        self._floor_mode = floor_mode
+        self._audience = frozenset(str(v).casefold() for v in (audience or ()))
+        self._destination_args = {k: tuple(v) for k, v in (destination_args or {}).items()}
         # Deployment tool taxonomy. axor's normalizer recognises generic tool
         # names (read/write/bash/curl/...); a real deployment renames its tools
         # (send_money, get_webpage, read_inbox, ...). Declaring those tools' roles
@@ -478,7 +487,8 @@ class ToolCallGovernor:
         # content-taint integrity check is superseded; the floor still applies.
         gd = taint_gate(
             tool_name, normalized, driving_root,
-            self._taint.confidentiality_floor_active(), self._egress_sinks,
+            self._taint.confidentiality_floor_active() and self._floor_mode == "session",
+            self._egress_sinks,
             integrity_superseded=integrity_superseded_by_decidable(
                 tool_name, args, self._driving_args, self._value_policies
             ) or self._integrity_superseded_by_grant(tool_name, args)
@@ -512,6 +522,9 @@ class ToolCallGovernor:
             l34 = grant is not None and grant.source.value in ("L3", "L4")
             if grant is None or (tool_name in self._grant_l34_only and not l34):
                 return _deny(consequence_denial)
+        gd = self._audience_floor(tool_name, args, grant)
+        if gd is not None:
+            return _deny(gd)
 
         if self._trace:
             self._trace_events.append(
@@ -533,6 +546,39 @@ class ToolCallGovernor:
             grant_id=grant.id if grant is not None else None,
             grant_source=grant.source.value if grant is not None else None,
             confirmed=confirmed,
+        )
+
+    def _audience_floor(self, tool_name: str, args: dict, grant) -> "GateDecision | None":
+        """Addressed confidentiality floor (``floor_mode="audience"``): while a secret
+        read is outstanding, every destination of an egress sink must be in the
+        audience or have a ground for the disclosure — fixed by the request (origin
+        TASK) or an L3/L4 grant on the call. A write to a declared shared store is a
+        destination outside the audience. An internal write is not held."""
+        if self._floor_mode != "audience" or not self._taint.confidentiality_floor_active():
+            return None
+        ground = grant is not None and grant.source.value in ("L3", "L4")
+        outside: list[str] = []
+        if tool_name in self._egress_sinks:
+            for a in self._destination_args.get(tool_name, ()):
+                v = args.get(a)
+                for x in (v if isinstance(v, (list, tuple, set, frozenset)) else [v]):
+                    if x is None or x == "":
+                        continue
+                    if str(x).casefold() in self._audience:
+                        continue
+                    if self._taint.trusted_origin(x) is TrustedOrigin.TASK:
+                        continue
+                    outside.append(f"{a}={x!r}")
+        if floor_scope_hit(tool_name, args, "shared_stores", self._integrity_sinks,
+                           self._shared_stores):
+            outside.append("a shared store")
+        if not outside or ground:
+            return None
+        return GateDecision(
+            reason=("confidentiality (addressed floor): a secret read is outstanding and "
+                    f"{', '.join(outside)} is outside its audience with no ground "
+                    "(not fixed by the request, no L3/L4 grant)"),
+            category="audience_floor",
         )
 
     def _integrity_superseded_by_grant(self, tool_name: str, args: dict | None = None) -> bool:

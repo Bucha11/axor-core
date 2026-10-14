@@ -50,6 +50,7 @@ _KNOWN_KEYS = frozenset({
     "grant_args",
     "operator_trusted",
     "max_unattended_consequence",
+    "floor_mode", "audience", "destination_args",
     "grant_templates",
     "bounded_damage",
     "grant_quotas",
@@ -119,6 +120,11 @@ class GovernanceConfig:
     operator_trusted: frozenset[str] = frozenset()
     # Unattended consequence ceiling; above it a call needs a grant (a ground).
     max_unattended_consequence: ConsequenceClass = ConsequenceClass.CONSEQUENTIAL
+    # Confidentiality floor: "session" (any egress held while a secret is outstanding)
+    # or "audience" (a destination outside the audience needs a ground).
+    floor_mode: str = "session"
+    audience: frozenset[str] = frozenset()
+    destination_args: dict[str, list[str]] = field(default_factory=dict)
 
     # ── construction ─────────────────────────────────────────────────────────────
 
@@ -174,6 +180,9 @@ class GovernanceConfig:
             access_control_sinks=_as_set(data.get("access_control_sinks"), "access_control_sinks"),
             sink_origins=_parse_sink_origins(data.get("sink_origins")),
             operator_trusted=_as_set(data.get("operator_trusted"), "operator_trusted"),
+            floor_mode=str(data.get("floor_mode") or "session"),
+            audience=_as_set(data.get("audience"), "audience"),
+            destination_args=_parse_driving_args(data.get("destination_args")),
             **({"max_unattended_consequence": _parse_consequence_overrides(
                 {"_": data["max_unattended_consequence"]})["_"]}
                if data.get("max_unattended_consequence") is not None else {}),
@@ -255,6 +264,9 @@ class GovernanceConfig:
             "grant_templates": dict(self.grant_templates),
             "operator_trusted": set(self.operator_trusted),
             "max_unattended_consequence": self.max_unattended_consequence,
+            "floor_mode": self.floor_mode,
+            "audience": set(self.audience),
+            "destination_args": dict(self.destination_args),
             "bounded_damage": dict(self.bounded_damage),
             "grant_quotas": dict(self.grant_quotas),
             "floor_scope": self.floor_scope,
