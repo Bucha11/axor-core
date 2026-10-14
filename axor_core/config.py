@@ -52,6 +52,7 @@ _KNOWN_KEYS = frozenset({
     "max_unattended_consequence",
     "floor_mode", "audience", "destination_args", "content_args",
     "operator_sets", "operator_sets_refuse_above",
+    "template_limits", "consequence_rules", "content_projection",
     "grant_templates",
     "bounded_damage",
     "grant_quotas",
@@ -134,6 +135,10 @@ class GovernanceConfig:
     # Above this consequence class an O-set refuses a value neither in it nor named by
     # the request (None: operator sets refuse nothing).
     operator_sets_refuse_above: "ConsequenceClass | None" = None
+    # M1: magnitude limits in L2 tuple templates; per-call consequence rules; content projection
+    template_limits: dict[str, dict[str, float]] = field(default_factory=dict)
+    consequence_rules: dict[str, dict] = field(default_factory=dict)
+    content_projection: bool = False
 
     # ── construction ─────────────────────────────────────────────────────────────
 
@@ -199,6 +204,10 @@ class GovernanceConfig:
             operator_sets_refuse_above=(
                 _parse_consequence_overrides({"_": data["operator_sets_refuse_above"]})["_"]
                 if data.get("operator_sets_refuse_above") is not None else None),
+            template_limits={str(t): {str(a): float(v) for a, v in (x or {}).items()}
+                             for t, x in (data.get("template_limits") or {}).items()},
+            consequence_rules=_parse_consequence_rules(data.get("consequence_rules")),
+            content_projection=bool(data.get("content_projection", False)),
             **({"max_unattended_consequence": _parse_consequence_overrides(
                 {"_": data["max_unattended_consequence"]})["_"]}
                if data.get("max_unattended_consequence") is not None else {}),
@@ -286,6 +295,9 @@ class GovernanceConfig:
             "content_args": dict(self.content_args),
             "operator_sets": {t: dict(a) for t, a in self.operator_sets.items()},
             "operator_sets_refuse_above": self.operator_sets_refuse_above,
+            "template_limits": {t: dict(a) for t, a in self.template_limits.items()},
+            "consequence_rules": dict(self.consequence_rules),
+            "content_projection": self.content_projection,
             "bounded_damage": dict(self.bounded_damage),
             "grant_quotas": dict(self.grant_quotas),
             "floor_scope": self.floor_scope,
@@ -668,6 +680,21 @@ def _parse_federation(raw: Any) -> dict[str, Any]:
         )
 
     return {"federation_gateway": gateway, "federation_identity": identity}
+
+
+def _parse_consequence_rules(raw: Any) -> dict[str, dict]:
+    """tool -> {"own": class, "magnitude": {"arg": name, "above": number, "class": class}}."""
+    out: dict[str, dict] = {}
+    for tool, rule in (raw or {}).items():
+        r: dict = {}
+        if rule.get("own") is not None:
+            r["own"] = _parse_consequence_overrides({"_": rule["own"]})["_"]
+        m = rule.get("magnitude")
+        if m:
+            r["magnitude"] = {"arg": str(m["arg"]), "above": float(m["above"]),
+                              "class": _parse_consequence_overrides({"_": m["class"]})["_"]}
+        out[str(tool)] = r
+    return out
 
 
 def _parse_consequence_overrides(raw: Any) -> dict[str, ConsequenceClass]:

@@ -93,6 +93,7 @@ GATE_OF_CATEGORY: dict[str, str] = {
     "taint_enforcement": "taint_floor",
     "audience_floor": "taint_floor",
     "operator_set": "value_policies",
+    "content_projection": "carrier",
     "consequence_gate": "consequence",
     "value_policy": "value_policies",
     "ssrf_gate": "ssrf",
@@ -179,6 +180,9 @@ class ToolCallGovernor:
         content_args: "dict[str, list[str]] | None" = None,
         operator_sets: "dict[str, dict[str, list[str]]] | None" = None,
         operator_sets_refuse_above: "ConsequenceClass | None" = None,
+        template_limits: "dict[str, dict[str, float]] | None" = None,
+        consequence_rules: "dict[str, dict] | None" = None,
+        content_projection: bool = False,
         untrusted_sources: "set[str] | frozenset[str] | None" = None,
         sensitive_sources: "set[str] | frozenset[str] | None" = None,
         egress_sinks: "set[str] | frozenset[str] | None" = None,
@@ -220,6 +224,9 @@ class ToolCallGovernor:
         self._operator_sets = {t: {a: list(vs) for a, vs in args.items()}
                                for t, args in (operator_sets or {}).items()}
         self._o_refuse_above = operator_sets_refuse_above
+        self._template_limits = {t: dict(a) for t, a in (template_limits or {}).items()}
+        self._consequence_rules = dict(consequence_rules or {})
+        self._content_projection = bool(content_projection)
         self._requests: list[str] = []
         self._consequence_overrides = dict(consequence_overrides or {})
         self._ceiling = max_unattended_consequence
@@ -330,7 +337,7 @@ class ToolCallGovernor:
         # L2 tuple templates over the driving args (all-O ones are issued now).
         self._minter.tuple_templates = compile_tuple_templates(
             self._value_policies, self._grant_args, self._driving_args, self._grant_l34_only,
-            operator_sets=self._operator_sets)
+            operator_sets=self._operator_sets, template_limits=self._template_limits)
         self._minter.from_tuple_templates_start()
         self._confirmer = confirmer
         self._strict_handles = strict_handles
@@ -342,11 +349,8 @@ class ToolCallGovernor:
         # attacker cannot author. Seeding them keeps the trusted-origin proof
         # consistent with the enum supersession (T4) those members already carry.
         seed_operator_trusted(self._taint, self._value_policies)
-        # Operator-declared sets: OPERATOR origin, no refusal.
-        for args_ in self._operator_sets.values():
-            for vs in args_.values():
-                for v in sorted(vs):
-                    self._taint.register_trusted([v], TrustedOrigin.OPERATOR)
+        # Operator-declared sets are trusted per slot (MODEL.md §8.2): a value clears only in
+        # the (tool, argument) whose set holds it — see _driving_outside_own — never globally.
         # Operator-vouched values outside any allowlist: origin only, no refusal.
         for v in sorted(operator_trusted or ()):
             self._taint.register_trusted([v], TrustedOrigin.OPERATOR)
@@ -459,10 +463,21 @@ class ToolCallGovernor:
         #    ceiling the only ground the governor has is a task-scoped grant: a grant
         #    sink is decided at step 7 (and must be covered there); any other sink is
         #    refused here.
-        gd = consequence_gate(
-            tool_name, normalized.operation, self._ceiling, self._consequence_overrides,
-            strict=self._strict,
-        )
+        call_class = self._call_class(tool_name, args, normalized.operation)
+        gd = None
+        if tool_name not in self._consequence_rules:
+            gd = consequence_gate(
+                tool_name, normalized.operation, self._ceiling, self._consequence_overrides,
+                strict=self._strict,
+            )
+        elif call_class > self._ceiling:
+            gd = GateDecision(
+                reason=(f"consequence gate: this call to '{tool_name}' is {call_class.name}, "
+                        f"exceeding the unattended ceiling {self._ceiling.name}; a ground "
+                        "(a grant, or L3/L4 for CATASTROPHIC) is required"),
+                category="consequence_gate")
+        l34_needed = tool_name in self._access_control or (
+            call_class is ConsequenceClass.CATASTROPHIC and self._ceiling < ConsequenceClass.CATASTROPHIC)
         needs_ground = gd is not None and bool(self._grant_args.get(tool_name))
         if gd is not None and not needs_ground:
             return _deny(gd)
@@ -477,6 +492,9 @@ class ToolCallGovernor:
         gd = self._operator_set_refusal(tool_name, args)
         if gd is not None:
             return _deny(gd)
+        gd = self._content_refusal(tool_name, args)
+        if gd is not None:
+            return _deny(gd)
 
         # 3. SSRF / internal-destination gate.
         gd = ssrf_gate(tool_name, normalized)
@@ -484,8 +502,14 @@ class ToolCallGovernor:
             return _deny(gd)
 
         _mode = self._sink_origins.get(tool_name)
+        # §8.2: a driving arg whose value is in its slot's own set is proven; when every
+        # passed driving arg is, integrity is carried by the sets (as for an enum allowlist)
+        _outside = self._driving_outside_own(tool_name, args)
+        _declared = self._driving_args.get(tool_name)
+        own_proven = bool(_declared) and any(a in args for a in _declared) and _outside == frozenset(
+            a for a in _declared if a not in args)
         driving_root = derive_driving_root(
-            self._taint, args, self._driving_args.get(tool_name),
+            self._taint, args, (_outside if _outside and not own_proven else _declared),
             integrity_sink=(tool_name in self._integrity_sinks
                             or tool_name in self._egress_sinks),
             origins=None if _mode in (None, "none") else _mode,
@@ -511,7 +535,7 @@ class ToolCallGovernor:
             self._egress_sinks,
             integrity_superseded=integrity_superseded_by_decidable(
                 tool_name, args, self._driving_args, self._value_policies
-            ) or self._integrity_superseded_by_grant(tool_name, args)
+            ) or self._integrity_superseded_by_grant(tool_name, args) or own_proven
             or self._sink_origins.get(tool_name) == "none",  # O4' low: no origin check
             integrity_sinks=self._integrity_sinks,
             floor_extra=floor_scope_hit(tool_name, args, self._floor_scope,
@@ -526,6 +550,10 @@ class ToolCallGovernor:
             tool_name, args, self._grant_args, self._grants, self._handles,
             strict_handles=self._strict_handles,
         )
+        if needs_ground and l34_needed and grant is not None and grant.source.value not in ("L3", "L4"):
+            # a CATASTROPHIC call: a request or template grant is not a ground — ask instead
+            gd = GateDecision(reason="grant gate: this call needs an L3/L4 ground", category="grant_gate")
+            grant = None
         confirmed = False
         if grant_gate_confirmable(gd) and self._confirmer is not None:
             action = render(tool_name, args, self._grant_args[tool_name], self._handles)
@@ -540,7 +568,7 @@ class ToolCallGovernor:
             # over the ceiling: admitted only through a grant, and a CATASTROPHIC one
             # only through L3/L4 (no L1/L2 grant is minted for it).
             l34 = grant is not None and grant.source.value in ("L3", "L4")
-            if grant is None or (tool_name in self._grant_l34_only and not l34):
+            if grant is None or (l34_needed and not l34):
                 return _deny(consequence_denial)
         gd = self._audience_floor(tool_name, args, grant)
         if gd is not None:
@@ -567,6 +595,74 @@ class ToolCallGovernor:
             grant_source=grant.source.value if grant is not None else None,
             confirmed=confirmed,
         )
+
+    def _own_slot(self, tool_name: str, arg: str, value: object) -> bool:
+        members = (self._operator_sets.get(tool_name) or {}).get(arg)
+        if not members:
+            return False
+        vals = value if isinstance(value, (list, tuple, set, frozenset)) else [value]
+        mem = {str(m).casefold() for m in members}
+        return bool(vals) and all(str(v).casefold() in mem for v in vals)
+
+    def _driving_outside_own(self, tool_name: str, args: dict):
+        """The driving args minus those whose value is in that slot's own set (§8.2)."""
+        driving = self._driving_args.get(tool_name)
+        if driving is None:
+            return None
+        return frozenset(a for a in driving
+                         if not (a in args and self._own_slot(tool_name, a, args.get(a))))
+
+    def _own_targeted(self, tool_name: str, args: dict) -> bool:
+        """Every passed destination/object value is in its slot's own set (vacuous: own)."""
+        for a in (self._operator_sets.get(tool_name) or {}):
+            v = args.get(a)
+            if v is None or v == "" or v == []:
+                continue
+            if not self._own_slot(tool_name, a, v):
+                return False
+        return True
+
+    def _call_class(self, tool_name: str, args: dict, operation) -> ConsequenceClass:
+        """κ(x) = effect × target × magnitude (MODEL.md §8.1); per tool when no rule."""
+        cls = consequence_class(tool_name, operation=operation,
+                                overrides=self._consequence_overrides, strict=self._strict)
+        rule = self._consequence_rules.get(tool_name)
+        if not rule:
+            return cls
+        if "own" in rule and self._own_targeted(tool_name, args):
+            cls = rule["own"]
+        m = rule.get("magnitude")
+        if m:
+            try:
+                if float(args.get(m["arg"])) > m["above"]:
+                    cls = max(cls, m["class"])
+            except (TypeError, ValueError):
+                pass
+        return cls
+
+    def _content_refusal(self, tool_name: str, args: dict) -> "GateDecision | None":
+        """Content projection (MODEL.md §8.4): every URL / e-mail / IBAN in a content argument
+        must be own (the audience) or named by the request; before grants and confirmation."""
+        if not self._content_projection:
+            return None
+        content = self._content_args.get(tool_name)
+        if not content:
+            return None
+        from axor_core.policy.content_tokens import extract
+        tokens = set()
+        for a in content:
+            tokens |= extract(args.get(a))
+        if not tokens:
+            return None
+        own = extract(sorted(self._audience))
+        named = extract(self._requests)
+        bad = sorted(t for t in tokens if t not in own and t not in named)
+        if not bad:
+            return None
+        return GateDecision(
+            reason=("content projection: " + ", ".join(f"{k} {v!r}" for k, v in bad[:3])
+                    + " in the content is neither own nor named by the request"),
+            category="content_projection")
 
     def _named_by_request(self, tool_name: str, arg: str, value: object) -> bool:
         if self._taint.trusted_origin(value) is TrustedOrigin.TASK:

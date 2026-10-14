@@ -453,6 +453,8 @@ class GrantMinter:
 
     def _o_constraint(self, sink: str, arg: str, values: Any) -> ArgConstraint:
         kind, optional = split_kind(self.grant_args[sink][arg])
+        if isinstance(values, Mapping) and "max" in values:  # a magnitude limit component
+            return dataclasses.replace(ArgConstraint.at_most(values["max"]), optional=optional)
         for v in values:
             self.table.mint_trusted(v, kind, TrustedChannel.OPERATOR)
         return dataclasses.replace(ArgConstraint.enum(kind, values), optional=optional)
@@ -600,6 +602,7 @@ def compile_tuple_templates(
     access_control: "frozenset[str] | set[str]" = frozenset(),
     *,
     operator_sets: "Mapping[str, Mapping[str, Any]] | None" = None,
+    template_limits: "Mapping[str, Mapping[str, Any]] | None" = None,
 ) -> dict[str, dict[str, Any]]:
     """L2 tuple templates (residuals_rules.md revision 9): for each grant sink that is not
     access-control, each driving arg that is a grant arg takes the O-set of an operator
@@ -621,5 +624,7 @@ def compile_tuple_templates(
                 vs = frozenset(vals)
                 osets[a] = osets[a] & vs if a in osets else vs
         if osets:
-            out[sink] = {a: (sorted(osets[a], key=repr) if a in osets else None) for a in sorted(driving)}
+            lim = (template_limits or {}).get(sink) or {}
+            out[sink] = {a: (sorted(osets[a], key=repr) if a in osets
+                             else {"max": lim[a]} if a in lim else None) for a in sorted(driving)}
     return out
