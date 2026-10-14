@@ -177,3 +177,14 @@ def test_unlimited_quota():
         d = g.evaluate("send_dm", {"recipient": "Bob", "body": str(i)})
         assert d.allowed
         g.grant_store.commit(g.spend(d, {"recipient": "Bob", "body": str(i)}))
+
+
+def test_absent_driving_is_empty():
+    kw = dict(untrusted_sources={"read_inbox"}, egress_sinks={"create_event"},
+              driving_args={"create_event": ["participants"]},
+              integrity_default="context", integrity_origins="request-only")
+    for flag, expect in ((False, False), (True, True)):
+        g = ToolCallGovernor(**kw, absent_driving_is_empty=flag)
+        g.register_task("add a reminder")
+        _read(g, "meeting at 10")
+        assert g.evaluate("create_event", {"title": "meeting at 10"}).allowed is expect

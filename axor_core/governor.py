@@ -184,6 +184,7 @@ class ToolCallGovernor:
         consequence_rules: "dict[str, dict] | None" = None,
         content_projection: bool = False,
         operator_sets_confirm: bool = False,
+        absent_driving_is_empty: bool = False,
         untrusted_sources: "set[str] | frozenset[str] | None" = None,
         sensitive_sources: "set[str] | frozenset[str] | None" = None,
         egress_sinks: "set[str] | frozenset[str] | None" = None,
@@ -229,6 +230,7 @@ class ToolCallGovernor:
         self._consequence_rules = dict(consequence_rules or {})
         self._content_projection = bool(content_projection)
         self._o_confirm = bool(operator_sets_confirm)
+        self._absent_empty = bool(absent_driving_is_empty)
         self._requests: list[str] = []
         self._consequence_overrides = dict(consequence_overrides or {})
         self._ceiling = max_unattended_consequence
@@ -515,6 +517,9 @@ class ToolCallGovernor:
             a for a in _declared if a not in args)
         # §8.7: an explicitly empty driving list — nothing for provenance to check
         no_driving = tool_name in self._driving_args and not self._driving_args[tool_name]
+        if self._absent_empty and _declared and not any(
+                args.get(a) not in (None, "", [], {}) for a in _declared):
+            no_driving = True  # §8.8: none passed (or all empty) — nothing to check
         driving_root = derive_driving_root(
             self._taint, args, (_outside if _outside and not own_proven else _declared),
             integrity_sink=(tool_name in self._integrity_sinks
