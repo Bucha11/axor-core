@@ -467,12 +467,18 @@ class GrantMinter:
                     spec_kind = kinds.get(arg)
                     if spec_kind is None:
                         raise ValueError(f"template for {sink}.{arg}: not a grant arg")
-                    kind = split_kind(spec_kind)[0]
+                    kind, optional = split_kind(spec_kind)
+                    # {"in": [...]} — a compiled operator allowlist: the arg keeps its
+                    # optionality (absent is covered; a passed value must be a member).
+                    compiled = isinstance(spec, Mapping) and "in" in spec
+                    if compiled:
+                        spec = spec["in"]
                     vals = list(spec) if isinstance(spec, (list, tuple, set, frozenset)) else [spec]
                     for v in vals:
                         self.table.mint_trusted(v, kind, TrustedChannel.OPERATOR)
-                    cs[arg] = (ArgConstraint.exact(kind, vals[0]) if len(vals) == 1
-                               else ArgConstraint.enum(kind, vals))
+                    c = (ArgConstraint.exact(kind, vals[0]) if len(vals) == 1
+                         else ArgConstraint.enum(kind, vals))
+                    cs[arg] = dataclasses.replace(c, optional=optional) if compiled else c
                 out.append(self._mint(sink, cs, UNLIMITED, TrustedChannel.OPERATOR))
         return out
 
@@ -528,3 +534,34 @@ class GrantMinter:
         if dry:  # built, not issued: the caller completes it first
             return Grant(self.store.next_id(channel.value), self.task, sink, cs, uses, channel)
         return self._mint(sink, cs, uses, channel)
+
+
+def compile_allowlist_templates(
+    value_policies: Mapping[str, Any] | None,
+    grant_args: Mapping[str, Mapping[str, str]],
+    driving_args: Mapping[str, Any] | None,
+    access_control: "frozenset[str] | set[str]" = frozenset(),
+) -> dict[str, list[dict[str, Any]]]:
+    """Operator ``enum`` allowlists on a grant sink's driving grant args, as L2 templates.
+
+    One template entry per sink holding every such allowlist (an argument missing from
+    an entry is unconstrained by the grant, so one entry per argument would leave the
+    others free). The value-policy gate itself is untouched: a non-member is still
+    refused there. Access-control sinks take L3/L4 grants only and are skipped."""
+    out: dict[str, list[dict[str, Any]]] = {}
+    for sink, preds in (value_policies or {}).items():
+        kinds = grant_args.get(sink)
+        if not kinds or sink in access_control:
+            continue
+        driving = set((driving_args or {}).get(sink) or ())
+        entry: dict[str, Any] = {}
+        for p in preds or ():
+            if getattr(p, "kind", None) != "enum" or p.arg not in kinds or p.arg not in driving:
+                continue
+            allowed = sorted(p.allowed, key=repr)
+            if p.arg in entry:  # two enums on one arg: the intersection
+                allowed = [v for v in entry[p.arg]["in"] if v in set(allowed)]
+            entry[p.arg] = {"in": allowed}
+        if entry:
+            out[sink] = [entry]
+    return out
