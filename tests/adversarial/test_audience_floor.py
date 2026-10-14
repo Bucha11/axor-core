@@ -76,3 +76,9 @@ def test_config_keys():
                                       "destination_args": {"send_email": ["recipients"]}})
     kw = cfg.as_governor_kwargs()
     assert kw["floor_mode"] == "audience" and kw["audience"] == {"a@x.com"}
+
+
+def test_config_shared_stores_under_audience_mode():
+    cfg = GovernanceConfig.from_dict({"floor_mode": "audience", "floor_scope": "all_mutating",
+                                      "shared_stores": {"append_to_file": {"file_id": ["7"]}}})
+    assert cfg.as_governor_kwargs()["floor_mode"] == "audience"

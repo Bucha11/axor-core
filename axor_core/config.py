@@ -301,7 +301,8 @@ def _parse_floor(data: dict[str, Any]) -> dict[str, Any]:
     errors = validate_shared_stores(stores)
     if errors:
         raise ValueError("; ".join(errors))
-    if stores and scope != "shared_stores":
+    # the addressed floor (floor_mode: audience) reads shared_stores under any scope
+    if stores and scope != "shared_stores" and data.get("floor_mode") != "audience":
         raise ValueError("shared_stores is declared but floor_scope is not 'shared_stores'")
     return {"floor_scope": scope, "shared_stores": dict(stores)}
 
