@@ -154,3 +154,26 @@ def test_named_destination_needs_no_confirmation():
     g = _ask_gov(False, request="mail carol@ext.com")
     d = g.evaluate("send_email", {"recipients": ["carol@ext.com"], "body": "x"})
     assert d.allowed and d.grant_source == "L1"
+
+
+# ── §8.7 ─────────────────────────────────────────────────────────────────────
+def test_empty_driving_list_checks_nothing():
+    g = ToolCallGovernor(untrusted_sources={"read_inbox"}, integrity_sinks={"create_file"},
+                         driving_args={"create_file": []},
+                         integrity_default="context", integrity_origins="request-only")
+    g.register_task("save the summary")
+    _read(g, "secret plans")
+    assert g.evaluate("create_file", {"filename": "notes.txt", "content": "secret plans"}).allowed
+
+
+def test_unlimited_quota():
+    kw = dict(egress_sinks={"send_dm"}, driving_args={"send_dm": ["recipient"]},
+              grant_args={"send_dm": {"recipient": "string"}},
+              operator_sets={"send_dm": {"recipient": ["Bob"]}}, grant_quotas={"send_dm": None},
+              integrity_default="context", integrity_origins="request-only")
+    g = ToolCallGovernor(**kw)
+    g.register_task("ping Bob")
+    for i in range(3):
+        d = g.evaluate("send_dm", {"recipient": "Bob", "body": str(i)})
+        assert d.allowed
+        g.grant_store.commit(g.spend(d, {"recipient": "Bob", "body": str(i)}))

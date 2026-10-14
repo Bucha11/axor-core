@@ -513,6 +513,8 @@ class ToolCallGovernor:
         _declared = self._driving_args.get(tool_name)
         own_proven = bool(_declared) and any(a in args for a in _declared) and _outside == frozenset(
             a for a in _declared if a not in args)
+        # §8.7: an explicitly empty driving list — nothing for provenance to check
+        no_driving = tool_name in self._driving_args and not self._driving_args[tool_name]
         driving_root = derive_driving_root(
             self._taint, args, (_outside if _outside and not own_proven else _declared),
             integrity_sink=(tool_name in self._integrity_sinks
@@ -540,7 +542,7 @@ class ToolCallGovernor:
             self._egress_sinks,
             integrity_superseded=integrity_superseded_by_decidable(
                 tool_name, args, self._driving_args, self._value_policies
-            ) or self._integrity_superseded_by_grant(tool_name, args) or own_proven
+            ) or self._integrity_superseded_by_grant(tool_name, args) or own_proven or no_driving
             or self._sink_origins.get(tool_name) == "none",  # O4' low: no origin check
             integrity_sinks=self._integrity_sinks,
             floor_extra=floor_scope_hit(tool_name, args, self._floor_scope,

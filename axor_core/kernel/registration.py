@@ -376,8 +376,10 @@ def validate_grant_config(
     for sink, n in (grant_quotas or {}).items():
         if sink not in grant_args:
             errors.append(f"grant_quotas[{sink!r}]: sink has no grant_args")
+        if n is None:
+            continue  # unlimited uses within the session (MODEL.md §8.7)
         if isinstance(n, bool) or not isinstance(n, int) or n < 1:
-            errors.append(f"grant_quotas[{sink!r}] must be a positive integer, got {n!r}")
+            errors.append(f"grant_quotas[{sink!r}] must be a positive integer or null, got {n!r}")
     for sink in sorted(access_control_sinks or ()):
         if grant_args and sink not in grant_args:
             # with grants declared, an access-control sink must be a grant sink (else
