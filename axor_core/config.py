@@ -53,7 +53,7 @@ _KNOWN_KEYS = frozenset({
     "floor_mode", "audience", "destination_args", "content_args",
     "operator_sets", "operator_sets_refuse_above",
     "template_limits", "consequence_rules", "content_projection", "operator_sets_confirm",
-    "absent_driving_is_empty",
+    "absent_driving_is_empty", "fallback_to_confirmation",
     "grant_templates",
     "bounded_damage",
     "grant_quotas",
@@ -144,6 +144,8 @@ class GovernanceConfig:
     operator_sets_confirm: bool = False
     # §8.8: no declared driving argument passed = nothing to check (no whole-blob fallback)
     absent_driving_is_empty: bool = False
+    # §8.10: the fallback's integrity failure asks for a confirmation instead of refusing
+    fallback_to_confirmation: bool = False
 
     # ── construction ─────────────────────────────────────────────────────────────
 
@@ -215,6 +217,7 @@ class GovernanceConfig:
             content_projection=bool(data.get("content_projection", False)),
             operator_sets_confirm=bool(data.get("operator_sets_confirm", False)),
             absent_driving_is_empty=bool(data.get("absent_driving_is_empty", False)),
+            fallback_to_confirmation=bool(data.get("fallback_to_confirmation", False)),
             **({"max_unattended_consequence": _parse_consequence_overrides(
                 {"_": data["max_unattended_consequence"]})["_"]}
                if data.get("max_unattended_consequence") is not None else {}),
@@ -307,6 +310,7 @@ class GovernanceConfig:
             "content_projection": self.content_projection,
             "operator_sets_confirm": self.operator_sets_confirm,
             "absent_driving_is_empty": self.absent_driving_is_empty,
+            "fallback_to_confirmation": self.fallback_to_confirmation,
             "bounded_damage": dict(self.bounded_damage),
             "grant_quotas": dict(self.grant_quotas),
             "floor_scope": self.floor_scope,

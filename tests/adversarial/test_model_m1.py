@@ -188,3 +188,20 @@ def test_absent_driving_is_empty():
         g.register_task("add a reminder")
         _read(g, "meeting at 10")
         assert g.evaluate("create_event", {"title": "meeting at 10"}).allowed is expect
+
+
+def test_fallback_asks_for_confirmation():
+    kw = dict(untrusted_sources={"read_inbox"}, egress_sinks={"create_event"},
+              driving_args={"create_event": ["participants"]},
+              grant_args={"create_event": {"participants": "email?"}},
+              integrity_default="context", integrity_origins="request-only",
+              fallback_to_confirmation=True)
+    for confirm, expect in ((None, False), (False, False), (True, True)):
+        extra = {} if confirm is None else {"confirmer": ScriptedConfirmer(lambda a, c, v=confirm: v)}
+        g = ToolCallGovernor(**kw, **extra)
+        g.register_task("add a reminder")
+        _read(g, "meeting at 10")
+        d = g.evaluate("create_event", {"title": "meeting at 10"})
+        assert d.allowed is expect, confirm
+        if expect:
+            assert d.grant_source == "L4"

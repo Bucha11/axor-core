@@ -185,6 +185,7 @@ class ToolCallGovernor:
         content_projection: bool = False,
         operator_sets_confirm: bool = False,
         absent_driving_is_empty: bool = False,
+        fallback_to_confirmation: bool = False,
         untrusted_sources: "set[str] | frozenset[str] | None" = None,
         sensitive_sources: "set[str] | frozenset[str] | None" = None,
         egress_sinks: "set[str] | frozenset[str] | None" = None,
@@ -231,6 +232,7 @@ class ToolCallGovernor:
         self._content_projection = bool(content_projection)
         self._o_confirm = bool(operator_sets_confirm)
         self._absent_empty = bool(absent_driving_is_empty)
+        self._fallback_confirm = bool(fallback_to_confirmation)
         self._requests: list[str] = []
         self._consequence_overrides = dict(consequence_overrides or {})
         self._ceiling = max_unattended_consequence
@@ -541,18 +543,30 @@ class ToolCallGovernor:
         # driving args are fully guarded by satisfied decidable predicates carries
         # its integrity axis there (a stronger, content-blind control), so the
         # content-taint integrity check is superseded; the floor still applies.
-        gd = taint_gate(
-            tool_name, normalized, driving_root,
-            self._taint.confidentiality_floor_active() and self._floor_mode == "session",
-            self._egress_sinks,
-            integrity_superseded=integrity_superseded_by_decidable(
-                tool_name, args, self._driving_args, self._value_policies
-            ) or self._integrity_superseded_by_grant(tool_name, args) or own_proven or no_driving
-            or self._sink_origins.get(tool_name) == "none",  # O4' low: no origin check
+        _taint_kw = dict(
             integrity_sinks=self._integrity_sinks,
             floor_extra=floor_scope_hit(tool_name, args, self._floor_scope,
                                         self._integrity_sinks, self._shared_stores),
         )
+        _floor_on = self._taint.confidentiality_floor_active() and self._floor_mode == "session"
+        gd = taint_gate(
+            tool_name, normalized, driving_root, _floor_on, self._egress_sinks,
+            integrity_superseded=integrity_superseded_by_decidable(
+                tool_name, args, self._driving_args, self._value_policies
+            ) or self._integrity_superseded_by_grant(tool_name, args) or own_proven or no_driving
+            or self._sink_origins.get(tool_name) == "none",  # O4' low: no origin check
+            **_taint_kw,
+        )
+        if gd is not None and self._fallback_confirm and self._confirmer is not None \
+                and self._grant_args.get(tool_name) and _declared \
+                and not any(args.get(a) not in (None, "", [], {}) for a in _declared) \
+                and taint_gate(tool_name, normalized, driving_root, _floor_on, self._egress_sinks,
+                               integrity_superseded=True, **_taint_kw) is None:
+            # §8.10: the fallback's integrity failure (no driving argument passed) asks for
+            # a confirmation of the exact call, as an unproven destination/object does
+            if unproven is None:
+                unproven = gd
+            gd = None
         if gd is not None:
             return _deny(gd)
 
