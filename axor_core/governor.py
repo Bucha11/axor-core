@@ -92,6 +92,7 @@ from axor_core.taint.engine import TaintEngine
 GATE_OF_CATEGORY: dict[str, str] = {
     "taint_enforcement": "taint_floor",
     "audience_floor": "taint_floor",
+    "operator_set": "value_policies",
     "consequence_gate": "consequence",
     "value_policy": "value_policies",
     "ssrf_gate": "ssrf",
@@ -177,6 +178,7 @@ class ToolCallGovernor:
         destination_args: "dict[str, list[str]] | None" = None,
         content_args: "dict[str, list[str]] | None" = None,
         operator_sets: "dict[str, dict[str, list[str]]] | None" = None,
+        operator_sets_refuse_above: "ConsequenceClass | None" = None,
         untrusted_sources: "set[str] | frozenset[str] | None" = None,
         sensitive_sources: "set[str] | frozenset[str] | None" = None,
         egress_sinks: "set[str] | frozenset[str] | None" = None,
@@ -217,6 +219,8 @@ class ToolCallGovernor:
         self._value_policies = dict(value_policies or {})
         self._operator_sets = {t: {a: list(vs) for a, vs in args.items()}
                                for t, args in (operator_sets or {}).items()}
+        self._o_refuse_above = operator_sets_refuse_above
+        self._requests: list[str] = []
         self._consequence_overrides = dict(consequence_overrides or {})
         self._ceiling = max_unattended_consequence
         if floor_mode not in ("session", "audience"):
@@ -468,6 +472,11 @@ class ToolCallGovernor:
         gd = value_policy_gate(tool_name, args, self._value_policies)
         if gd is not None:
             return _deny(gd)
+        # 2b. organisation sets refuse on irreversible actions (revision 13): before
+        #     grants and confirmation, so a confirmation cannot override it.
+        gd = self._operator_set_refusal(tool_name, args)
+        if gd is not None:
+            return _deny(gd)
 
         # 3. SSRF / internal-destination gate.
         gd = ssrf_gate(tool_name, normalized)
@@ -558,6 +567,53 @@ class ToolCallGovernor:
             grant_source=grant.source.value if grant is not None else None,
             confirmed=confirmed,
         )
+
+    def _named_by_request(self, tool_name: str, arg: str, value: object) -> bool:
+        if self._taint.trusted_origin(value) is TrustedOrigin.TASK:
+            return True
+        spec = (self._grant_args.get(tool_name) or {}).get(arg)
+        if not spec or not self._requests:
+            return False
+        from axor_core.kernel.handles import canonicalize, split_kind
+        from axor_core.kernel.request_literals import literal_values
+        kind = split_kind(spec)[0]
+        if kind == "string":
+            return False
+        try:
+            want = canonicalize(kind, value)
+        except ValueError:
+            return False
+        for req in self._requests:
+            for lit in literal_values(req, kind):
+                try:
+                    if canonicalize(kind, lit) == want:
+                        return True
+                except ValueError:
+                    continue
+        return False
+
+    def _operator_set_refusal(self, tool_name: str, args: dict) -> "GateDecision | None":
+        """Revision 13: on a sink above ``operator_sets_refuse_above``, a value of an
+        O-set argument must be in the O-set or named by the request."""
+        if self._o_refuse_above is None or tool_name not in self._operator_sets:
+            return None
+        if consequence_class(tool_name, overrides=self._consequence_overrides) <= self._o_refuse_above:
+            return None
+        for arg, members in self._operator_sets[tool_name].items():
+            allowed = {str(m).casefold() for m in members}
+            v = args.get(arg)
+            for x in (v if isinstance(v, (list, tuple, set, frozenset)) else [v]):
+                if x is None or x == "" or str(x).casefold() in allowed:
+                    continue
+                if self._named_by_request(tool_name, arg, x):
+                    continue
+                return GateDecision(
+                    reason=(f"organisation set: {tool_name}.{arg}={x!r} is outside the "
+                            "organisation and not named in the request, on an irreversible "
+                            "action"),
+                    category="operator_set",
+                )
+        return None
 
     def _audience_floor(self, tool_name: str, args: dict, grant) -> "GateDecision | None":
         """Addressed confidentiality floor (``floor_mode="audience"``): while a secret
@@ -719,6 +775,8 @@ class ToolCallGovernor:
         user named is not tainted by the context root. Only the user's text belongs
         here — a task written by a model is not trusted."""
         self._taint.register_trusted(task, TrustedOrigin.TASK)
+        if isinstance(task, str):
+            self._requests.append(task)
 
     def register_trusted(
         self, value: object, origin: TrustedOrigin = TrustedOrigin.OPERATOR

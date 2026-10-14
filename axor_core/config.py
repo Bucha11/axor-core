@@ -51,7 +51,7 @@ _KNOWN_KEYS = frozenset({
     "operator_trusted",
     "max_unattended_consequence",
     "floor_mode", "audience", "destination_args", "content_args",
-    "operator_sets",
+    "operator_sets", "operator_sets_refuse_above",
     "grant_templates",
     "bounded_damage",
     "grant_quotas",
@@ -131,6 +131,9 @@ class GovernanceConfig:
     # Operator-declared sets per (sink, arg): OPERATOR origin + tuple-template O-sets;
     # unlike an enum value policy, they refuse nothing.
     operator_sets: dict[str, dict[str, list[str]]] = field(default_factory=dict)
+    # Above this consequence class an O-set refuses a value neither in it nor named by
+    # the request (None: operator sets refuse nothing).
+    operator_sets_refuse_above: "ConsequenceClass | None" = None
 
     # ── construction ─────────────────────────────────────────────────────────────
 
@@ -193,6 +196,9 @@ class GovernanceConfig:
                           for k, v in (data.get("content_args") or {}).items()},
             operator_sets={str(t): {str(a): [str(x) for x in (vs or [])] for a, vs in (args or {}).items()}
                            for t, args in (data.get("operator_sets") or {}).items()},
+            operator_sets_refuse_above=(
+                _parse_consequence_overrides({"_": data["operator_sets_refuse_above"]})["_"]
+                if data.get("operator_sets_refuse_above") is not None else None),
             **({"max_unattended_consequence": _parse_consequence_overrides(
                 {"_": data["max_unattended_consequence"]})["_"]}
                if data.get("max_unattended_consequence") is not None else {}),
@@ -279,6 +285,7 @@ class GovernanceConfig:
             "destination_args": dict(self.destination_args),
             "content_args": dict(self.content_args),
             "operator_sets": {t: dict(a) for t, a in self.operator_sets.items()},
+            "operator_sets_refuse_above": self.operator_sets_refuse_above,
             "bounded_damage": dict(self.bounded_damage),
             "grant_quotas": dict(self.grant_quotas),
             "floor_scope": self.floor_scope,
