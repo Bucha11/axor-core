@@ -195,6 +195,7 @@ class ToolCallGovernor:
         shared_stores: "dict[str, Any] | None" = None,
         access_control_sinks: "set[str] | frozenset[str] | None" = None,
         sink_origins: "dict[str, str] | None" = None,
+        operator_trusted: "set[str] | frozenset[str] | None" = None,
     ) -> None:
         self._positional_sinks = frozenset(positional_sinks or ())
         illegal = {
@@ -310,6 +311,9 @@ class ToolCallGovernor:
         # attacker cannot author. Seeding them keeps the trusted-origin proof
         # consistent with the enum supersession (T4) those members already carry.
         seed_operator_trusted(self._taint, self._value_policies)
+        # Operator-vouched values outside any allowlist: origin only, no refusal.
+        for v in sorted(operator_trusted or ()):
+            self._taint.register_trusted([v], TrustedOrigin.OPERATOR)
         # The value-ref vocabulary the kernel event schema is written in. The
         # gates decide on content derivation and need no ids; the RECORD does —
         # `arg_refs` and `value_ref` are what let a consumer bind a denied sink

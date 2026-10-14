@@ -48,6 +48,7 @@ _KNOWN_KEYS = frozenset({
     "integrity_origins",
     "federation",
     "grant_args",
+    "operator_trusted",
     "grant_templates",
     "bounded_damage",
     "grant_quotas",
@@ -113,6 +114,8 @@ class GovernanceConfig:
     access_control_sinks: frozenset[str] = frozenset()
     # Per-sink integrity-origin mode (request-only | any-trusted | none).
     sink_origins: dict[str, str] = field(default_factory=dict)
+    # Operator-vouched values (origin OPERATOR, not an allowlist: refuses nothing).
+    operator_trusted: frozenset[str] = frozenset()
 
     # ── construction ─────────────────────────────────────────────────────────────
 
@@ -167,6 +170,7 @@ class GovernanceConfig:
             benign_tools=_as_set(data.get("benign_tools"), "benign_tools"),
             access_control_sinks=_as_set(data.get("access_control_sinks"), "access_control_sinks"),
             sink_origins=_parse_sink_origins(data.get("sink_origins")),
+            operator_trusted=_as_set(data.get("operator_trusted"), "operator_trusted"),
             value_policies=_parse_value_policies(data.get("value_policies")),
             driving_args=_parse_driving_args(data.get("driving_args")),
             consequence_overrides=_parse_consequence_overrides(
@@ -243,6 +247,7 @@ class GovernanceConfig:
             "integrity_origins": self.integrity_origins,
             "grant_args": dict(self.grant_args),
             "grant_templates": dict(self.grant_templates),
+            "operator_trusted": set(self.operator_trusted),
             "bounded_damage": dict(self.bounded_damage),
             "grant_quotas": dict(self.grant_quotas),
             "floor_scope": self.floor_scope,
