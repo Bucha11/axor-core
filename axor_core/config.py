@@ -50,7 +50,7 @@ _KNOWN_KEYS = frozenset({
     "grant_args",
     "operator_trusted",
     "max_unattended_consequence",
-    "floor_mode", "audience", "destination_args", "content_args",
+    "floor_mode", "audience", "destination_args", "content_args", "own_names",
     "operator_sets", "operator_sets_refuse_above",
     "template_limits", "consequence_rules", "content_projection", "operator_sets_confirm",
     "absent_driving_is_empty", "fallback_to_confirmation",
@@ -127,6 +127,8 @@ class GovernanceConfig:
     # or "audience" (a destination outside the audience needs a ground).
     floor_mode: str = "session"
     audience: frozenset[str] = frozenset()
+    # MODEL.md §8.14: the user's own file names — never a domain in the content check
+    own_names: frozenset[str] = frozenset()
     destination_args: dict[str, list[str]] = field(default_factory=dict)
     # Per sink, the arguments that can carry a secret (an empty list: none).
     content_args: dict[str, list[str]] = field(default_factory=dict)
@@ -203,6 +205,7 @@ class GovernanceConfig:
             operator_trusted=_as_set(data.get("operator_trusted"), "operator_trusted"),
             floor_mode=str(data.get("floor_mode") or "session"),
             audience=_as_set(data.get("audience"), "audience"),
+            own_names=_as_set(data.get("own_names"), "own_names"),
             destination_args=_parse_driving_args(data.get("destination_args")),
             content_args={str(k): [str(a) for a in (v or [])]
                           for k, v in (data.get("content_args") or {}).items()},
@@ -301,6 +304,7 @@ class GovernanceConfig:
             "max_unattended_consequence": self.max_unattended_consequence,
             "floor_mode": self.floor_mode,
             "audience": set(self.audience),
+            "own_names": set(self.own_names),
             "destination_args": dict(self.destination_args),
             "content_args": dict(self.content_args),
             "operator_sets": {t: dict(a) for t, a in self.operator_sets.items()},

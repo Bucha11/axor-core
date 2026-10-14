@@ -176,6 +176,7 @@ class ToolCallGovernor:
         max_unattended_consequence: ConsequenceClass = ConsequenceClass.CONSEQUENTIAL,
         floor_mode: str = "session",
         audience: "set[str] | frozenset[str] | None" = None,
+        own_names: "set[str] | frozenset[str] | None" = None,
         destination_args: "dict[str, list[str]] | None" = None,
         content_args: "dict[str, list[str]] | None" = None,
         operator_sets: "dict[str, dict[str, list[str]]] | None" = None,
@@ -240,6 +241,7 @@ class ToolCallGovernor:
             raise ValueError(f"unknown floor_mode {floor_mode!r}; expected session | audience")
         self._floor_mode = floor_mode
         self._audience = frozenset(str(v).casefold() for v in (audience or ()))
+        self._own_names = frozenset(str(v).lower() for v in (own_names or ()))
         self._destination_args = {k: tuple(v) for k, v in (destination_args or {}).items()}
         self._content_args = {k: tuple(v) for k, v in (content_args or {}).items()}
         # Deployment tool taxonomy. axor's normalizer recognises generic tool
@@ -684,11 +686,11 @@ class ToolCallGovernor:
         from axor_core.policy.content_tokens import extract
         tokens = set()
         for a in content:
-            tokens |= extract(args.get(a))
+            tokens |= extract(args.get(a), self._own_names)
         if not tokens:
             return None
-        own = extract(sorted(self._audience))
-        named = extract(self._requests)
+        own = extract(sorted(self._audience), self._own_names)
+        named = extract(self._requests, self._own_names)
         bad = sorted(t for t in tokens if t not in own and t not in named)
         if not bad:
             return None
