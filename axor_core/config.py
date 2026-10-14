@@ -53,7 +53,7 @@ _KNOWN_KEYS = frozenset({
     "floor_mode", "audience", "destination_args", "content_args", "own_names",
     "operator_sets", "operator_sets_refuse_above",
     "template_limits", "consequence_rules", "content_projection", "operator_sets_confirm",
-    "absent_driving_is_empty", "fallback_to_confirmation", "references",
+    "absent_driving_is_empty", "fallback_to_confirmation", "references", "references_seed",
     "grant_templates",
     "bounded_damage",
     "grant_quotas",
@@ -150,6 +150,8 @@ class GovernanceConfig:
     fallback_to_confirmation: bool = False
     # MODEL.md §9: target identifiers of untrusted origin reach the agent only as references
     references: bool = False
+    # a fixed seed for reference names — for equivalence checks only; unset in deployment
+    references_seed: "int | None" = None
 
     # ── construction ─────────────────────────────────────────────────────────────
 
@@ -224,6 +226,7 @@ class GovernanceConfig:
             absent_driving_is_empty=bool(data.get("absent_driving_is_empty", False)),
             fallback_to_confirmation=bool(data.get("fallback_to_confirmation", False)),
             references=bool(data.get("references", False)),
+            references_seed=(int(data["references_seed"]) if data.get("references_seed") is not None else None),
             **({"max_unattended_consequence": _parse_consequence_overrides(
                 {"_": data["max_unattended_consequence"]})["_"]}
                if data.get("max_unattended_consequence") is not None else {}),
@@ -319,6 +322,7 @@ class GovernanceConfig:
             "absent_driving_is_empty": self.absent_driving_is_empty,
             "fallback_to_confirmation": self.fallback_to_confirmation,
             "references": self.references,
+            "references_seed": self.references_seed,
             "bounded_damage": dict(self.bounded_damage),
             "grant_quotas": dict(self.grant_quotas),
             "floor_scope": self.floor_scope,
