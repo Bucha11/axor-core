@@ -33,6 +33,7 @@ from axor_core.contracts.taint import (
     resolve_integrity_origins,
 )
 from axor_core.policy.normalizer import IntentNormalizer
+from axor_core.policy.consequence import consequence_class
 from axor_core.contracts.trace import (
     IntentDeniedEvent,
     TaintPropagatedEvent,
@@ -288,6 +289,13 @@ class ToolCallGovernor:
         # (GrantMinter), never from anything register_output sees (O4).
         self._grant_args = {k: dict(v) for k, v in (grant_args or {}).items()}
         self._access_control = frozenset(access_control_sinks or ())
+        # A CATASTROPHIC sink, when the ceiling is below it, takes L3/L4 grounds only —
+        # no L1/L2 grant is minted for it, as for an access-control sink.
+        self._grant_l34_only = self._access_control | frozenset(
+            t for t in (grant_args or {})
+            if consequence_class(t, overrides=self._consequence_overrides)
+            is ConsequenceClass.CATASTROPHIC
+            and max_unattended_consequence < ConsequenceClass.CATASTROPHIC)
         grant_errors = validate_grant_config(self._grant_args, grant_templates, bounded_damage,
                                              grant_quotas, self._access_control)
         if grant_errors:
@@ -298,12 +306,12 @@ class ToolCallGovernor:
         inner = getattr(self._grants, "inner", self._grants)
         self._minter = GrantMinter(inner, self._handles, self._grant_args,
                                    quotas=dict(grant_quotas or {}),
-                                   access_control=self._access_control)
+                                   access_control=self._grant_l34_only)
         if grant_templates:
             self._minter.from_templates(grant_templates)
         # L2 tuple templates over the driving args (all-O ones are issued now).
         self._minter.tuple_templates = compile_tuple_templates(
-            self._value_policies, self._grant_args, self._driving_args, self._access_control)
+            self._value_policies, self._grant_args, self._driving_args, self._grant_l34_only)
         self._minter.from_tuple_templates_start()
         self._confirmer = confirmer
         self._strict_handles = strict_handles
@@ -423,14 +431,18 @@ class ToolCallGovernor:
                 "unclassified_tool",
             )
 
-        # 1. consequence — content-blind action-class gate. (No lease/escalation
-        #    in the governor, so no governance-gate exception.)
+        # 1. consequence — content-blind action-class gate. Above the unattended
+        #    ceiling the only ground the governor has is a task-scoped grant: a grant
+        #    sink is decided at step 7 (and must be covered there); any other sink is
+        #    refused here.
         gd = consequence_gate(
             tool_name, normalized.operation, self._ceiling, self._consequence_overrides,
             strict=self._strict,
         )
-        if gd is not None:
+        needs_ground = gd is not None and bool(self._grant_args.get(tool_name))
+        if gd is not None and not needs_ground:
             return _deny(gd)
+        consequence_denial = gd
 
         # 2. value policies — operator-registered decidable predicates.
         gd = value_policy_gate(tool_name, args, self._value_policies)
@@ -494,6 +506,12 @@ class ToolCallGovernor:
                 gd = None if grant is not None else gd
         if gd is not None:
             return _deny(gd)
+        if needs_ground:
+            # over the ceiling: admitted only through a grant, and a CATASTROPHIC one
+            # only through L3/L4 (no L1/L2 grant is minted for it).
+            l34 = grant is not None and grant.source.value in ("L3", "L4")
+            if grant is None or (tool_name in self._grant_l34_only and not l34):
+                return _deny(consequence_denial)
 
         if self._trace:
             self._trace_events.append(

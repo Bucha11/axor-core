@@ -49,6 +49,7 @@ _KNOWN_KEYS = frozenset({
     "federation",
     "grant_args",
     "operator_trusted",
+    "max_unattended_consequence",
     "grant_templates",
     "bounded_damage",
     "grant_quotas",
@@ -116,6 +117,8 @@ class GovernanceConfig:
     sink_origins: dict[str, str] = field(default_factory=dict)
     # Operator-vouched values (origin OPERATOR, not an allowlist: refuses nothing).
     operator_trusted: frozenset[str] = frozenset()
+    # Unattended consequence ceiling; above it a call needs a grant (a ground).
+    max_unattended_consequence: ConsequenceClass = ConsequenceClass.CONSEQUENTIAL
 
     # ── construction ─────────────────────────────────────────────────────────────
 
@@ -171,6 +174,9 @@ class GovernanceConfig:
             access_control_sinks=_as_set(data.get("access_control_sinks"), "access_control_sinks"),
             sink_origins=_parse_sink_origins(data.get("sink_origins")),
             operator_trusted=_as_set(data.get("operator_trusted"), "operator_trusted"),
+            **({"max_unattended_consequence": _parse_consequence_overrides(
+                {"_": data["max_unattended_consequence"]})["_"]}
+               if data.get("max_unattended_consequence") is not None else {}),
             value_policies=_parse_value_policies(data.get("value_policies")),
             driving_args=_parse_driving_args(data.get("driving_args")),
             consequence_overrides=_parse_consequence_overrides(
@@ -248,6 +254,7 @@ class GovernanceConfig:
             "grant_args": dict(self.grant_args),
             "grant_templates": dict(self.grant_templates),
             "operator_trusted": set(self.operator_trusted),
+            "max_unattended_consequence": self.max_unattended_consequence,
             "bounded_damage": dict(self.bounded_damage),
             "grant_quotas": dict(self.grant_quotas),
             "floor_scope": self.floor_scope,
