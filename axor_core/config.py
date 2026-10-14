@@ -52,7 +52,7 @@ _KNOWN_KEYS = frozenset({
     "max_unattended_consequence",
     "floor_mode", "audience", "destination_args", "content_args",
     "operator_sets", "operator_sets_refuse_above",
-    "template_limits", "consequence_rules", "content_projection",
+    "template_limits", "consequence_rules", "content_projection", "operator_sets_confirm",
     "grant_templates",
     "bounded_damage",
     "grant_quotas",
@@ -139,6 +139,8 @@ class GovernanceConfig:
     template_limits: dict[str, dict[str, float]] = field(default_factory=dict)
     consequence_rules: dict[str, dict] = field(default_factory=dict)
     content_projection: bool = False
+    # §8.5: an unproven destination/object asks for a confirmation instead of refusing
+    operator_sets_confirm: bool = False
 
     # ── construction ─────────────────────────────────────────────────────────────
 
@@ -208,6 +210,7 @@ class GovernanceConfig:
                              for t, x in (data.get("template_limits") or {}).items()},
             consequence_rules=_parse_consequence_rules(data.get("consequence_rules")),
             content_projection=bool(data.get("content_projection", False)),
+            operator_sets_confirm=bool(data.get("operator_sets_confirm", False)),
             **({"max_unattended_consequence": _parse_consequence_overrides(
                 {"_": data["max_unattended_consequence"]})["_"]}
                if data.get("max_unattended_consequence") is not None else {}),
@@ -298,6 +301,7 @@ class GovernanceConfig:
             "template_limits": {t: dict(a) for t, a in self.template_limits.items()},
             "consequence_rules": dict(self.consequence_rules),
             "content_projection": self.content_projection,
+            "operator_sets_confirm": self.operator_sets_confirm,
             "bounded_damage": dict(self.bounded_damage),
             "grant_quotas": dict(self.grant_quotas),
             "floor_scope": self.floor_scope,

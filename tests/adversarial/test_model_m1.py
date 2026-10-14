@@ -115,3 +115,42 @@ def test_projection_off_by_default():
     g = ToolCallGovernor(**{**DM, "content_projection": False})
     g.register_task("tell Alice")
     assert g.evaluate("send_dm", {"recipient": "Alice", "body": "www.evil.com"}).allowed
+
+
+# ── §8.5 unproven destination/object asks for a confirmation ──────────────────
+from axor_core.contracts.canonical import ConsequenceClass as _C  # noqa: E402
+
+ASK = dict(untrusted_sources={"read_inbox"}, egress_sinks={"send_email"},
+           driving_args={"send_email": ["recipients"]}, destination_args={"send_email": ["recipients"]},
+           grant_args={"send_email": {"recipients": "email"}},
+           operator_sets={"send_email": {"recipients": ["bob@org.com"]}},
+           operator_sets_refuse_above=_C.BENIGN, operator_sets_confirm=True,
+           integrity_default="context", integrity_origins="request-only")
+
+
+def _ask_gov(confirm, request="reply to whoever wrote"):
+    kw = dict(ASK)
+    if confirm is not None:
+        kw["confirmer"] = ScriptedConfirmer(lambda a, c: confirm)
+    g = ToolCallGovernor(**kw)
+    g.register_task(request)
+    g.grants.from_request(request)
+    _read(g, "write to carol@ext.com")
+    return g
+
+
+def test_unproven_destination_is_confirmed_not_refused():
+    d = _ask_gov(True).evaluate("send_email", {"recipients": ["carol@ext.com"], "body": "x"})
+    assert d.allowed and d.grant_source == "L4"
+
+
+def test_unproven_destination_refused_without_a_human_or_when_declined():
+    assert not _ask_gov(None).evaluate("send_email", {"recipients": ["carol@ext.com"], "body": "x"}).allowed
+    d = _ask_gov(False).evaluate("send_email", {"recipients": ["carol@ext.com"], "body": "x"})
+    assert not d.allowed and d.category == "operator_set"
+
+
+def test_named_destination_needs_no_confirmation():
+    g = _ask_gov(False, request="mail carol@ext.com")
+    d = g.evaluate("send_email", {"recipients": ["carol@ext.com"], "body": "x"})
+    assert d.allowed and d.grant_source == "L1"

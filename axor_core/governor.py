@@ -183,6 +183,7 @@ class ToolCallGovernor:
         template_limits: "dict[str, dict[str, float]] | None" = None,
         consequence_rules: "dict[str, dict] | None" = None,
         content_projection: bool = False,
+        operator_sets_confirm: bool = False,
         untrusted_sources: "set[str] | frozenset[str] | None" = None,
         sensitive_sources: "set[str] | frozenset[str] | None" = None,
         egress_sinks: "set[str] | frozenset[str] | None" = None,
@@ -227,6 +228,7 @@ class ToolCallGovernor:
         self._template_limits = {t: dict(a) for t, a in (template_limits or {}).items()}
         self._consequence_rules = dict(consequence_rules or {})
         self._content_projection = bool(content_projection)
+        self._o_confirm = bool(operator_sets_confirm)
         self._requests: list[str] = []
         self._consequence_overrides = dict(consequence_overrides or {})
         self._ceiling = max_unattended_consequence
@@ -489,9 +491,12 @@ class ToolCallGovernor:
             return _deny(gd)
         # 2b. organisation sets refuse on irreversible actions (revision 13): before
         #     grants and confirmation, so a confirmation cannot override it.
-        gd = self._operator_set_refusal(tool_name, args)
-        if gd is not None:
-            return _deny(gd)
+        # §8.5: an unproven destination/object needs a confirmation of the exact call; it is
+        # refused here only when there is no human to ask (or no grant args to bind it to)
+        unproven = self._operator_set_refusal(tool_name, args)
+        if unproven is not None and (not self._o_confirm or self._confirmer is None
+                                     or not self._grant_args.get(tool_name)):
+            return _deny(unproven)
         gd = self._content_refusal(tool_name, args)
         if gd is not None:
             return _deny(gd)
@@ -550,7 +555,12 @@ class ToolCallGovernor:
             tool_name, args, self._grant_args, self._grants, self._handles,
             strict_handles=self._strict_handles,
         )
-        if needs_ground and l34_needed and grant is not None and grant.source.value not in ("L3", "L4"):
+        if unproven is not None and gd is None and grant is None:
+            # a call no grant gate decides (empty leading tuple): ask anyway
+            gd = GateDecision(reason="grant gate: an unproven destination/object needs a "
+                              "confirmation", category="grant_gate")
+        if (needs_ground and l34_needed or unproven is not None) and grant is not None \
+                and grant.source.value not in ("L3", "L4"):
             # a CATASTROPHIC call: a request or template grant is not a ground — ask instead
             gd = GateDecision(reason="grant gate: this call needs an L3/L4 ground", category="grant_gate")
             grant = None
@@ -563,7 +573,9 @@ class ToolCallGovernor:
                 confirmed = grant is not None
                 gd = None if grant is not None else gd
         if gd is not None:
-            return _deny(gd)
+            return _deny(unproven if unproven is not None else gd)
+        if unproven is not None and not (grant is not None and grant.source.value in ("L3", "L4")):
+            return _deny(unproven)
         if needs_ground:
             # over the ceiling: admitted only through a grant, and a CATASTROPHIC one
             # only through L3/L4 (no L1/L2 grant is minted for it).
