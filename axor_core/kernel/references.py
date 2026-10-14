@@ -9,7 +9,7 @@ never leaves the kernel / daemon.
 """
 from __future__ import annotations
 
-import random
+import hashlib
 import re
 from dataclasses import dataclass, field
 from typing import Any, Iterable
@@ -48,8 +48,15 @@ class ReferenceTable:
     by_value: dict[tuple[str, str], Reference] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        self._rng = random.Random(self.seed)
+        # names come from a keyed hash of a counter: deterministic for a seed (tests), unguessable
+        # without it (the governor seeds each session from the OS); the kernel stays pure
+        self._counter = 0
         self.own = frozenset(str(v).casefold() for v in self.own)
+
+    def _draw(self, n: int) -> int:
+        self._counter += 1
+        h = hashlib.sha256(f"{self.seed}|{self._counter}".encode()).digest()
+        return int.from_bytes(h[:8], "big") % n
 
     # ── origins ──────────────────────────────────────────────────────────────
     def is_request(self, value: Any) -> bool:
@@ -72,9 +79,9 @@ class ReferenceTable:
             return self.by_value[key].name
         while True:
             if integer:
-                name: Any = self._rng.randrange(*INT_RANGE)
+                name: Any = INT_RANGE[0] + self._draw(INT_RANGE[1] - INT_RANGE[0])
             else:
-                name = f"{kind}_from_untrusted_read_hidden_{self._rng.randrange(16 ** 4):04x}"
+                name = f"{kind}_from_untrusted_read_hidden_{self._draw(16 ** 4):04x}"
             if name not in self.by_name:
                 break
         ref = Reference(name, kind, value, origin)

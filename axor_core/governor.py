@@ -94,6 +94,9 @@ GATE_OF_CATEGORY: dict[str, str] = {
     "audience_floor": "taint_floor",
     "operator_set": "value_policies",
     "content_projection": "carrier",
+    "reference_origin": "value_policies",  # MODEL.md §9: a reference of untrusted origin
+    "reference_unknown": "value_policies",  # a reference not in the session table
+    "reference_secret": "taint_floor",  # a secret reference outside its audience
     "consequence_gate": "consequence",
     "value_policy": "value_policies",
     "ssrf_gate": "ssrf",
@@ -305,8 +308,12 @@ class ToolCallGovernor:
         self._xrefs = None
         if self._references_on:
             from axor_core.kernel.references import ReferenceTable
+            seed = self._references_seed
+            if seed is None:
+                import secrets
+                seed = secrets.randbits(64)
             self._xrefs = ReferenceTable(own=frozenset(self._audience) | frozenset(self._own_names),
-                                         seed=self._references_seed, requests=self._requests)
+                                         seed=seed, requests=self._requests)
         # STRICT obligation: every egress sink must carry a destination allowlist
         # (an enum value_policy) — the sound, paraphrase-proof control. Fail closed
         # at construction rather than ship an egress sink on content-derivation alone.
