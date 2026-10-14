@@ -53,7 +53,7 @@ _KNOWN_KEYS = frozenset({
     "floor_mode", "audience", "destination_args", "content_args", "own_names",
     "operator_sets", "operator_sets_refuse_above",
     "template_limits", "consequence_rules", "content_projection", "operator_sets_confirm",
-    "absent_driving_is_empty", "fallback_to_confirmation",
+    "absent_driving_is_empty", "fallback_to_confirmation", "references",
     "grant_templates",
     "bounded_damage",
     "grant_quotas",
@@ -148,6 +148,8 @@ class GovernanceConfig:
     absent_driving_is_empty: bool = False
     # §8.10: the fallback's integrity failure asks for a confirmation instead of refusing
     fallback_to_confirmation: bool = False
+    # MODEL.md §9: target identifiers of untrusted origin reach the agent only as references
+    references: bool = False
 
     # ── construction ─────────────────────────────────────────────────────────────
 
@@ -221,6 +223,7 @@ class GovernanceConfig:
             operator_sets_confirm=bool(data.get("operator_sets_confirm", False)),
             absent_driving_is_empty=bool(data.get("absent_driving_is_empty", False)),
             fallback_to_confirmation=bool(data.get("fallback_to_confirmation", False)),
+            references=bool(data.get("references", False)),
             **({"max_unattended_consequence": _parse_consequence_overrides(
                 {"_": data["max_unattended_consequence"]})["_"]}
                if data.get("max_unattended_consequence") is not None else {}),
@@ -315,6 +318,7 @@ class GovernanceConfig:
             "operator_sets_confirm": self.operator_sets_confirm,
             "absent_driving_is_empty": self.absent_driving_is_empty,
             "fallback_to_confirmation": self.fallback_to_confirmation,
+            "references": self.references,
             "bounded_damage": dict(self.bounded_damage),
             "grant_quotas": dict(self.grant_quotas),
             "floor_scope": self.floor_scope,

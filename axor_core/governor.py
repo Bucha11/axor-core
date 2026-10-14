@@ -149,6 +149,8 @@ class GovernanceDecision:
     grant_id: str | None = None
     grant_source: str | None = None
     confirmed: bool = False
+    # MODEL.md §9: with references on, the arguments the tool must run with (references resolved)
+    resolved_args: "dict[str, Any] | None" = None
 
 
 class ToolCallGovernor:
@@ -187,6 +189,8 @@ class ToolCallGovernor:
         operator_sets_confirm: bool = False,
         absent_driving_is_empty: bool = False,
         fallback_to_confirmation: bool = False,
+        references: bool = False,
+        references_seed: "int | None" = None,
         untrusted_sources: "set[str] | frozenset[str] | None" = None,
         sensitive_sources: "set[str] | frozenset[str] | None" = None,
         egress_sinks: "set[str] | frozenset[str] | None" = None,
@@ -235,6 +239,9 @@ class ToolCallGovernor:
         self._absent_empty = bool(absent_driving_is_empty)
         self._fallback_confirm = bool(fallback_to_confirmation)
         self._requests: list[str] = []
+        # MODEL.md §9: references (built after the audience is known, below)
+        self._references_on = bool(references)
+        self._references_seed = references_seed
         self._consequence_overrides = dict(consequence_overrides or {})
         self._ceiling = max_unattended_consequence
         if floor_mode not in ("session", "audience"):
@@ -295,6 +302,11 @@ class ToolCallGovernor:
         # instruction field so untrusted content to a trusted destination is not
         # over-blocked.
         self._driving_args = {k: frozenset(v) for k, v in (driving_args or {}).items()}
+        self._xrefs = None
+        if self._references_on:
+            from axor_core.kernel.references import ReferenceTable
+            self._xrefs = ReferenceTable(own=frozenset(self._audience) | frozenset(self._own_names),
+                                         seed=self._references_seed, requests=self._requests)
         # STRICT obligation: every egress sink must carry a destination allowlist
         # (an enum value_policy) — the sound, paraphrase-proof control. Fail closed
         # at construction rather than ship an egress sink on content-derivation alone.
@@ -411,7 +423,94 @@ class ToolCallGovernor:
 
     def evaluate(self, tool_name: str, args: dict[str, Any]) -> GovernanceDecision:
         """Decide whether this tool call may execute. Pure — no side effects on
-        the ledger (call :meth:`register_output` after a tool actually runs)."""
+        the ledger (call :meth:`register_output` after a tool actually runs).
+
+        With references on (MODEL.md §9) the call's references are resolved first; the
+        decision carries ``resolved_args`` — the values the tool must run with."""
+        if self._xrefs is None:
+            return self._evaluate(tool_name, args, None)
+        resolved, ctx = self._reference_context(tool_name, args)
+        d = self._evaluate(tool_name, resolved, ctx)
+        d.resolved_args = resolved
+        return d
+
+    def _reference_context(self, tool_name: str, args: dict[str, Any]) -> "tuple[dict, dict]":
+        """§9.4–9.8 for one call: resolved args and the reference verdicts the gate folds in."""
+        from axor_core.kernel.references import EMAIL, IBAN, ID_KEYS, SECRET, SENDER, UNTRUSTED, URL
+        t = self._xrefs
+        resolved: dict[str, Any] = {}
+        used: dict[str, list] = {}
+        unknown: list = []
+        for k, v in (args or {}).items():
+            resolved[k], used[k], unk = t.resolve(v, k)
+            unknown += unk
+        ctx: dict[str, Any] = {"deny": None, "unproven": None, "origin_decided": False}
+        if unknown:
+            ctx["deny"] = GateDecision(reason=f"reference: {unknown[0]!r} is not in this session's table",
+                                       category="reference_unknown")
+            return resolved, ctx
+        all_refs = [r for rs in used.values() for r in rs]
+        if any(r.origin == SECRET for r in all_refs):  # §9.7: the audience must see the source
+            dests = [x for a in self._destination_args.get(tool_name, ()) for x in _leaves(resolved.get(a))]
+            if any(not t.is_own(x) for x in dests if x not in (None, "")):
+                ctx["deny"] = GateDecision(reason="reference: a secret is resolved only into a sink whose "
+                                                  "audience sees its source", category="reference_secret")
+                return resolved, ctx
+
+        def ident(a: str, x: Any) -> bool:
+            if a in ID_KEYS:
+                return x not in (None, "")
+            return isinstance(x, str) and any(p.fullmatch(x) for p in (EMAIL, IBAN, URL))
+        why = None
+        decided = True
+        declared = self._driving_args.get(tool_name) or frozenset()
+        for a in declared:
+            if a not in args or args.get(a) in (None, "", [], {}):
+                continue
+            refs = used.get(a) or []
+            if any(r.origin in (UNTRUSTED, SECRET) for r in refs):
+                why = why or f"{a} carries a reference of {refs[0].origin} origin"
+            raw = [x for x in _leaves(args.get(a)) if not (x in t.by_name)]
+            for x in raw:
+                rx = x
+                if not ident(a, rx):
+                    decided = False  # not an identifier kind: §8.14's checks decide
+                    continue
+                if t.shown_raw(rx):
+                    continue  # R / own
+                why = why or (f"{a}={rx!r} rebuilds a value this session hid" if str(rx).casefold()
+                              in t.hidden_values() else f"{a}={rx!r} is neither from the request nor own")
+        for a in self._content_args.get(tool_name, ()):  # §9.6
+            if any(r.origin in (UNTRUSTED, SECRET) for r in used.get(a) or []):
+                why = why or f"the content of {a} carries a reference of untrusted origin"
+        if why:
+            ctx["unproven"] = GateDecision(reason="reference: " + why + "; needs a confirmation of the exact call",
+                                           category="reference_origin")
+        ctx["origin_decided"] = decided and bool(declared)
+        return resolved, ctx
+
+    def present_output(self, decision: "GovernanceDecision", output: Any) -> Any:
+        """Register an executed tool's output and return what the agent may see: with references
+        on (§9), target identifiers of untrusted origin replaced by references; otherwise the
+        output unchanged."""
+        self.register_output(decision, output)
+        if self._xrefs is None or not isinstance(output, str):
+            return output
+        ni = decision._normalized
+        tool = ni.tool if ni is not None else ""
+        before = {n for n in self._xrefs.by_name}
+        view = self._xrefs.mint(output, sensitive=tool in self._sensitive_sources)
+        # §9.5: a named sender's value is a ground as an L1 grant on that value
+        from axor_core.kernel.references import SENDER
+        for n, r in list(self._xrefs.by_name.items()):
+            if n not in before and r.origin == SENDER:
+                # as a request literal: named (operator-set rule), trusted origin, L1 grants
+                self._taint.register_trusted(str(r.value), TrustedOrigin.TASK)
+                if self._grant_args:
+                    self.grants.from_request(str(r.value))
+        return view
+
+    def _evaluate(self, tool_name: str, args: dict[str, Any], ctx: "dict | None") -> GovernanceDecision:
         intent = Intent(
             kind=IntentKind.TOOL_CALL,
             payload={"tool": tool_name, "args": args},
@@ -499,7 +598,11 @@ class ToolCallGovernor:
         #     grants and confirmation, so a confirmation cannot override it.
         # §8.5: an unproven destination/object needs a confirmation of the exact call; it is
         # refused here only when there is no human to ask (or no grant args to bind it to)
+        if ctx is not None and ctx["deny"] is not None:
+            return _deny(ctx["deny"])
         unproven = self._operator_set_refusal(tool_name, args)
+        if ctx is not None and ctx["unproven"] is not None:
+            unproven = ctx["unproven"]  # §9.5/9.6: a ground only by L4 (the origin is the reason)
         if unproven is not None and (not self._o_confirm or self._confirmer is None
                                      or not self._grant_args.get(tool_name)):
             return _deny(unproven)
@@ -556,7 +659,8 @@ class ToolCallGovernor:
             integrity_superseded=integrity_superseded_by_decidable(
                 tool_name, args, self._driving_args, self._value_policies
             ) or self._integrity_superseded_by_grant(tool_name, args) or own_proven or no_driving
-            or self._sink_origins.get(tool_name) == "none",  # O4' low: no origin check
+            or self._sink_origins.get(tool_name) == "none"  # O4' low: no origin check
+            or (ctx is not None and ctx["origin_decided"]),  # §9.9: origin decides integrity
             **_taint_kw,
         )
         if gd is not None and self._fallback_confirm and self._confirmer is not None \
@@ -918,3 +1022,11 @@ class ToolCallGovernor:
     def confidentiality_floor_active(self) -> bool:
         """True once a secret read has armed the egress floor this session."""
         return self._taint.confidentiality_floor_active()
+
+
+def _leaves(x: Any) -> list:
+    if isinstance(x, dict):
+        return [y for v in x.values() for y in _leaves(v)]
+    if isinstance(x, (list, tuple, set, frozenset)):
+        return [y for v in x for y in _leaves(v)]
+    return [] if x is None else [x]
