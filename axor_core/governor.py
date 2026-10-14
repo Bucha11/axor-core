@@ -186,7 +186,6 @@ class ToolCallGovernor:
         operator_sets_confirm: bool = False,
         absent_driving_is_empty: bool = False,
         fallback_to_confirmation: bool = False,
-        content_to_confirmation: bool = False,
         untrusted_sources: "set[str] | frozenset[str] | None" = None,
         sensitive_sources: "set[str] | frozenset[str] | None" = None,
         egress_sinks: "set[str] | frozenset[str] | None" = None,
@@ -234,7 +233,6 @@ class ToolCallGovernor:
         self._o_confirm = bool(operator_sets_confirm)
         self._absent_empty = bool(absent_driving_is_empty)
         self._fallback_confirm = bool(fallback_to_confirmation)
-        self._content_confirm = bool(content_to_confirmation)
         self._requests: list[str] = []
         self._consequence_overrides = dict(consequence_overrides or {})
         self._ceiling = max_unattended_consequence
@@ -503,15 +501,9 @@ class ToolCallGovernor:
         if unproven is not None and (not self._o_confirm or self._confirmer is None
                                      or not self._grant_args.get(tool_name)):
             return _deny(unproven)
-        gd, flagged = self._content_refusal(tool_name, args)
+        gd = self._content_refusal(tool_name, args)
         if gd is not None:
-            # §8.12: with a human to ask, a flagged literal needs a confirmation of the
-            # exact call (an L3/L4 ground), as an unproven destination/object does
-            if not (self._content_confirm and self._confirmer is not None
-                    and self._grant_args.get(tool_name)):
-                return _deny(gd)
-            if unproven is None:
-                unproven = gd
+            return _deny(gd)
 
         # 3. SSRF / internal-destination gate.
         gd = ssrf_gate(tool_name, normalized)
@@ -595,8 +587,7 @@ class ToolCallGovernor:
             grant = None
         confirmed = False
         if grant_gate_confirmable(gd) and self._confirmer is not None:
-            action = render(tool_name, args, self._grant_args[tool_name], self._handles,
-                            flagged=flagged)
+            action = render(tool_name, args, self._grant_args[tool_name], self._handles)
             self.confirmations += 1
             if self._confirmer.confirm(action, (tool_name, dict(args))):
                 grant = self._minter.from_confirmation(tool_name, args)
@@ -682,30 +673,29 @@ class ToolCallGovernor:
                 pass
         return cls
 
-    def _content_refusal(self, tool_name: str, args: dict) -> "tuple[GateDecision | None, tuple[str, ...]]":
+    def _content_refusal(self, tool_name: str, args: dict) -> "GateDecision | None":
         """Content projection (MODEL.md §8.4): every URL / e-mail / IBAN in a content argument
-        must be own (the audience) or named by the request; before grants and confirmation.
-        Returns the refusal (or None) and the flagged literals (§8.12)."""
+        must be own (the audience) or named by the request; before grants and confirmation."""
         if not self._content_projection:
-            return None, ()
+            return None
         content = self._content_args.get(tool_name)
         if not content:
-            return None, ()
+            return None
         from axor_core.policy.content_tokens import extract
         tokens = set()
         for a in content:
             tokens |= extract(args.get(a))
         if not tokens:
-            return None, ()
+            return None
         own = extract(sorted(self._audience))
         named = extract(self._requests)
         bad = sorted(t for t in tokens if t not in own and t not in named)
         if not bad:
-            return None, ()
+            return None
         return GateDecision(
             reason=("content projection: " + ", ".join(f"{k} {v!r}" for k, v in bad[:3])
                     + " in the content is neither own nor named by the request"),
-            category="content_projection"), tuple(v for _k, v in bad)
+            category="content_projection")
 
     def _named_by_request(self, tool_name: str, arg: str, value: object) -> bool:
         if self._taint.trusted_origin(value) is TrustedOrigin.TASK:

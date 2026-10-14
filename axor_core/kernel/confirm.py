@@ -40,9 +40,6 @@ class RenderedAction:
     sink: str
     args: tuple[RenderedArg, ...]
     other: tuple[tuple[str, str], ...] = ()  # non-grant args, shown verbatim
-    # §8.12: literals in the content (URL / e-mail / IBAN) that are neither own nor named
-    # by the request — the reason this call is asked about
-    flagged: tuple[str, ...] = ()
 
     def text(self) -> str:
         lines = [f"Allow {self.sink}?"]
@@ -51,13 +48,11 @@ class RenderedAction:
             lines.append(f"  {a.arg} = {a.raw}  [{mark}]")
         for k, v in self.other:
             lines.append(f"  {k} = {v}")
-        for v in self.flagged:
-            lines.append(f"  content names {v}  [neither own nor in the request]")
         return "\n".join(lines)
 
 
 def render(sink: str, args: Mapping[str, Any], grant_args: Mapping[str, str],
-           table: HandleTable, flagged: tuple[str, ...] = ()) -> RenderedAction:
+           table: HandleTable) -> RenderedAction:
     """Render from the table, never from model text (the ``description`` a model
     attaches to a proposal is not an input here). Every argument is shown in full —
     the rich fields too: the grant this confirmation mints covers the whole call."""
@@ -78,7 +73,7 @@ def render(sink: str, args: Mapping[str, Any], grant_args: Mapping[str, str],
                 trusted = table.trusted_for(kind, x) is not None
             shown.append(RenderedArg(arg, raw, trusted))
     other = tuple((k, str(v)) for k, v in args.items() if k not in grant_args)
-    return RenderedAction(sink, tuple(shown), other, tuple(flagged))
+    return RenderedAction(sink, tuple(shown), other)
 
 
 def _canon_leaf(v: Any) -> Any:

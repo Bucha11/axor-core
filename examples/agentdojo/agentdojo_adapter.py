@@ -436,14 +436,8 @@ class GovernedToolsExecutor(BasePipelineElement):
         (no injection) they are benign by construction. The grant it mints is still
         bound to the digest of the exact call, so it cannot be spent on another.
         (The Ajar probes, which do carry attacker bodies, use the whole-call
-        oracle in axor-eval.)
-
-        A call asked about because its content names a literal that is neither own nor
-        requested (MODEL.md §8.12, ``action.flagged``) is approved only if, in addition,
-        every flagged literal occurs in that same ground-truth call's arguments."""
+        oracle in axor-eval.)"""
         import re as _re
-
-        from axor_core.policy.content_tokens import extract
 
         from axor_core.kernel.confirm import ScriptedConfirmer
         from axor_core.kernel.handles import canonicalize, split_kind
@@ -475,9 +469,7 @@ class GovernedToolsExecutor(BasePipelineElement):
             tool, args = call
             kinds = g._grant_args.get(tool, {})
             want = proj(kinds, args)
-            flagged = set(getattr(action, "flagged", ()) or ())
             return any(c.function == tool and proj(kinds, dict(c.args)) == want
-                       and flagged <= {v for _k, v in extract(dict(c.args))}
                        for c in executor._plan)
 
         g._confirmer = ScriptedConfirmer(_limited(oracle, executor, tid))
