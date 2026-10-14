@@ -176,6 +176,7 @@ class ToolCallGovernor:
         audience: "set[str] | frozenset[str] | None" = None,
         destination_args: "dict[str, list[str]] | None" = None,
         content_args: "dict[str, list[str]] | None" = None,
+        operator_sets: "dict[str, dict[str, list[str]]] | None" = None,
         untrusted_sources: "set[str] | frozenset[str] | None" = None,
         sensitive_sources: "set[str] | frozenset[str] | None" = None,
         egress_sinks: "set[str] | frozenset[str] | None" = None,
@@ -214,6 +215,8 @@ class ToolCallGovernor:
                 "definition; they must stay on the content-derivation path."
             )
         self._value_policies = dict(value_policies or {})
+        self._operator_sets = {t: {a: list(vs) for a, vs in args.items()}
+                               for t, args in (operator_sets or {}).items()}
         self._consequence_overrides = dict(consequence_overrides or {})
         self._ceiling = max_unattended_consequence
         if floor_mode not in ("session", "audience"):
@@ -322,7 +325,8 @@ class ToolCallGovernor:
             self._minter.from_templates(grant_templates)
         # L2 tuple templates over the driving args (all-O ones are issued now).
         self._minter.tuple_templates = compile_tuple_templates(
-            self._value_policies, self._grant_args, self._driving_args, self._grant_l34_only)
+            self._value_policies, self._grant_args, self._driving_args, self._grant_l34_only,
+            operator_sets=self._operator_sets)
         self._minter.from_tuple_templates_start()
         self._confirmer = confirmer
         self._strict_handles = strict_handles
@@ -334,6 +338,11 @@ class ToolCallGovernor:
         # attacker cannot author. Seeding them keeps the trusted-origin proof
         # consistent with the enum supersession (T4) those members already carry.
         seed_operator_trusted(self._taint, self._value_policies)
+        # Operator-declared sets: OPERATOR origin, no refusal.
+        for args_ in self._operator_sets.values():
+            for vs in args_.values():
+                for v in sorted(vs):
+                    self._taint.register_trusted([v], TrustedOrigin.OPERATOR)
         # Operator-vouched values outside any allowlist: origin only, no refusal.
         for v in sorted(operator_trusted or ()):
             self._taint.register_trusted([v], TrustedOrigin.OPERATOR)

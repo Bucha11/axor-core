@@ -598,6 +598,8 @@ def compile_tuple_templates(
     grant_args: Mapping[str, Mapping[str, str]],
     driving_args: Mapping[str, Any] | None,
     access_control: "frozenset[str] | set[str]" = frozenset(),
+    *,
+    operator_sets: "Mapping[str, Mapping[str, Any]] | None" = None,
 ) -> dict[str, dict[str, Any]]:
     """L2 tuple templates (residuals_rules.md revision 9): for each grant sink that is not
     access-control, each driving arg that is a grant arg takes the O-set of an operator
@@ -613,6 +615,11 @@ def compile_tuple_templates(
             if getattr(p, "kind", None) == "enum" and p.arg in driving:
                 vs = frozenset(p.allowed)
                 osets[p.arg] = osets[p.arg] & vs if p.arg in osets else vs
+        # operator-declared sets (revision 12): O-sets that refuse nothing
+        for a, vals in ((operator_sets or {}).get(sink) or {}).items():
+            if a in driving and vals:
+                vs = frozenset(vals)
+                osets[a] = osets[a] & vs if a in osets else vs
         if osets:
             out[sink] = {a: (sorted(osets[a], key=repr) if a in osets else None) for a in sorted(driving)}
     return out
