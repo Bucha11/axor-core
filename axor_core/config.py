@@ -50,7 +50,7 @@ _KNOWN_KEYS = frozenset({
     "grant_args",
     "operator_trusted",
     "max_unattended_consequence",
-    "floor_mode", "audience", "destination_args",
+    "floor_mode", "audience", "destination_args", "content_args",
     "grant_templates",
     "bounded_damage",
     "grant_quotas",
@@ -125,6 +125,8 @@ class GovernanceConfig:
     floor_mode: str = "session"
     audience: frozenset[str] = frozenset()
     destination_args: dict[str, list[str]] = field(default_factory=dict)
+    # Per sink, the arguments that can carry a secret (an empty list: none).
+    content_args: dict[str, list[str]] = field(default_factory=dict)
 
     # ── construction ─────────────────────────────────────────────────────────────
 
@@ -183,6 +185,8 @@ class GovernanceConfig:
             floor_mode=str(data.get("floor_mode") or "session"),
             audience=_as_set(data.get("audience"), "audience"),
             destination_args=_parse_driving_args(data.get("destination_args")),
+            content_args={str(k): [str(a) for a in (v or [])]
+                          for k, v in (data.get("content_args") or {}).items()},
             **({"max_unattended_consequence": _parse_consequence_overrides(
                 {"_": data["max_unattended_consequence"]})["_"]}
                if data.get("max_unattended_consequence") is not None else {}),
@@ -267,6 +271,7 @@ class GovernanceConfig:
             "floor_mode": self.floor_mode,
             "audience": set(self.audience),
             "destination_args": dict(self.destination_args),
+            "content_args": dict(self.content_args),
             "bounded_damage": dict(self.bounded_damage),
             "grant_quotas": dict(self.grant_quotas),
             "floor_scope": self.floor_scope,

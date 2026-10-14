@@ -175,6 +175,7 @@ class ToolCallGovernor:
         floor_mode: str = "session",
         audience: "set[str] | frozenset[str] | None" = None,
         destination_args: "dict[str, list[str]] | None" = None,
+        content_args: "dict[str, list[str]] | None" = None,
         untrusted_sources: "set[str] | frozenset[str] | None" = None,
         sensitive_sources: "set[str] | frozenset[str] | None" = None,
         egress_sinks: "set[str] | frozenset[str] | None" = None,
@@ -220,6 +221,7 @@ class ToolCallGovernor:
         self._floor_mode = floor_mode
         self._audience = frozenset(str(v).casefold() for v in (audience or ()))
         self._destination_args = {k: tuple(v) for k, v in (destination_args or {}).items()}
+        self._content_args = {k: tuple(v) for k, v in (content_args or {}).items()}
         # Deployment tool taxonomy. axor's normalizer recognises generic tool
         # names (read/write/bash/curl/...); a real deployment renames its tools
         # (send_money, get_webpage, read_inbox, ...). Declaring those tools' roles
@@ -556,7 +558,8 @@ class ToolCallGovernor:
         destination outside the audience. An internal write is not held."""
         if self._floor_mode != "audience" or not self._taint.confidentiality_floor_active():
             return None
-        ground = grant is not None and grant.source.value in ("L3", "L4")
+        # a ground: the request fixed it (an L1 grant, matched by kind), or L3/L4
+        ground = grant is not None and grant.source.value in ("L1", "L3", "L4")
         outside: list[str] = []
         if tool_name in self._egress_sinks:
             for a in self._destination_args.get(tool_name, ()):
@@ -571,13 +574,17 @@ class ToolCallGovernor:
                     outside.append(f"{a}={x!r}")
         if floor_scope_hit(tool_name, args, "shared_stores", self._integrity_sinks,
                            self._shared_stores):
-            outside.append("a shared store")
+            # only a write that can carry the secret discloses it; a tool whose
+            # content args are not declared is held (unknown = held)
+            content = self._content_args.get(tool_name)
+            if content is None or any(args.get(a) not in (None, "", [], {}) for a in content):
+                outside.append("a shared store")
         if not outside or ground:
             return None
         return GateDecision(
             reason=("confidentiality (addressed floor): a secret read is outstanding and "
                     f"{', '.join(outside)} is outside its audience with no ground "
-                    "(not fixed by the request, no L3/L4 grant)"),
+                    "(not fixed by the request, no L1/L3/L4 grant)"),
             category="audience_floor",
         )
 

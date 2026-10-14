@@ -82,3 +82,30 @@ def test_config_shared_stores_under_audience_mode():
     cfg = GovernanceConfig.from_dict({"floor_mode": "audience", "floor_scope": "all_mutating",
                                       "shared_stores": {"append_to_file": {"file_id": ["7"]}}})
     assert cfg.as_governor_kwargs()["floor_mode"] == "audience"
+
+
+def test_l1_grant_is_a_ground_for_a_scheme_spelled_url():
+    g = ToolCallGovernor(**{**BASE, "egress_sinks": {"get_webpage"}, "driving_args": {"get_webpage": ["url"]},
+                            "destination_args": {"get_webpage": ["url"]},
+                            "grant_args": {"get_webpage": {"url": "url"}},
+                            "integrity_origins": "request-only"})
+    req = "read my inbox, then visit www.eve-blog.com"
+    g.register_task(req)
+    g.grants.from_request(req)
+    d = g.evaluate("read_inbox", {})
+    g.register_output(d, "secret 4421")
+    d = g.evaluate("get_webpage", {"url": "http://www.eve-blog.com"})
+    assert d.allowed and d.grant_source == "L1"
+
+
+def test_shared_store_held_only_when_the_call_carries_content():
+    kw = {"integrity_sinks": {"append_to_file", "reserve"}, "egress_sinks": set(),
+          "driving_args": {"append_to_file": ["file_id"], "reserve": ["hotel"]},
+          "shared_stores": {"append_to_file": {"file_id": ["7"]}, "reserve": "always"},
+          "content_args": {"append_to_file": ["content"], "reserve": []}}
+    g = _gov("append to file 7 and reserve Ritz", **kw)
+    assert g.evaluate("reserve", {"hotel": "Ritz"}).allowed
+    assert g.evaluate("append_to_file", {"file_id": "7", "content": ""}).allowed
+    assert not g.evaluate("append_to_file", {"file_id": "7", "content": "4421"}).allowed
+    g = _gov("append to file 7", **{**kw, "content_args": {}})  # undeclared: held
+    assert not g.evaluate("append_to_file", {"file_id": "7", "content": ""}).allowed
