@@ -571,11 +571,13 @@ class ToolCallGovernor:
         return self._describe()
 
     def _describe(self) -> list:
-        from axor_core.kernel.descriptions import parse
+        from axor_core.kernel.descriptions import covered, parse
         out = []
         member_ents = [e for e, t in self._desc_targets.items() if (t or {}).get("members")]
         for req in self._requests:
             for d in parse(req):
+                if covered(req, d) is not None:
+                    continue  # §9.15a (a): a constraint the grammar does not parse
                 got = self._desc.compute(d, member_ents)
                 if got is None:
                     continue
@@ -587,6 +589,10 @@ class ToolCallGovernor:
                         sink, _, arg = str(t).partition(".")
                         key = (sink, arg, tuple(str(v) for v in vals), members)
                         if key in self._desc_done or sink not in self._grant_args:
+                            continue
+                        # §9.15a (b): never on a CATASTROPHIC sink (nor BENIGN, which needs no grant)
+                        if consequence_class(sink, overrides=self._consequence_overrides) not in (
+                                ConsequenceClass.REVERSIBLE, ConsequenceClass.CONSEQUENTIAL):
                             continue
                         self._desc_done.add(key)
                         note = f"description: {d.phrase!r} = {list(vals)}"

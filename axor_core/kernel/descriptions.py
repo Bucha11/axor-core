@@ -18,7 +18,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable
 
-# ── the phrase-template library (MODEL.md §9.15, complete) ──────────────────
+# ── the grammar (MODEL.md §9.15a (c), complete) ─────────────────────────────
 NOUNS: dict[str, str] = {
     r"channels?": "channel",
     r"users?|members?": "user",
@@ -27,17 +27,29 @@ NOUNS: dict[str, str] = {
     r"files?|documents?": "file",
     r"hotels?": "hotel",
     r"restaurants?": "restaurant",
-    r"(?:car\s+)?rental\s+compan(?:y|ies)": "car_rental",
+    r"(?:car\s+)?rental\s+compan(?:y|ies)|car\s+rentals?": "car_rental",
 }
 FIELDS: dict[str, str] = {
-    r"messages?": "messages",
-    r"users|members|people": "users",
-    r"ratings?|rated": "rating",
-    r"prices?|cost": "price",
-    r"size": "size",
+    r"messages?|message\s+counts?|posts": "messages",
+    r"users|members|people|participants": "users",
+    r"ratings?|rated|score": "rating",
+    r"prices?|costs?": "price",
+    r"size|space|storage": "size",
 }
-MAX_WORDS = r"most|highest|largest|biggest|greatest|best|top"
-MIN_WORDS = r"fewest|least|lowest|smallest"
+MAX_WORDS = r"most|highest|largest|biggest|greatest|best|top|maximum"
+MIN_WORDS = r"fewest|least|lowest|smallest|minimum"
+SUP_ADJ: dict[str, tuple[str, str]] = {
+    r"largest|biggest": ("argmax", "size"),
+    r"smallest": ("argmin", "size"),
+    r"cheapest": ("argmin", "price"),
+    r"most\s+expensive|priciest": ("argmax", "price"),
+    r"quietest|least\s+active": ("argmin", "messages"),
+    r"most\s+active|busiest": ("argmax", "messages"),
+    r"(?:best|highest|top)(?:-|\s+)rated": ("argmax", "rating"),
+}
+DET = r"(?:a|an|the|that|this|which)"
+_GRAMMAR_WORDS = {"a", "an", "the", "that", "this", "which", "same", "most", "least", "new"}
+
 
 def _noun_rx(name: str = "noun") -> str:
     return f"(?P<{name}>" + "|".join(f"(?:{k})" for k in sorted(NOUNS, key=len, reverse=True)) + r")\b"
@@ -45,31 +57,33 @@ def _noun_rx(name: str = "noun") -> str:
 
 _NOUN = _noun_rx()
 _FIELD = "(?P<field>" + "|".join(f"(?:{k})" for k in FIELDS) + r")\b"
-_LIT = r"(?P<lit>'[^']+'|\"[^\"]+\"|[\w.@-]+)"
+_LIT = r"(?P<lit>'[^']+'|\"[^\"]+\"|#[\w.-]+|[\w.@-]+)"
 _W = r"(?:\S+\s+)"
+_ADJ = "(?P<adj>" + "|".join(f"(?:{k})" for k in SUP_ADJ) + ")"
 
-T1 = re.compile(r"\b" + _NOUN + r"(?:\s+\S+){0,4}?\s+(?:with|that\s+has|having|which\s+has)\s+(?:the\s+)?"
-                r"(?P<sup>" + MAX_WORDS + "|" + MIN_WORDS + r")\s+(?:number\s+of\s+|total\s+|amount\s+of\s+)?"
-                + _FIELD, re.I)
-T1_RATED = re.compile(r"\b(?:highest|best|top)[- ]rated\s+" + _W + r"{0,2}?" + _NOUN, re.I)
-T1_ADJ = re.compile(r"\bthe\s+(?P<adj>largest|biggest|smallest|cheapest|most\s+expensive)\s+" + _W + r"{0,2}?"
-                    + _NOUN, re.I)
-T2 = re.compile(r"\b" + _NOUN + r"\s+(?P<op>named|called|titled|starting\s+with|beginning\s+with|"
-                r"that\s+starts\s+with|containing|that\s+contains|whose\s+name\s+contains)\s+" + _LIT, re.I)
-T2_QUOTED = re.compile(r"(?P<lit>'[^']+'|\"[^\"]+\")\s+" + _NOUN, re.I)
+G1 = re.compile(r"\b" + _NOUN + r"(?:\s+\S+){0,4}?\s+(?:with|that\s+has|that\s+have|which\s+has|which\s+have|"
+                r"having|has|have)\s+(?:the\s+)?(?P<sup>" + MAX_WORDS + "|" + MIN_WORDS
+                + r")\s+(?:number\s+of\s+|total\s+|amount\s+of\s+|count\s+of\s+)?" + _FIELD, re.I)
+G2 = re.compile(r"\b(?:" + DET + r"\s+)?" + _ADJ + r"\s+" + _W + r"{0,2}?" + _NOUN, re.I)
+G3 = re.compile(r"\b" + _NOUN + r"(?:\s+\S+){0,4}?\s+(?:rated|ranked)\s+(?:the\s+)?(?:best|highest|top)\b", re.I)
+_SEL = (r"(?P<op>named|called|titled|(?:(?:whose\s+name|that|which)\s+)?(?:starts|starting|begins|beginning)"
+        r"\s+with|(?:(?:whose\s+name|that|which)\s+)?(?:contains|containing))")
+G4 = re.compile(r"\b" + _NOUN + r"\s+" + _SEL + r"\s+" + _LIT, re.I)
+G4_QUOTED = re.compile(r"(?P<lit>'[^']+'|\"[^\"]+\")\s+" + _NOUN, re.I)
+G4_HASH = re.compile(r"(?<![\w&])#(?P<lit>[A-Za-z][\w.-]*)")
+G4_WORD = re.compile(r"\bthe\s+(?P<lit>[A-Za-z][\w-]*)\s+" + _NOUN, re.I)
 _NAME = r"[A-Z][\w'-]*(?:\s+[A-Z][\w'-]*){0,2}"
-T3_OF = re.compile(r"\be-?mail(?:\s+address)?\s+of\s+(?P<name>" + _NAME + ")")
-T3_POSS = re.compile(r"(?P<name>" + _NAME + r")'s\s+e-?mail\b")
-T3_PRON = re.compile(r"\b(?:his|her|their)\s+e-?mail\b", re.I)
-T4 = re.compile(r"\b(?:members|participants|users|everyone|everybody|all\s+users|all\s+members|"
-                r"all\s+participants)\s+(?:of|in|from)\s+(?:the\s+)?(?:" + _NOUN + r"\s+)?" + _LIT
-                + r"(?:\s+" + _noun_rx("noun2") + ")?", re.I)
-T4_SAME = re.compile(r"\bsame\s+(?:participants|members|users|attendees)\s+as\s+(?:the\s+)?(?:" + _NOUN
-                     + r"\s+)?" + _LIT + r"(?:\s+" + _noun_rx("noun2") + ")?", re.I)
+G5_OF = re.compile(r"\b(?:e-?mail)(?:\s+address)?\s+(?:of|for|belonging\s+to)\s+(?P<name>" + _NAME + ")")
+G5_POSS = re.compile(r"(?P<name>" + _NAME + r")'s\s+e-?mail\b")
+G5_PRON = re.compile(r"\b(?:his|her|their)\s+e-?mail\b", re.I)
+_TAIL = r"\s+(?:the\s+)?(?:" + _NOUN + r"\s+)?" + _LIT + r"(?:\s+" + _noun_rx("noun2") + ")?"
+G6 = re.compile(r"\b(?:all\s+users|all\s+members|all\s+participants|all\s+attendees|members|participants|users|"
+                r"attendees|invitees|everyone|everybody|people)(?:\s+who\s+(?:was|were|is|are))?\s+(?:of|in|from|at)"
+                + _TAIL, re.I)
+G6_WHO = re.compile(r"\b(?:everyone|everybody|those|the\s+people)\s+who\s+(?:attended|joined|was\s+in|were\s+in)"
+                    + _TAIL, re.I)
+G6_SAME = re.compile(r"\bsame\s+(?:participants|members|users|attendees|people)\s+as" + _TAIL, re.I)
 _CAPS = re.compile(_NAME)
-_SELECT_OP = {"named": "eq", "called": "eq", "titled": "eq", "starting with": "starts",
-              "beginning with": "starts", "that starts with": "starts", "containing": "contains",
-              "that contains": "contains", "whose name contains": "contains"}
 
 
 def _entity(noun: str) -> str:
@@ -90,7 +104,7 @@ def _unq(lit: str) -> str:
     lit = lit.strip()
     if len(lit) >= 2 and lit[0] == lit[-1] and lit[0] in "'\"":
         return lit[1:-1]
-    return lit.rstrip(".,;:!?")
+    return lit.lstrip("#").rstrip(".,;:!?")
 
 
 def _c(x: Any) -> str:
@@ -102,60 +116,147 @@ class Description:
     op: str  # argmax | argmin | select | members | email_of
     entity: str
     field: str = ""
-    mode: str = ""  # select: eq | starts | contains
+    mode: str = ""  # select: eq | starts | contains | word
     lit: str = ""
     names: tuple = ()  # email_of: candidate names, nearest first
     phrase: str = ""
+    span: tuple = (0, 0)
+
+
+# ── (a) whole-phrase coverage ───────────────────────────────────────────────
+_RESTRICT = re.compile(r"\b(?:under|below|less\s+than|more\s+than|at\s+most|at\s+least|up\s+to|no\s+more\s+than|"
+                       r"within|budget|budget-friendly|affordable|cheap|cheaper|break\s+the\s+bank|per\s+person|"
+                       r"per\s+day|per\s+night|euros?|eur|dollars?|usd)\b|[€$]", re.I)
+_FILTER = re.compile(r"\b(?:options|serves|serve|serving|offers|offering|open|opens|available|new|different|"
+                     r"another|other\s+than|except|without|vegan|vegetarian|gluten-free|cuisine|food|type\s+of|"
+                     r"kind\s+of)\b", re.I)
+_MONTH = r"(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)"
+_NOT_A_CONSTRAINT = re.compile(
+    r"\d{4}-\d{2}-\d{2}|\b\d{1,2}:\d{2}\b|\b\d{1,2}\s*(?:am|pm)\b|\b\d+(?:st|nd|rd|th)\b|"
+    r"\b" + _MONTH + r"\s+\d{1,2}\b|\b\d{1,2}\s+" + _MONTH + r"\b|"
+    r"\b\d+(?:\.\d+)?(?:\s+|-)(?:days?|nights?|hours?|weeks?|people|persons?|meals?|times?)\b|'[^']*'|\"[^\"]*\"", re.I)
+_NUMBER = re.compile(r"\d+(?:[.,]\d+)?")
+
+
+def _sentences(request: str) -> list[tuple[int, int]]:
+    out, start = [], 0
+    for m in re.finditer(r"[.?!](?=\s|$)|\n", request):
+        out.append((start, m.end()))
+        start = m.end()
+    out.append((start, len(request)))
+    return [s for s in out if request[s[0]:s[1]].strip()]
+
+
+def _clause_span(request: str, span: tuple) -> tuple[int, int]:
+    from axor_core.kernel.grants import _CLAUSE_END
+    start, end = 0, len(request)
+    for m in _CLAUSE_END.finditer(request):
+        if m.end() <= span[0]:
+            start = m.end()
+        elif m.start() >= span[1]:
+            end = m.start()
+            break
+    return start, end
+
+
+def _unparsed(text: str, own: tuple, argmax: bool, entity: str) -> str | None:
+    """The first unparsed constraint of a scope text (the description's own phrase blanked out)."""
+    a, b = own
+    t = text[:a] + " " * (b - a) + text[b:] if b > a else text
+    for rx in (_RESTRICT, _FILTER):
+        m = rx.search(t)
+        if m:
+            return m.group(0)
+    blank = _NOT_A_CONSTRAINT.sub(lambda m: " " * len(m.group(0)), t)
+    m = _NUMBER.search(blank)
+    if m:
+        return m.group(0)
+    if argmax:  # a filter adjective: a capitalized word right before a noun form, not sentence-initial
+        noun = "|".join(k for k, v in NOUNS.items() if v == entity)
+        for m in re.finditer(r"(?<=\S)(\s+)([A-Z][\w-]*)\s+(?:" + noun + r")\b", t):
+            if m.group(2) not in ("I",):
+                return m.group(2)
+    return None
+
+
+def covered(request: str, d: Description) -> str | None:
+    """(a): None if the grammar covers the whole phrase; else the unparsed constraint found."""
+    if d.op in ("argmax", "argmin"):
+        noun = "|".join(k for k, v in NOUNS.items() if v == d.entity)
+        for s, e in _sentences(request):
+            if not (s <= d.span[0] < e) and not re.search(r"\b(?:" + noun + r")\b", request[s:e], re.I):
+                continue
+            own = (max(d.span[0] - s, 0), max(min(d.span[1], e) - s, 0)) if s <= d.span[0] < e else (0, 0)
+            bad = _unparsed(request[s:e], own, True, d.entity)
+            if bad:
+                return bad
+        return None
+    s, e = _clause_span(request, d.span)
+    return _unparsed(request[s:e], (d.span[0] - s, d.span[1] - s), False, d.entity)
 
 
 def parse(request: str) -> list[Description]:
-    """The descriptions a request carries, by the fixed template library."""
+    """The descriptions a request carries, by the fixed grammar."""
     out: list[Description] = []
     nouns = set(NOUNS.values())
-    for m in T1.finditer(request):
+
+    def add(op, ent, m, **kw):
+        out.append(Description(op, ent, phrase=m.group(0), span=(m.start(), m.end()), **kw))
+
+    for m in G1.finditer(request):
         e, f = _entity(m.group("noun")), _field(m.group("field"))
         if e and f:
-            op = "argmax" if re.fullmatch(MAX_WORDS, m.group("sup"), re.I) else "argmin"
-            out.append(Description(op, e, f, phrase=m.group(0)))
-    for m in T1_RATED.finditer(request):
-        out.append(Description("argmax", _entity(m.group("noun")), "rating", phrase=m.group(0)))
-    for m in T1_ADJ.finditer(request):
-        a = re.sub(r"\s+", " ", m.group("adj").casefold())
-        op, f = {"largest": ("argmax", "size"), "biggest": ("argmax", "size"), "smallest": ("argmin", "size"),
-                 "cheapest": ("argmin", "price"), "most expensive": ("argmax", "price")}[a]
-        out.append(Description(op, _entity(m.group("noun")), f, phrase=m.group(0)))
-    for m in T2.finditer(request):
+            add("argmax" if re.fullmatch(MAX_WORDS, m.group("sup"), re.I) else "argmin", e, m, field=f)
+    for m in G2.finditer(request):
+        a = re.sub(r"\s+", " ", m.group("adj"))
+        op, f = next(v for k, v in SUP_ADJ.items() if re.fullmatch(k, a, re.I))
+        add(op, _entity(m.group("noun")), m, field=f)
+    for m in G3.finditer(request):
+        add("argmax", _entity(m.group("noun")), m, field="rating")
+    for m in G4.finditer(request):
         lit = _unq(m.group("lit"))
-        if lit and _entity(lit) not in nouns and lit.casefold() not in ("the", "a", "an"):
-            op = _SELECT_OP[re.sub(r"\s+", " ", m.group("op").casefold())]
-            out.append(Description("select", _entity(m.group("noun")), mode=op, lit=lit, phrase=m.group(0)))
-    for m in T2_QUOTED.finditer(request):
-        out.append(Description("select", _entity(m.group("noun")), mode="eq", lit=_unq(m.group("lit")),
-                               phrase=m.group(0)))
-    for rx in (T3_OF, T3_POSS):
+        op = m.group("op").casefold()
+        mode = "eq" if op in ("named", "called", "titled") else "contains" if "contain" in op else "starts"
+        if lit and _entity(lit) not in nouns and lit.casefold() not in _GRAMMAR_WORDS:
+            add("select", _entity(m.group("noun")), m, mode=mode, lit=lit)
+    for m in G4_QUOTED.finditer(request):
+        add("select", _entity(m.group("noun")), m, mode="eq", lit=_unq(m.group("lit")))
+    for m in G4_HASH.finditer(request):
+        add("select", "channel", m, mode="eq", lit=m.group("lit").rstrip(".,;:!?"))
+    for m in G4_WORD.finditer(request):
+        w = m.group("lit")
+        if (w.casefold() in _GRAMMAR_WORDS or _entity(w) or _field(w)
+                or any(re.fullmatch(k, w, re.I) for k in SUP_ADJ)
+                or re.fullmatch(MAX_WORDS + "|" + MIN_WORDS, w, re.I)):
+            continue
+        add("select", _entity(m.group("noun")), m, mode="word", lit=w)
+    for rx in (G5_OF, G5_POSS):
         for m in rx.finditer(request):
-            out.append(Description("email_of", "contact", names=(m.group("name"),), phrase=m.group(0)))
-    for m in T3_PRON.finditer(request):
-        before = request[:m.start()]
+            add("email_of", "contact", m, names=(m.group("name"),))
+    for m in G5_PRON.finditer(request):
         cands = []
-        for c in _CAPS.finditer(before):
+        for c in _CAPS.finditer(request[:m.start()]):
             # every capitalized word sequence and its sub-sequences, nearest first
             ws = c.group(0).split()
             for i in range(len(ws)):
                 for j in range(len(ws), i, -1):
                     cands.append((c.end(), " ".join(ws[i:j])))
         cands.sort(key=lambda t: -t[0])
-        out.append(Description("email_of", "contact", names=tuple(dict.fromkeys(n for _, n in cands)),
-                               phrase=m.group(0)))
-    for rx in (T4, T4_SAME):
+        add("email_of", "contact", m, names=tuple(dict.fromkeys(n for _, n in cands)))
+    for rx in (G6, G6_WHO, G6_SAME):
         for m in rx.finditer(request):
             lit = _unq(m.group("lit"))
             noun = m.group("noun") or m.group("noun2")
-            if not lit or _entity(lit) in nouns or lit.casefold() in ("the", "a", "an"):
+            if not lit or _entity(lit) in nouns or lit.casefold() in _GRAMMAR_WORDS:
                 continue
-            ent = _entity(noun) if noun else ""
-            out.append(Description("members", ent, lit=lit, phrase=m.group(0)))
-    return [d for d in dict.fromkeys(out) if d.entity or d.op == "members"]
+            add("members", _entity(noun) if noun else "", m, lit=lit)
+    seen, res = set(), []
+    for d in out:
+        k = (d.op, d.entity, d.field, d.mode, d.lit, d.names, d.span)
+        if k not in seen and (d.entity or d.op == "members"):
+            seen.add(k)
+            res.append(d)
+    return res
 
 
 # ── the session's structured sources ───────────────────────────────────────
@@ -311,8 +412,12 @@ class DescriptionTable:
         if d.op == "select":
             ents, _ = self.entities(d.entity)
             lit = _c(d.lit)
-            hit = [e for n, e in ents.items()
-                   if (n == lit if d.mode == "eq" else n.startswith(lit) if d.mode == "starts" else lit in n)]
+            if d.mode == "word":  # "the External channel": equals, else the one named word + '_' / digit
+                hit = [e for n, e in ents.items() if n == lit] or [
+                    e for n, e in ents.items() if re.fullmatch(re.escape(lit) + r"[_\d][\w-]*", n)]
+            else:
+                hit = [e for n, e in ents.items()
+                       if (n == lit if d.mode == "eq" else n.startswith(lit) if d.mode == "starts" else lit in n)]
             if len(hit) != 1 or hit[0].conflict or hit[0].value is None:
                 return None
             return [hit[0].value], False
