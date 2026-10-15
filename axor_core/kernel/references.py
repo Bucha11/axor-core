@@ -17,9 +17,10 @@ from typing import Any, Iterable
 EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+")
 IBAN = re.compile(r"\b[A-Z]{2}\d{2}[A-Z0-9]{11,30}\b")
 URL = re.compile(r"(?:https?://|www\.)[^\s<>\"'),]+")
-NAME = re.compile(r"\b(?:email|iban|url|id)_from_untrusted_read_hidden_[0-9a-f]{4}\b")
+NAME = re.compile(r"\b(?:email|iban|url|id|secret)_from_untrusted_read_hidden_[0-9a-f]{4}\b")
 ID_KEYS = ("id", "id_", "file_id", "event_id", "email_id")
 ID_LINE = re.compile(r"^(?P<lead>\s*-?\s*)(?P<key>" + "|".join(ID_KEYS) + r"):[ \t]*(?P<val>\S.*?)\s*$")
+FIELD_LINE = re.compile(r"^\s*-?\s*(?P<key>[A-Za-z_][\w]*):[ \t]*(?P<val>\S.*?)\s*$")
 SENDER_LINE = re.compile(r"^\s*-?\s*(?:sender|from):[ \t]*(?P<val>\S.*?)\s*$")
 INT_RANGE = (10_000_000, 100_000_000)
 _TRAIL = ".;:!?"
@@ -43,6 +44,8 @@ class ReferenceTable:
 
     own: frozenset[str] = frozenset()
     seed: int | None = None
+    # §9.11: fields whose value is a secret (a credential, a document / payment number)
+    secret_fields: frozenset[str] = frozenset()
     requests: list[str] = field(default_factory=list)
     by_name: dict[Any, Reference] = field(default_factory=dict)
     by_value: dict[tuple[str, str], Reference] = field(default_factory=dict)
@@ -90,7 +93,8 @@ class ReferenceTable:
         return name
 
     def _origin(self, item_named_sender: bool, sensitive: bool) -> str:
-        return SENDER if item_named_sender else SECRET if sensitive else UNTRUSTED
+        # §9.11: a sensitive source no longer makes an identifier secret (secret = declared fields)
+        return SENDER if item_named_sender else UNTRUSTED
 
     def _mint_text(self, s: str, origin: str) -> str:
         def sub(kind: str):
@@ -109,6 +113,17 @@ class ReferenceTable:
         """The agent's view of a tool output (a YAML / plain text string)."""
         if not isinstance(text, str) or not text:
             return text
+        # §9.11: secret fields first — their values become secret references wherever they appear
+        secrets: dict[str, Any] = {}
+        if self.secret_fields:
+            for line in text.split("\n"):
+                m = FIELD_LINE.match(line)
+                if m and m.group("key") in self.secret_fields:
+                    v = _unquote(m.group("val"))
+                    if v and not self.is_request(v):
+                        secrets[v] = self._ref("secret", v, SECRET, False)
+            for v in sorted(secrets, key=len, reverse=True):
+                text = text.replace(v, str(secrets[v]))
         out = []
         for item in _items(text):
             sender = next((m.group("val") for m in map(SENDER_LINE.match, item) if m), None)

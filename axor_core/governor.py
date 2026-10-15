@@ -194,6 +194,7 @@ class ToolCallGovernor:
         fallback_to_confirmation: bool = False,
         references: bool = False,
         references_seed: "int | None" = None,
+        secret_fields: "set[str] | frozenset[str] | None" = None,
         untrusted_sources: "set[str] | frozenset[str] | None" = None,
         sensitive_sources: "set[str] | frozenset[str] | None" = None,
         egress_sinks: "set[str] | frozenset[str] | None" = None,
@@ -313,7 +314,8 @@ class ToolCallGovernor:
                 import secrets
                 seed = secrets.randbits(64)
             self._xrefs = ReferenceTable(own=frozenset(self._audience) | frozenset(self._own_names),
-                                         seed=seed, requests=self._requests)
+                                         seed=seed, requests=self._requests,
+                                         secret_fields=frozenset(secret_fields or ()))
         # STRICT obligation: every egress sink must carry a destination allowlist
         # (an enum value_policy) — the sound, paraphrase-proof control. Fail closed
         # at construction rather than ship an egress sink on content-derivation alone.
