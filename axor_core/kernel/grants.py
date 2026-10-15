@@ -60,6 +60,9 @@ class ConstraintKind(enum.Enum):
     # L1 string: any word-bounded fragment of the request that is no typed literal
     # (values holds the request text). Uses are counted per distinct value.
     FRAGMENT = "fragment"
+    # MODEL.md §9.20: a list-valued argument; every element in the values (clause literals ∪ O);
+    # a scalar value is never admitted by it (scalars keep their own constraints)
+    LIST = "list"
 
 
 @dataclass(frozen=True)
@@ -180,6 +183,8 @@ class Grant:
             if isinstance(v, (list, tuple, set, frozenset)):
                 if not v or not all(c.admits(e, table) for e in v):
                     return False
+            elif c.kind is ConstraintKind.LIST:
+                return False  # §9.20: a list constraint admits lists only
             elif not c.admits(v, table):
                 return False
         return True
@@ -400,6 +405,8 @@ class GrantMinter:
     tuple_templates: dict[str, dict[str, Any]] = field(default_factory=dict)
     # §9.14: literals of different kinds form a tuple only within one clause of the request
     by_clause: bool = False
+    # §9.20: a list argument passes if every element is a literal of the clause or in O
+    list_union: bool = False
     issued: list[Grant] = field(default_factory=list)
 
     def _clause_combos(self, request: str, kinds: dict[str, str], opt: dict[str, bool],
@@ -500,6 +507,68 @@ class GrantMinter:
                                for a, v in zip(names, combo)},
                         uses, TrustedChannel.REQUEST))
         out += self._mixed_from_request(request, explicit)
+        if self.list_union:
+            out += self._list_union_from_request(request, explicit)
+        return out
+
+    def _list_union_from_request(self, request: str, explicit: int | None) -> list[Grant]:
+        """§9.20: for each sink whose L2 tuple template gives an argument an O-set, and each clause
+        holding request literals of that argument's kind, one grant whose constraint on that argument
+        admits a list of elements each in (the clause's literals ∪ O); the other arguments as the
+        template gives them (O-set) or a single literal of the same clause."""
+        out: list[Grant] = []
+        cls = clauses(request) if self.by_clause else [request]
+        for sink, comps in self.tuple_templates.items():
+            if sink in self.access_control:
+                continue
+            uses = explicit if explicit is not None else self.quotas.get(sink, self.default_uses)
+            for arg, oset in comps.items():
+                if oset is None or (isinstance(oset, Mapping) and "max" in oset):
+                    continue
+                kind, optional = split_kind(self.grant_args[sink][arg])
+                if kind == "string":
+                    continue
+                for cl in cls:
+                    lits = []
+                    for v in literal_values(cl, kind):
+                        try:
+                            lits.append(canonicalize(kind, v))
+                        except ValueError:
+                            continue
+                    lits = list(dict.fromkeys(lits))
+                    if not lits:
+                        continue  # nothing beyond O: the plain O grant covers it
+                    o_vals = []
+                    for v in oset:
+                        try:
+                            o_vals.append(canonicalize(kind, v))
+                        except ValueError:
+                            continue
+                    for v in lits:
+                        self.table.mint_trusted(v, kind, TrustedChannel.REQUEST)
+                    cs: dict[str, ArgConstraint] = {
+                        arg: ArgConstraint(ConstraintKind.LIST, kind, frozenset(lits) | frozenset(o_vals),
+                                           optional=optional)}
+                    ok = True
+                    for a, vs in comps.items():
+                        if a == arg:
+                            continue
+                        if vs is not None:
+                            cs[a] = self._o_constraint(sink, a, vs)
+                            continue
+                        k, opt = split_kind(self.grant_args[sink][a])
+                        if k == "string":
+                            cs[a] = ArgConstraint.fragment(request, optional=opt)
+                            continue
+                        lv = list(dict.fromkeys(literal_values(cl, k)))
+                        if len(lv) > 1 or (not lv and not opt):
+                            ok = False  # ambiguous, or a required argument with no literal here
+                            break
+                        cs[a] = ArgConstraint(ConstraintKind.EXACT, k,
+                                              frozenset({canonicalize(k, lv[0])}) if lv else frozenset(),
+                                              optional=opt)
+                    if ok:
+                        out.append(self._mint(sink, cs, uses, TrustedChannel.REQUEST, "list-union"))
         return out
 
     def _o_constraint(self, sink: str, arg: str, values: Any) -> ArgConstraint:

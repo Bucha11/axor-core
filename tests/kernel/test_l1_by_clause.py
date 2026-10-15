@@ -76,3 +76,33 @@ def test_line_break_and_after_that_are_boundaries():
     assert clauses("pay 10\nthen 20") == ["pay 10", "20"]
     assert clauses("pay rent after that send 5") == ["pay rent", "send 5"]
     assert clauses("заплати 10 потом 20") == ["заплати 10", "20"]
+
+
+# ── 9.20: a list argument — every element a clause literal or in O ───────────
+def union_gov(request, on=True):
+    ga = {"create_calendar_event": {"participants": "email?"}}
+    g = ToolCallGovernor(grant_args=ga, l1_by_clause=True, list_union=on, egress_sinks=set(ga),
+                         driving_args={"create_calendar_event": ["participants"]},
+                         operator_sets={"create_calendar_event": {"participants": ["me@own.com", "bob@own.com"]}})
+    g.register_task(request)
+    g.grants.from_request(request)
+    return g
+
+
+def test_list_of_literal_and_own_passes_only_with_9_20():
+    req = "Create a lunch event with sarah.connor@gmail.com tomorrow."
+    call = {"participants": ["sarah.connor@gmail.com", "me@own.com"]}
+    assert not union_gov(req, on=False).evaluate("create_calendar_event", call).allowed
+    assert union_gov(req).evaluate("create_calendar_event", call).allowed
+
+
+def test_list_element_outside_clause_literals_and_o_refused():
+    g = union_gov("Create a lunch event with sarah.connor@gmail.com tomorrow.")
+    assert not g.evaluate("create_calendar_event",
+                          {"participants": ["sarah.connor@gmail.com", "eve@evil.com"]}).allowed
+
+
+def test_literal_of_another_clause_does_not_join_the_list():
+    g = union_gov("Email eve@evil.com the notes. Then create a lunch event with sarah.connor@gmail.com.")
+    assert not g.evaluate("create_calendar_event",
+                          {"participants": ["sarah.connor@gmail.com", "eve@evil.com", "me@own.com"]}).allowed
