@@ -53,6 +53,8 @@ class ReferenceTable:
     sender_aliases: dict = field(default_factory=dict)
     # §9.17 (hypothesis H-B, not in c9v4): a sender in O proves the identifiers of its record's body
     sender_own: bool = False
+    # §9.19: a name of the request names a sender only if it fits exactly one address
+    alias_unique: bool = False
     requests: list[str] = field(default_factory=list)
     by_name: dict[Any, Reference] = field(default_factory=dict)
     by_value: dict[tuple[str, str], Reference] = field(default_factory=dict)
@@ -62,6 +64,14 @@ class ReferenceTable:
         # without it (the governor seeds each session from the OS); the kernel stays pure
         self._counter = 0
         self.own = frozenset(str(v).casefold() for v in self.own)
+        self._alias_owners: dict[str, set] = {}
+        for addr, names in (self.sender_aliases or {}).items():
+            for n in names or ():
+                self._alias_owners.setdefault(str(n).strip().casefold(), set()).add(str(addr).casefold())
+
+    def ambiguous_aliases(self) -> dict:
+        """§9.19: the names that fit more than one address."""
+        return {n: sorted(a) for n, a in self._alias_owners.items() if len(a) > 1}
 
     def _draw(self, n: int) -> int:
         self._counter += 1
@@ -81,8 +91,11 @@ class ReferenceTable:
     def sender_named(self, sender: str) -> bool:
         """§9.13: the request names this sender — the value itself or one of its entity-model names,
         as a word (case-folded)."""
-        names = [sender] + list(self.sender_aliases.get(sender, ()) or ())
-        names += list(self.sender_aliases.get(sender.casefold(), ()) or ())
+        aliases = list(self.sender_aliases.get(sender, ()) or ())
+        aliases += list(self.sender_aliases.get(sender.casefold(), ()) or ())
+        if self.alias_unique:  # §9.19: a name that fits more than one address names no one
+            aliases = [n for n in aliases if len(self._alias_owners.get(str(n).strip().casefold(), ())) <= 1]
+        names = [sender] + aliases
         for n in names:
             n = str(n).strip().casefold()
             if len(n) < 2:

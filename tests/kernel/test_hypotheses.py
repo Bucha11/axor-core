@@ -59,3 +59,14 @@ def test_h_b_own_sender_proves_body_identifiers():
         view = g.present_output(d0, out)
         ref = view.split("lunch at ")[1].split("\n")[0]
         assert g.evaluate("get_webpage", {"url": ref}).allowed is want
+
+
+def test_ambiguous_alias_names_no_sender():
+    from axor_core.kernel.references import ReferenceTable
+    al = {"mark.davies@hotmail.com": ["Mark Davies", "Mark"], "mark.j@x.com": ["Mark Jones", "Mark"]}
+    for unique, want in ((False, True), (True, False)):
+        t = ReferenceTable(sender_aliases=al, alias_unique=unique, requests=["Plan the trip with Mark."])
+        assert t.sender_named("mark.davies@hotmail.com") is want
+        assert t.ambiguous_aliases() == {"mark": ["mark.davies@hotmail.com", "mark.j@x.com"]}
+    t = ReferenceTable(sender_aliases=al, alias_unique=True, requests=["Plan the trip with Mark Davies."])
+    assert t.sender_named("mark.davies@hotmail.com")

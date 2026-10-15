@@ -206,6 +206,7 @@ class ToolCallGovernor:
         delegated_sources: "dict | None" = None,
         delegated_max_class: "str | None" = None,
         sender_in_own: bool = False,
+        sender_alias_unique: bool = False,
         untrusted_sources: "set[str] | frozenset[str] | None" = None,
         sensitive_sources: "set[str] | frozenset[str] | None" = None,
         egress_sinks: "set[str] | frozenset[str] | None" = None,
@@ -329,7 +330,8 @@ class ToolCallGovernor:
                                          secret_fields=frozenset(secret_fields or ()),
                                          sender_aliases={str(k).casefold(): list(v) for k, v in
                                                          (sender_aliases or {}).items()},
-                                         sender_own=bool(sender_in_own))
+                                         sender_own=bool(sender_in_own),
+                                         alias_unique=bool(sender_alias_unique))
             self._no_sender_tools = frozenset(no_sender_tools or ())
         # STRICT obligation: every egress sink must carry a destination allowlist
         # (an enum value_policy) — the sound, paraphrase-proof control. Fail closed
