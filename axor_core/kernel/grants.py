@@ -599,6 +599,66 @@ class GrantMinter:
                 out.append(self._mint(sink, cs, UNLIMITED, TrustedChannel.OPERATOR))
         return out
 
+    def from_description(self, request: str, sink: str, arg: str, values: Any, *, members: bool = False,
+                         note: str = "description") -> list[Grant]:
+        """MODEL.md §9.15: grants on a value the request described (computed by the kernel from
+        trusted structured fields), as L1 — the other arguments as L1 (request literals / a fragment)
+        or as the sink's L2 tuple template (its O-set), with the sink's quota. ``members``: one
+        grant whose argument admits any subset of the values."""
+        kinds = self.grant_args.get(sink) or {}
+        if arg not in kinds or sink in self.access_control:
+            return []
+        kind, optional = split_kind(kinds[arg])
+        canon = []
+        for v in values:
+            try:
+                canon.append(canonicalize(kind, v))
+            except ValueError:
+                continue
+        canon = list(dict.fromkeys(canon))
+        if not canon:
+            return []
+        for v in canon:
+            self.table.mint_trusted(v, kind, TrustedChannel.REQUEST)
+        targets = ([ArgConstraint(ConstraintKind.ENUM, kind, frozenset(canon), optional=optional)] if members
+                   else [ArgConstraint(ConstraintKind.EXACT, kind, frozenset({v}), optional=optional)
+                         for v in canon])
+        options: dict[str, list[ArgConstraint]] = {}
+        tmpl = self.tuple_templates.get(sink) or {}
+        for a, spec in kinds.items():
+            if a == arg:
+                continue
+            k, opt = split_kind(spec)
+            opts: list[ArgConstraint] = []
+            if k == "string":
+                opts.append(ArgConstraint.fragment(request, optional=opt))
+            else:
+                vals = []
+                for v in literal_values(request, k):
+                    try:
+                        vals.append(canonicalize(k, v))
+                    except ValueError:
+                        continue
+                for v in dict.fromkeys(vals):
+                    self.table.mint_trusted(v, k, TrustedChannel.REQUEST)
+                    opts.append(ArgConstraint(ConstraintKind.EXACT, k, frozenset({v}), optional=opt))
+                if not vals and opt:
+                    opts.append(ArgConstraint(ConstraintKind.EXACT, k, frozenset(), optional=True))
+            if tmpl.get(a) is not None:
+                opts.append(self._o_constraint(sink, a, tmpl[a]))
+            if not opts:
+                return []  # a required argument with no ground
+            options[a] = opts
+        uses = self.quotas.get(sink, self.default_uses)
+        out: list[Grant] = []
+        others = list(options)
+        for t in targets:
+            for combo in itertools.product(*(options[a] for a in others)):
+                cs = dict(zip(others, combo))
+                cs[arg] = t
+                out.append(self._mint(sink, cs, uses, TrustedChannel.REQUEST, note))
+        return out
+
     def from_structured(self, sink: str, args: Mapping[str, Any], *, uses: int | None = None) -> Grant | None:
         """L3: a typed intent the application passed (never model text)."""
         return self._exact(sink, args, TrustedChannel.STRUCTURED,

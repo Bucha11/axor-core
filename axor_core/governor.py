@@ -155,6 +155,8 @@ class GovernanceDecision:
     # MODEL.md §9: with references on, the arguments the tool must run with (references resolved)
     resolved_args: "dict[str, Any] | None" = None
     reference_origins: "tuple[str, ...]" = ()
+    # MODEL.md §9.15: the description the covering grant was computed from (phrase = value)
+    description: str | None = None
 
 
 class ToolCallGovernor:
@@ -199,6 +201,8 @@ class ToolCallGovernor:
         sender_aliases: "dict[str, list[str]] | None" = None,
         no_sender_tools: "set[str] | frozenset[str] | None" = None,
         l1_by_clause: bool = False,
+        description_sources: "dict | None" = None,
+        description_targets: "dict | None" = None,
         untrusted_sources: "set[str] | frozenset[str] | None" = None,
         sensitive_sources: "set[str] | frozenset[str] | None" = None,
         egress_sinks: "set[str] | frozenset[str] | None" = None,
@@ -371,6 +375,17 @@ class ToolCallGovernor:
                                    by_clause=bool(l1_by_clause))
         if grant_templates:
             self._minter.from_templates(grant_templates)
+        # MODEL.md §9.15: description grants
+        self._desc = None
+        self._desc_targets = dict(description_targets or {})
+        self._described: dict[tuple[str, str], set] = {}
+        self._desc_done: set = set()
+        self._desc_notes: dict[str, str] = {}
+        if description_sources:
+            from axor_core.kernel.descriptions import DescriptionTable
+            own = {str(v).casefold() for v in (set(self._audience) | set(self._own_names))}
+            self._desc = DescriptionTable(dict(description_sources), is_request=self._is_request_value,
+                                          is_own=lambda v: str(v).casefold() in own)
         # L2 tuple templates over the driving args (all-O ones are issued now).
         self._minter.tuple_templates = compile_tuple_templates(
             self._value_policies, self._grant_args, self._driving_args, self._grant_l34_only,
@@ -533,6 +548,54 @@ class ToolCallGovernor:
                 if self._grant_args:
                     self.grants.from_request(str(r.value))
         return view
+
+    # ── description grants (MODEL.md §9.15) ──────────────────────────────────
+    def _is_request_value(self, value: Any) -> bool:
+        from axor_core.kernel.references import _canon
+        v = _canon(str(value)).strip()
+        if len(v) < 2:
+            return False
+        import re as _re
+        pat = _re.compile(r"(?<![\w@.])" + _re.escape(v) + r"(?![\w@])")
+        return any(pat.search(_canon(r)) for r in self._requests)
+
+    def observe_structured(self, tool_name: str, args: "dict[str, Any] | None", value: Any) -> list:
+        """§9.15: the platform's structured output of an executed read (a list / records / a
+        name -> value map — never text). Recomputes the request's descriptions and mints a grant on
+        each newly computed value; returns the new [(description phrase, sink, arg, values)]."""
+        if self._desc is None or not self._desc.observe(tool_name, args or {}, value):
+            return []
+        return self._describe()
+
+    def _describe(self) -> list:
+        from axor_core.kernel.descriptions import parse
+        out = []
+        member_ents = [e for e, t in self._desc_targets.items() if (t or {}).get("members")]
+        for req in self._requests:
+            for d in parse(req):
+                got = self._desc.compute(d, member_ents)
+                if got is None:
+                    continue
+                vals, members = got
+                ents = [d.entity] if d.entity else member_ents
+                for ent in ents:
+                    tg = (self._desc_targets.get(ent) or {}).get("members" if members else "value") or ()
+                    for t in tg:
+                        sink, _, arg = str(t).partition(".")
+                        key = (sink, arg, tuple(str(v) for v in vals), members)
+                        if key in self._desc_done or sink not in self._grant_args:
+                            continue
+                        self._desc_done.add(key)
+                        note = f"description: {d.phrase!r} = {list(vals)}"
+                        gs = self._minter.from_description(req, sink, arg, vals, members=members, note=note)
+                        if not gs:
+                            continue
+                        for g in gs:
+                            self._desc_notes[g.id] = note
+                        self._described.setdefault((sink, arg), set()).update(
+                            str(v).strip().casefold() for v in vals)
+                        out.append((d.phrase, sink, arg, list(vals)))
+        return out
 
     def _evaluate(self, tool_name: str, args: dict[str, Any], ctx: "dict | None") -> GovernanceDecision:
         intent = Intent(
@@ -757,6 +820,7 @@ class ToolCallGovernor:
             grant_id=grant.id if grant is not None else None,
             grant_source=grant.source.value if grant is not None else None,
             confirmed=confirmed,
+            description=self._desc_notes.get(grant.id) if grant is not None else None,
         )
 
     def _own_slot(self, tool_name: str, arg: str, value: object) -> bool:
@@ -830,6 +894,8 @@ class ToolCallGovernor:
     def _named_by_request(self, tool_name: str, arg: str, value: object) -> bool:
         if self._taint.trusted_origin(value) is TrustedOrigin.TASK:
             return True
+        if str(value).strip().casefold() in self._described.get((tool_name, arg), ()):
+            return True  # §9.15: the request described it (this sink and argument only)
         spec = (self._grant_args.get(tool_name) or {}).get(arg)
         if not spec or not self._requests:
             return False
