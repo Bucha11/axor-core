@@ -198,6 +198,7 @@ class ToolCallGovernor:
         secret_fields: "set[str] | frozenset[str] | None" = None,
         sender_aliases: "dict[str, list[str]] | None" = None,
         no_sender_tools: "set[str] | frozenset[str] | None" = None,
+        l1_by_clause: bool = False,
         untrusted_sources: "set[str] | frozenset[str] | None" = None,
         sensitive_sources: "set[str] | frozenset[str] | None" = None,
         egress_sinks: "set[str] | frozenset[str] | None" = None,
@@ -366,7 +367,8 @@ class ToolCallGovernor:
         inner = getattr(self._grants, "inner", self._grants)
         self._minter = GrantMinter(inner, self._handles, self._grant_args,
                                    quotas=dict(grant_quotas or {}),
-                                   access_control=self._grant_l34_only)
+                                   access_control=self._grant_l34_only,
+                                   by_clause=bool(l1_by_clause))
         if grant_templates:
             self._minter.from_templates(grant_templates)
         # L2 tuple templates over the driving args (all-O ones are issued now).

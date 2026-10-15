@@ -36,6 +36,7 @@ from __future__ import annotations
 import dataclasses
 import enum
 import itertools
+import re
 from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
 from typing import Any, Callable, Iterable, Mapping
@@ -358,6 +359,15 @@ class GrantStore:
 
 _FRAGMENT = object()  # sentinel: an L1 string arg (fragment constraint)
 
+# MODEL.md §9.14: clause boundaries — a sentence end (a punctuation mark followed by a space or the
+# end of the text; a period inside a number / address / URL is not one) or a sequencing conjunction
+_CLAUSE_END = re.compile(r"[.;!?](?=\s|$)|\b(?:and then|also|then)\b|\bи затем\b", re.I)
+
+
+def clauses(request: str) -> list[str]:
+    """The request split into clauses (§9.14)."""
+    return [c for c in (x.strip() for x in _CLAUSE_END.split(request or "")) if c]
+
 
 # ── minting: the only way into a GrantStore ────────────────────────────────────
 
@@ -385,7 +395,35 @@ class GrantMinter:
     access_control: frozenset[str] = frozenset()
     # L2 tuple templates: sink -> {driving arg: O-set (frozenset) | None (= request literal)}.
     tuple_templates: dict[str, dict[str, Any]] = field(default_factory=dict)
+    # §9.14: literals of different kinds form a tuple only within one clause of the request
+    by_clause: bool = False
     issued: list[Grant] = field(default_factory=list)
+
+    def _clause_combos(self, request: str, kinds: dict[str, str], opt: dict[str, bool],
+                       literal_args: list[str]) -> list[tuple] | None:
+        """§9.14: the tuples of request literals, bound by clause, over ``literal_args`` (in that
+        order). None when the rule does not apply (fewer than two kinds among the literal args)."""
+        if not self.by_clause or len({kinds[a] for a in literal_args}) < 2:
+            return None  # the rule binds literals of different kinds; same-kind args are unchanged
+        out: list[tuple] = []
+        for cl in clauses(request):
+            vals: dict[str, list] = {}
+            for a in literal_args:
+                vs = []
+                for v in literal_values(cl, kinds[a]):
+                    try:
+                        vs.append(canonicalize(kinds[a], v))
+                    except ValueError:
+                        continue
+                vals[a] = list(dict.fromkeys(vs))
+            if any(not vals[a] and not opt[a] for a in literal_args):
+                continue  # a required argument has no literal in this clause
+            if any(len(vals[a]) > 1 for a in literal_args):
+                continue  # ambiguous: two values of one kind in the clause
+            combo = tuple(vals[a][0] if vals[a] else None for a in literal_args)
+            if any(v is not None for v in combo) and combo not in out:
+                out.append(combo)
+        return out
 
     def _mint(self, sink: str, constraints: dict[str, ArgConstraint], uses: int | None,
               source: TrustedChannel, note: str = "") -> Grant:
@@ -437,8 +475,14 @@ class GrantMinter:
                         None, TrustedChannel.REQUEST, "per-arg"))
                     continue
                 names = list(cands)
+                lit = [a for a in names if cands[a] != [_FRAGMENT]]
+                bound = self._clause_combos(request, kinds, opt, lit)
+                if bound is not None:  # §9.14: the literal args come from one clause together
+                    combos = [tuple(dict(zip(lit, c)).get(a, _FRAGMENT) for a in names) for c in bound]
+                else:
+                    combos = list(itertools.product(*((cands[a] or [None]) for a in names)))
                 # an optional arg with no literal contributes "absent" (an empty set)
-                for combo in itertools.product(*((cands[a] or [None]) for a in names)):
+                for combo in combos:
                     if all(v is None for v in combo):
                         continue  # an empty leading tuple: no L1 grant (origin/class checks decide)
                     out.append(self._mint(
@@ -503,7 +547,12 @@ class GrantMinter:
                     self.table.mint_trusted(v, kind, TrustedChannel.REQUEST)
             else:
                 o_cs = {a: self._o_constraint(sink, a, vs) for a, vs in comps.items() if vs is not None}
-                for combo in itertools.product(*((cands[a] or [None]) for a in r_args)):
+                lit = [a for a in r_args if cands[a] != [_FRAGMENT]]
+                bound = self._clause_combos(request, kinds, opt, lit)
+                combos = ([tuple(dict(zip(lit, c)).get(a, _FRAGMENT) for a in r_args) for c in bound]
+                          if bound is not None else
+                          list(itertools.product(*((cands[a] or [None]) for a in r_args))))
+                for combo in combos:
                     cs = dict(o_cs)
                     for a, v in zip(r_args, combo):
                         cs[a] = (ArgConstraint.fragment(request, optional=opt[a]) if v is _FRAGMENT
