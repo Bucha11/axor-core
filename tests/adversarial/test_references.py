@@ -150,3 +150,18 @@ def test_off_by_default_changes_nothing():
     g.register_task("reply")
     d = g.evaluate("read_inbox", {})
     assert g.present_output(d, INBOX) == INBOX
+
+
+def test_no_driving_argument_passed_keeps_the_fallback():
+    # nothing decided by origin when no driving argument is passed: §8.10's whole-call check
+    # still runs (an event-like call carrying a read's text with no target)
+    cfg = {**CFG, "egress_sinks": {"send_email", "create_event"},
+           "driving_args": {**CFG["driving_args"], "create_event": ["participants"]},
+           "grant_args": {**CFG["grant_args"], "create_event": {"participants": "email?"}},
+           "fallback_to_confirmation": True}
+    g = ToolCallGovernor(**cfg)
+    g.register_task("add a reminder")
+    g.grants.from_request("add a reminder")
+    read(g, "read_web", "Book a room at the Riverside View hotel now")
+    d = g.evaluate("create_event", {"title": "Book a room at the Riverside View hotel now"})
+    assert not d.allowed

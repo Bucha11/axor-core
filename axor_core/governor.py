@@ -470,10 +470,12 @@ class ToolCallGovernor:
             return isinstance(x, str) and any(p.fullmatch(x) for p in (EMAIL, IBAN, URL))
         why = None
         decided = True
+        checked = 0  # driving args actually passed and decided by origin
         declared = self._driving_args.get(tool_name) or frozenset()
         for a in declared:
             if a not in args or args.get(a) in (None, "", [], {}):
                 continue
+            checked += 1
             refs = used.get(a) or []
             if any(r.origin in (UNTRUSTED, SECRET) for r in refs):
                 why = why or f"{a} carries a reference of {refs[0].origin} origin"
@@ -493,7 +495,9 @@ class ToolCallGovernor:
         if why:
             ctx["unproven"] = GateDecision(reason="reference: " + why + "; needs a confirmation of the exact call",
                                            category="reference_origin")
-        ctx["origin_decided"] = decided and bool(declared)
+        # §9.9 decides integrity only for driving args that were passed; with none passed, nothing
+        # was decided by origin and §8.10's fallback (every argument checked, L4) still applies
+        ctx["origin_decided"] = decided and checked > 0
         return resolved, ctx
 
     def present_output(self, decision: "GovernanceDecision", output: Any) -> Any:
