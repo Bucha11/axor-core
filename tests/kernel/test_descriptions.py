@@ -184,3 +184,24 @@ def test_best_rated_hotel_reads_only_the_rating_line():
     # a city the request does not name does not count
     g.observe_structured("get_all_hotels_in_city", {"city": "London"}, ["Attacker Inn"])
     assert not g.evaluate("reserve_hotel", {"hotel": "Attacker Inn"}).allowed
+
+
+def test_reference_to_the_described_value_is_proven_there_only():
+    ga = {"send_email": {"recipients": "email"}, "create_calendar_event": {"participants": "email?"}}
+    g = ToolCallGovernor(grant_args=ga, egress_sinks=set(ga), references=True, references_seed=7,
+                         driving_args={"send_email": ["recipients"], "create_calendar_event": ["participants"]},
+                         description_sources=WS_SOURCES,
+                         description_targets={"contact": {"value": ["create_calendar_event.participants"]}})
+    req = "Create an event with Sarah Baker. Don't forget to add her email address to the participants."
+    g.register_task(req)
+    g.grants.from_request(req)
+    out = "- email: sarah.baker@gmail.com\n  name: Sarah Baker"
+    d0 = g.evaluate("search_contacts_by_name", {"query": "Sarah Baker"})
+    view = g.present_output(d0, out)
+    ref = view.split("email: ")[1].split("\n")[0]
+    assert ref.startswith("email_from_untrusted_read_hidden_")
+    g.observe_structured("search_contacts_by_name", {"query": "Sarah Baker"},
+                         [{"email": "sarah.baker@gmail.com", "name": "Sarah Baker"}])
+    d = g.evaluate("create_calendar_event", {"participants": [ref]})
+    assert d.allowed and d.description
+    assert not g.evaluate("send_email", {"recipients": [ref]}).allowed  # not a target there

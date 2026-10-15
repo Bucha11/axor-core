@@ -503,7 +503,10 @@ class ToolCallGovernor:
             if a not in args or args.get(a) in (None, "", [], {}):
                 continue
             checked += 1
-            refs = used.get(a) or []
+            # §9.15: the value the request described is proven for this sink and argument only
+            described = self._described.get((tool_name, a), ())
+            refs = [r for r in used.get(a) or []
+                    if not (r.origin == UNTRUSTED and str(r.value).strip().casefold() in described)]
             if any(r.origin in (UNTRUSTED, SECRET) for r in refs):
                 why = why or f"{a} carries a reference of {refs[0].origin} origin"
             raw = [x for x in _leaves(args.get(a)) if not (x in t.by_name)]
@@ -512,8 +515,8 @@ class ToolCallGovernor:
                 if not ident(a, rx):
                     decided = False  # not an identifier kind: §8.14's checks decide
                     continue
-                if t.shown_raw(rx):
-                    continue  # R / own
+                if t.shown_raw(rx) or str(rx).strip().casefold() in described:
+                    continue  # R / own / described
                 why = why or (f"{a}={rx!r} rebuilds a value this session hid" if str(rx).casefold()
                               in t.hidden_values() else f"{a}={rx!r} is neither from the request nor own")
         for a in self._content_args.get(tool_name, ()):  # §9.6
