@@ -361,7 +361,10 @@ _FRAGMENT = object()  # sentinel: an L1 string arg (fragment constraint)
 
 # MODEL.md §9.14: clause boundaries — a sentence end (a punctuation mark followed by a space or the
 # end of the text; a period inside a number / address / URL is not one) or a sequencing conjunction
-_CLAUSE_END = re.compile(r"[.;!?](?=\s|$)|\b(?:and then|also|then)\b|\bи затем\b", re.I)
+# (9.14a — the complete list: . ; ? ! before whitespace or the end, a line break, and the conjunctions
+# "and then", "then", "also", "after that", "и затем", "потом")
+_CLAUSE_END = re.compile(r"[.;!?](?=\s|$)|\n|\b(?:and then|after that|also|then)\b|(?<!\w)(?:и затем|потом)(?!\w)",
+                         re.I)
 
 
 def clauses(request: str) -> list[str]:
@@ -400,13 +403,17 @@ class GrantMinter:
     issued: list[Grant] = field(default_factory=list)
 
     def _clause_combos(self, request: str, kinds: dict[str, str], opt: dict[str, bool],
-                       literal_args: list[str]) -> list[tuple] | None:
-        """§9.14: the tuples of request literals, bound by clause, over ``literal_args`` (in that
-        order). None when the rule does not apply (fewer than two kinds among the literal args)."""
-        if not self.by_clause or len({kinds[a] for a in literal_args}) < 2:
+                       literal_args: list[str], other_kinds: tuple = ()) -> list[tuple] | None:
+        """§9.14a: the tuples of request literals, bound by clause, over ``literal_args`` (in that
+        order). ``other_kinds``: kinds of the tuple's own (O) components — a clause with two literals
+        of such a kind is ambiguous too. None when the rule does not apply (the tuple combines fewer
+        than two kinds)."""
+        if not self.by_clause or len({kinds[a] for a in literal_args} | set(other_kinds)) < 2:
             return None  # the rule binds literals of different kinds; same-kind args are unchanged
         out: list[tuple] = []
         for cl in clauses(request):
+            if any(len(set(literal_values(cl, k))) > 1 for k in other_kinds):
+                continue  # ambiguous: two values for an own component's argument in this clause
             vals: dict[str, list] = {}
             for a in literal_args:
                 vs = []
@@ -548,7 +555,9 @@ class GrantMinter:
             else:
                 o_cs = {a: self._o_constraint(sink, a, vs) for a, vs in comps.items() if vs is not None}
                 lit = [a for a in r_args if cands[a] != [_FRAGMENT]]
-                bound = self._clause_combos(request, kinds, opt, lit)
+                o_kinds = tuple(split_kind(self.grant_args[sink][a])[0] for a, vs in comps.items()
+                                if vs is not None and not (isinstance(vs, Mapping) and "max" in vs))
+                bound = self._clause_combos(request, kinds, opt, lit, o_kinds)
                 combos = ([tuple(dict(zip(lit, c)).get(a, _FRAGMENT) for a in r_args) for c in bound]
                           if bound is not None else
                           list(itertools.product(*((cands[a] or [None]) for a in r_args))))
