@@ -147,6 +147,10 @@ class Grant:
     # ... and the canonical call itself (kernel.confirm.canonical_call), kept with
     # the grant so an audit shows exactly what was confirmed, rich fields included.
     call_canonical: str | None = None
+    # MODEL.md §9.20a: for a list-valued argument of a grant that has an L1 ground, the O-set values
+    # that join the clause literals the grant already pins — used ONLY when the call passes a list
+    # for that argument; every other argument keeps its own constraint. {} on every other grant.
+    list_union: "Mapping[str, frozenset]" = dataclasses.field(default_factory=dict)
 
     def value_key(self, args: Mapping[str, Any], table: HandleTable | None = None) -> str | None:
         """For a grant with string-fragment args: the canonical tuple of those values
@@ -181,10 +185,12 @@ class Grant:
             # A collection-valued argument (recipients=[...]) is covered only if
             # every element is admitted — a grant for Bob does not cover [Bob, Eve].
             if isinstance(v, (list, tuple, set, frozenset)):
-                if not v or not all(c.admits(e, table) for e in v):
+                extra = self.list_union.get(arg, frozenset()) if self.list_union else frozenset()
+                if not v or not all(c.admits(e, table) or _canon_in(e, extra, c.handle_kind, table)
+                                    for e in v):
                     return False
             elif c.kind is ConstraintKind.LIST:
-                return False  # §9.20: a list constraint admits lists only
+                return False  # a list constraint admits lists only
             elif not c.admits(v, table):
                 return False
         return True
@@ -372,6 +378,20 @@ _CLAUSE_END = re.compile(r"[.;!?](?=\s|$)|\n|\b(?:and then|after that|also|then)
                          re.I)
 
 
+def _canon_in(value: Any, extra: "frozenset[str]", kind: str, table: HandleTable | None) -> bool:
+    """§9.20a: whether a list element resolves to one of the O-set values (canonical)."""
+    if not extra:
+        return False
+    if table is not None:
+        c = table.resolve(value, kind)
+    else:
+        try:
+            c = canonicalize(kind, value)
+        except ValueError:
+            c = None
+    return c is not None and c in extra
+
+
 def clauses(request: str) -> list[str]:
     """The request split into clauses (§9.14)."""
     return [c for c in (x.strip() for x in _CLAUSE_END.split(request or "")) if c]
@@ -405,8 +425,10 @@ class GrantMinter:
     tuple_templates: dict[str, dict[str, Any]] = field(default_factory=dict)
     # §9.14: literals of different kinds form a tuple only within one clause of the request
     by_clause: bool = False
-    # §9.20: a list argument passes if every element is a literal of the clause or in O
+    # §9.20 / §9.20a: a list argument passes if every element is a clause literal or in O; list_args
+    # names the list-valued arguments per sink (the tool schema's lists), widened only when on
     list_union: bool = False
+    list_args: Mapping[str, "frozenset[str]"] = field(default_factory=dict)
     issued: list[Grant] = field(default_factory=list)
 
     def _clause_combos(self, request: str, kinds: dict[str, str], opt: dict[str, bool],
@@ -508,68 +530,38 @@ class GrantMinter:
                         uses, TrustedChannel.REQUEST))
         out += self._mixed_from_request(request, explicit)
         if self.list_union:
-            out += self._list_union_from_request(request, explicit)
+            for g in out:
+                self._attach_list_union(g)
         return out
 
-    def _list_union_from_request(self, request: str, explicit: int | None) -> list[Grant]:
-        """§9.20: for each sink whose L2 tuple template gives an argument an O-set, and each clause
-        holding request literals of that argument's kind, one grant whose constraint on that argument
-        admits a list of elements each in (the clause's literals ∪ O); the other arguments as the
-        template gives them (O-set) or a single literal of the same clause."""
-        out: list[Grant] = []
-        cls = clauses(request) if self.by_clause else [request]
-        for sink, comps in self.tuple_templates.items():
-            if sink in self.access_control:
+    def _attach_list_union(self, grant: Grant) -> None:
+        """§9.20a: widen only the list-valued arguments of an already-issued grant that has an L1
+        ground (an L1 grant, or a description grant). For such an arg, the O-set of the sink's tuple
+        template joins the clause literals the grant already pins; a scalar argument and every other
+        argument are untouched, so the grant still binds them as the ordinary grant does. A grant
+        built from the O template alone (no L1 ground) is never passed here."""
+        la = self.list_args.get(grant.sink)
+        if not la:
+            return
+        comps = self.tuple_templates.get(grant.sink) or {}
+        ext: dict[str, frozenset] = {}
+        for arg in la:
+            if arg not in grant.constraints:
                 continue
-            uses = explicit if explicit is not None else self.quotas.get(sink, self.default_uses)
-            for arg, oset in comps.items():
-                if oset is None or (isinstance(oset, Mapping) and "max" in oset):
+            oset = comps.get(arg)
+            if oset is None or (isinstance(oset, Mapping) and "max" in oset):
+                continue
+            kind = split_kind(self.grant_args[grant.sink][arg])[0]
+            vals = set()
+            for v in oset:
+                try:
+                    vals.add(canonicalize(kind, v))
+                except ValueError:
                     continue
-                kind, optional = split_kind(self.grant_args[sink][arg])
-                if kind == "string":
-                    continue
-                for cl in cls:
-                    lits = []
-                    for v in literal_values(cl, kind):
-                        try:
-                            lits.append(canonicalize(kind, v))
-                        except ValueError:
-                            continue
-                    lits = list(dict.fromkeys(lits))
-                    if not lits:
-                        continue  # nothing beyond O: the plain O grant covers it
-                    o_vals = []
-                    for v in oset:
-                        try:
-                            o_vals.append(canonicalize(kind, v))
-                        except ValueError:
-                            continue
-                    for v in lits:
-                        self.table.mint_trusted(v, kind, TrustedChannel.REQUEST)
-                    cs: dict[str, ArgConstraint] = {
-                        arg: ArgConstraint(ConstraintKind.LIST, kind, frozenset(lits) | frozenset(o_vals),
-                                           optional=optional)}
-                    ok = True
-                    for a, vs in comps.items():
-                        if a == arg:
-                            continue
-                        if vs is not None:
-                            cs[a] = self._o_constraint(sink, a, vs)
-                            continue
-                        k, opt = split_kind(self.grant_args[sink][a])
-                        if k == "string":
-                            cs[a] = ArgConstraint.fragment(request, optional=opt)
-                            continue
-                        lv = list(dict.fromkeys(literal_values(cl, k)))
-                        if len(lv) > 1 or (not lv and not opt):
-                            ok = False  # ambiguous, or a required argument with no literal here
-                            break
-                        cs[a] = ArgConstraint(ConstraintKind.EXACT, k,
-                                              frozenset({canonicalize(k, lv[0])}) if lv else frozenset(),
-                                              optional=opt)
-                    if ok:
-                        out.append(self._mint(sink, cs, uses, TrustedChannel.REQUEST, "list-union"))
-        return out
+            if vals:
+                ext[arg] = frozenset(vals)
+        if ext:
+            object.__setattr__(grant, "list_union", ext)
 
     def _o_constraint(self, sink: str, arg: str, values: Any) -> ArgConstraint:
         kind, optional = split_kind(self.grant_args[sink][arg])
@@ -725,7 +717,10 @@ class GrantMinter:
             for combo in itertools.product(*(options[a] for a in others)):
                 cs = dict(zip(others, combo))
                 cs[arg] = t
-                out.append(self._mint(sink, cs, uses, TrustedChannel.REQUEST, note))
+                g = self._mint(sink, cs, uses, TrustedChannel.REQUEST, note)
+                if self.list_union:  # §9.20a: a description grant has an L1 ground
+                    self._attach_list_union(g)
+                out.append(g)
         return out
 
     def from_structured(self, sink: str, args: Mapping[str, Any], *, uses: int | None = None) -> Grant | None:

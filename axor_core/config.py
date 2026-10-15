@@ -53,7 +53,7 @@ _KNOWN_KEYS = frozenset({
     "floor_mode", "audience", "destination_args", "content_args", "own_names",
     "operator_sets", "operator_sets_refuse_above",
     "template_limits", "consequence_rules", "content_projection", "operator_sets_confirm",
-    "absent_driving_is_empty", "fallback_to_confirmation", "references", "references_seed", "secret_fields", "sender_aliases", "no_sender_tools", "l1_by_clause", "description_sources", "description_targets", "delegated_sources", "delegated_max_class", "sender_in_own", "sender_alias_unique", "list_union",
+    "absent_driving_is_empty", "fallback_to_confirmation", "references", "references_seed", "secret_fields", "sender_aliases", "no_sender_tools", "l1_by_clause", "description_sources", "description_targets", "delegated_sources", "delegated_max_class", "sender_in_own", "sender_alias_unique", "list_union", "list_args",
     "grant_templates",
     "bounded_damage",
     "grant_quotas",
@@ -170,6 +170,8 @@ class GovernanceConfig:
     sender_alias_unique: bool = False
     # MODEL.md §9.20: a list argument passes if each element is a clause literal or in O
     list_union: bool = False
+    # MODEL.md §9.20a: the list-valued arguments per sink (the tool schema's lists)
+    list_args: dict[str, list[str]] = field(default_factory=dict)
 
     # ── construction ─────────────────────────────────────────────────────────────
 
@@ -256,6 +258,7 @@ class GovernanceConfig:
             sender_in_own=bool(data.get("sender_in_own", False)),
             sender_alias_unique=bool(data.get("sender_alias_unique", False)),
             list_union=bool(data.get("list_union", False)),
+            list_args={str(k): [str(x) for x in (v or [])] for k, v in (data.get("list_args") or {}).items()},
             **({"max_unattended_consequence": _parse_consequence_overrides(
                 {"_": data["max_unattended_consequence"]})["_"]}
                if data.get("max_unattended_consequence") is not None else {}),
@@ -363,6 +366,7 @@ class GovernanceConfig:
             "sender_in_own": self.sender_in_own,
             "sender_alias_unique": self.sender_alias_unique,
             "list_union": self.list_union,
+            "list_args": {k: list(v) for k, v in self.list_args.items()},
             "bounded_damage": dict(self.bounded_damage),
             "grant_quotas": dict(self.grant_quotas),
             "floor_scope": self.floor_scope,

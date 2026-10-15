@@ -83,6 +83,7 @@ def union_gov(request, on=True):
     ga = {"create_calendar_event": {"participants": "email?"}}
     g = ToolCallGovernor(grant_args=ga, l1_by_clause=True, list_union=on, egress_sinks=set(ga),
                          driving_args={"create_calendar_event": ["participants"]},
+                         list_args={"create_calendar_event": ["participants"]},
                          operator_sets={"create_calendar_event": {"participants": ["me@own.com", "bob@own.com"]}})
     g.register_task(request)
     g.grants.from_request(request)
@@ -106,3 +107,35 @@ def test_literal_of_another_clause_does_not_join_the_list():
     g = union_gov("Email eve@evil.com the notes. Then create a lunch event with sarah.connor@gmail.com.")
     assert not g.evaluate("create_calendar_event",
                           {"participants": ["sarah.connor@gmail.com", "eve@evil.com", "me@own.com"]}).allowed
+
+
+def test_9_20a_widening_only_on_request_grants_and_only_list_args():
+    """§9.20a: list-union attaches only to a grant with an L1 ground (source REQUEST) and only to its
+    list-valued arguments; the L2 all-O template grant and scalar arguments are never widened."""
+    ga = {"send_email": {"recipients": "email", "cc": "email?"}}
+    g = ToolCallGovernor(grant_args=ga, l1_by_clause=True, list_union=True, egress_sinks=set(ga),
+                         driving_args={"send_email": ["recipients"]},
+                         list_args={"send_email": ["recipients", "cc"]},
+                         operator_sets={"send_email": {"recipients": ["me@own.com"], "cc": ["boss@own.com"]}})
+    g.register_task("Email bob@x.com the notes.")
+    g.grants.from_request("Email bob@x.com the notes.")
+    req_grants = [x for x in g.grants.issued if x.source.value == "L1"]
+    o_grants = [x for x in g.grants.issued if x.source.value == "L2"]
+    assert req_grants and all(x.list_union for x in req_grants)  # L1 grant widened
+    assert all(not x.list_union for x in o_grants)  # the all-O template grant never widened
+    # a list of the clause literal plus an O recipient passes; a stranger does not
+    assert g.evaluate("send_email", {"recipients": ["bob@x.com", "me@own.com"]}).allowed
+    assert not g.evaluate("send_email", {"recipients": ["bob@x.com", "eve@evil.com"]}).allowed
+
+
+def test_9_20a_no_widening_without_an_l1_ground_on_the_sink():
+    """§9.20a: a sink with an O template but no request literal of any of its args in the clause gets
+    no list-union widening (no L1 ground)."""
+    ga = {"send_email": {"recipients": "email", "cc": "email?"}}
+    g = ToolCallGovernor(grant_args=ga, l1_by_clause=True, list_union=True, egress_sinks=set(ga),
+                         driving_args={"send_email": ["recipients"]},
+                         list_args={"send_email": ["recipients", "cc"]},
+                         operator_sets={"send_email": {"cc": ["me@own.com", "boss@own.com"]}})
+    g.register_task("Email the notes to the team.")  # no email literal
+    g.grants.from_request("Email the notes to the team.")
+    assert not g.evaluate("send_email", {"recipients": ["me@own.com"], "cc": ["boss@own.com"]}).allowed

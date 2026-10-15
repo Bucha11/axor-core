@@ -208,6 +208,7 @@ class ToolCallGovernor:
         sender_in_own: bool = False,
         sender_alias_unique: bool = False,
         list_union: bool = False,
+        list_args: "dict | None" = None,
         untrusted_sources: "set[str] | frozenset[str] | None" = None,
         sensitive_sources: "set[str] | frozenset[str] | None" = None,
         egress_sinks: "set[str] | frozenset[str] | None" = None,
@@ -379,7 +380,8 @@ class ToolCallGovernor:
         self._minter = GrantMinter(inner, self._handles, self._grant_args,
                                    quotas=dict(grant_quotas or {}),
                                    access_control=self._grant_l34_only,
-                                   by_clause=bool(l1_by_clause), list_union=bool(list_union))
+                                   by_clause=bool(l1_by_clause), list_union=bool(list_union),
+                                   list_args={k: frozenset(v) for k, v in (list_args or {}).items()})
         if grant_templates:
             self._minter.from_templates(grant_templates)
         # MODEL.md §9.15: description grants
