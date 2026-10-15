@@ -154,6 +154,7 @@ class GovernanceDecision:
     confirmed: bool = False
     # MODEL.md §9: with references on, the arguments the tool must run with (references resolved)
     resolved_args: "dict[str, Any] | None" = None
+    reference_origins: "tuple[str, ...]" = ()
 
 
 class ToolCallGovernor:
@@ -195,6 +196,8 @@ class ToolCallGovernor:
         references: bool = False,
         references_seed: "int | None" = None,
         secret_fields: "set[str] | frozenset[str] | None" = None,
+        sender_aliases: "dict[str, list[str]] | None" = None,
+        no_sender_tools: "set[str] | frozenset[str] | None" = None,
         untrusted_sources: "set[str] | frozenset[str] | None" = None,
         sensitive_sources: "set[str] | frozenset[str] | None" = None,
         egress_sinks: "set[str] | frozenset[str] | None" = None,
@@ -315,7 +318,10 @@ class ToolCallGovernor:
                 seed = secrets.randbits(64)
             self._xrefs = ReferenceTable(own=frozenset(self._audience) | frozenset(self._own_names),
                                          seed=seed, requests=self._requests,
-                                         secret_fields=frozenset(secret_fields or ()))
+                                         secret_fields=frozenset(secret_fields or ()),
+                                         sender_aliases={str(k).casefold(): list(v) for k, v in
+                                                         (sender_aliases or {}).items()})
+            self._no_sender_tools = frozenset(no_sender_tools or ())
         # STRICT obligation: every egress sink must carry a destination allowlist
         # (an enum value_policy) — the sound, paraphrase-proof control. Fail closed
         # at construction rather than ship an egress sink on content-derivation alone.
@@ -441,6 +447,7 @@ class ToolCallGovernor:
         resolved, ctx = self._reference_context(tool_name, args)
         d = self._evaluate(tool_name, resolved, ctx)
         d.resolved_args = resolved
+        d.reference_origins = tuple(ctx.get("origins", ()))
         return d
 
     def _reference_context(self, tool_name: str, args: dict[str, Any]) -> "tuple[dict, dict]":
@@ -459,6 +466,7 @@ class ToolCallGovernor:
                                        category="reference_unknown")
             return resolved, ctx
         all_refs = [r for rs in used.values() for r in rs]
+        ctx["origins"] = sorted({r.origin for r in all_refs})
         if any(r.origin == SECRET for r in all_refs):  # §9.7: the audience must see the source
             dests = [x for a in self._destination_args.get(tool_name, ()) for x in _leaves(resolved.get(a))]
             if any(not t.is_own(x) for x in dests if x not in (None, "")):
@@ -512,7 +520,8 @@ class ToolCallGovernor:
         ni = decision._normalized
         tool = ni.tool if ni is not None else ""
         before = {n for n in self._xrefs.by_name}
-        view = self._xrefs.mint(output, sensitive=tool in self._sensitive_sources)
+        view = self._xrefs.mint(output, sensitive=tool in self._sensitive_sources,
+                                sender_records=tool not in self._no_sender_tools)
         # §9.5: a named sender's value is a ground as an L1 grant on that value
         from axor_core.kernel.references import SENDER
         for n, r in list(self._xrefs.by_name.items()):

@@ -53,7 +53,7 @@ _KNOWN_KEYS = frozenset({
     "floor_mode", "audience", "destination_args", "content_args", "own_names",
     "operator_sets", "operator_sets_refuse_above",
     "template_limits", "consequence_rules", "content_projection", "operator_sets_confirm",
-    "absent_driving_is_empty", "fallback_to_confirmation", "references", "references_seed", "secret_fields",
+    "absent_driving_is_empty", "fallback_to_confirmation", "references", "references_seed", "secret_fields", "sender_aliases", "no_sender_tools",
     "grant_templates",
     "bounded_damage",
     "grant_quotas",
@@ -154,6 +154,9 @@ class GovernanceConfig:
     references_seed: "int | None" = None
     # MODEL.md §9.11: declared secret fields (their values become secret references)
     secret_fields: frozenset[str] = frozenset()
+    # MODEL.md §9.13: entity-model names of senders; tools whose output is a document body
+    sender_aliases: dict[str, list[str]] = field(default_factory=dict)
+    no_sender_tools: frozenset[str] = frozenset()
 
     # ── construction ─────────────────────────────────────────────────────────────
 
@@ -230,6 +233,8 @@ class GovernanceConfig:
             references=bool(data.get("references", False)),
             references_seed=(int(data["references_seed"]) if data.get("references_seed") is not None else None),
             secret_fields=_as_set(data.get("secret_fields"), "secret_fields"),
+            sender_aliases={str(k): [str(x) for x in (v or [])] for k, v in (data.get("sender_aliases") or {}).items()},
+            no_sender_tools=_as_set(data.get("no_sender_tools"), "no_sender_tools"),
             **({"max_unattended_consequence": _parse_consequence_overrides(
                 {"_": data["max_unattended_consequence"]})["_"]}
                if data.get("max_unattended_consequence") is not None else {}),
@@ -327,6 +332,8 @@ class GovernanceConfig:
             "references": self.references,
             "references_seed": self.references_seed,
             "secret_fields": set(self.secret_fields),
+            "sender_aliases": dict(self.sender_aliases),
+            "no_sender_tools": set(self.no_sender_tools),
             "bounded_damage": dict(self.bounded_damage),
             "grant_quotas": dict(self.grant_quotas),
             "floor_scope": self.floor_scope,

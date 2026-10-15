@@ -21,7 +21,10 @@ NAME = re.compile(r"\b(?:email|iban|url|id|secret)_from_untrusted_read_hidden_[0
 ID_KEYS = ("id", "id_", "file_id", "event_id", "email_id")
 ID_LINE = re.compile(r"^(?P<lead>\s*-?\s*)(?P<key>" + "|".join(ID_KEYS) + r"):[ \t]*(?P<val>\S.*?)\s*$")
 FIELD_LINE = re.compile(r"^\s*-?\s*(?P<key>[A-Za-z_][\w]*):[ \t]*(?P<val>\S.*?)\s*$")
-SENDER_LINE = re.compile(r"^\s*-?\s*(?:sender|from):[ \t]*(?P<val>\S.*?)\s*$")
+# §9.13: a sender field of the record itself — "- sender:" / "  sender:" in a list item, or
+# "sender:" at column 0 in a single record; never a line inside a text value
+SENDER_IN_LIST = re.compile(r"^(?:- |  )(?:sender|from):[ \t]*(?P<val>\S.*?)\s*$")
+SENDER_IN_ONE = re.compile(r"^(?:sender|from):[ \t]*(?P<val>\S.*?)\s*$")
 INT_RANGE = (10_000_000, 100_000_000)
 _TRAIL = ".;:!?"
 
@@ -46,6 +49,8 @@ class ReferenceTable:
     seed: int | None = None
     # §9.11: fields whose value is a secret (a credential, a document / payment number)
     secret_fields: frozenset[str] = frozenset()
+    # §9.13: entity-model names of a sender value (value -> names)
+    sender_aliases: dict = field(default_factory=dict)
     requests: list[str] = field(default_factory=list)
     by_name: dict[Any, Reference] = field(default_factory=dict)
     by_value: dict[tuple[str, str], Reference] = field(default_factory=dict)
@@ -68,6 +73,20 @@ class ReferenceTable:
 
     def is_own(self, value: Any) -> bool:
         return str(value).casefold() in self.own
+
+    def sender_named(self, sender: str) -> bool:
+        """§9.13: the request names this sender — the value itself or one of its entity-model names,
+        as a word (case-folded)."""
+        names = [sender] + list(self.sender_aliases.get(sender, ()) or ())
+        names += list(self.sender_aliases.get(sender.casefold(), ()) or ())
+        for n in names:
+            n = str(n).strip().casefold()
+            if len(n) < 2:
+                continue
+            pat = re.compile(r"(?<![\w@.])" + re.escape(n) + r"(?![\w@])")
+            if any(pat.search(r.casefold()) for r in self.requests):
+                return True
+        return False
 
     def shown_raw(self, value: Any) -> bool:
         return self.is_request(value) or self.is_own(value)
@@ -109,7 +128,7 @@ class ReferenceTable:
         s = IBAN.sub(sub("iban"), s)
         return URL.sub(sub("url"), s)
 
-    def mint(self, text: str, *, sensitive: bool = False) -> str:
+    def mint(self, text: str, *, sensitive: bool = False, sender_records: bool = True) -> str:
         """The agent's view of a tool output (a YAML / plain text string)."""
         if not isinstance(text, str) or not text:
             return text
@@ -125,9 +144,13 @@ class ReferenceTable:
             for v in sorted(secrets, key=len, reverse=True):
                 text = text.replace(v, str(secrets[v]))
         out = []
+        listed = text.startswith("- ")
         for item in _items(text):
-            sender = next((m.group("val") for m in map(SENDER_LINE.match, item) if m), None)
-            named = bool(sender) and self.is_request(_unquote(sender))
+            sender = None
+            if sender_records:  # §9.13: never for file / web bodies
+                pat = SENDER_IN_LIST if listed else SENDER_IN_ONE
+                sender = next((m.group("val") for m in map(pat.match, item) if m), None)
+            named = bool(sender) and self.sender_named(_unquote(sender))
             origin = self._origin(named, sensitive)
             for line in item:
                 m = ID_LINE.match(line)
