@@ -51,6 +51,8 @@ class ReferenceTable:
     secret_fields: frozenset[str] = frozenset()
     # §9.13: entity-model names of a sender value (value -> names)
     sender_aliases: dict = field(default_factory=dict)
+    # §9.17 (hypothesis H-B, not in c9v4): a sender in O proves the identifiers of its record's body
+    sender_own: bool = False
     requests: list[str] = field(default_factory=list)
     by_name: dict[Any, Reference] = field(default_factory=dict)
     by_value: dict[tuple[str, str], Reference] = field(default_factory=dict)
@@ -152,7 +154,8 @@ class ReferenceTable:
             if sender_records:  # §9.13: never for file / web bodies
                 pat = SENDER_IN_LIST if listed else SENDER_IN_ONE
                 sender = next((m.group("val") for m in map(pat.match, item) if m), None)
-            named = bool(sender) and self.sender_named(_unquote(sender))
+            named = bool(sender) and (self.sender_named(_unquote(sender))
+                                      or (self.sender_own and self.is_own(_unquote(sender))))
             origin = self._origin(named, sensitive)
             for line in item:
                 m = ID_LINE.match(line)

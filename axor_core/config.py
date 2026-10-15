@@ -53,7 +53,7 @@ _KNOWN_KEYS = frozenset({
     "floor_mode", "audience", "destination_args", "content_args", "own_names",
     "operator_sets", "operator_sets_refuse_above",
     "template_limits", "consequence_rules", "content_projection", "operator_sets_confirm",
-    "absent_driving_is_empty", "fallback_to_confirmation", "references", "references_seed", "secret_fields", "sender_aliases", "no_sender_tools", "l1_by_clause", "description_sources", "description_targets",
+    "absent_driving_is_empty", "fallback_to_confirmation", "references", "references_seed", "secret_fields", "sender_aliases", "no_sender_tools", "l1_by_clause", "description_sources", "description_targets", "delegated_sources", "delegated_max_class", "sender_in_own",
     "grant_templates",
     "bounded_damage",
     "grant_quotas",
@@ -162,6 +162,10 @@ class GovernanceConfig:
     # MODEL.md §9.15: description grants — trusted structured sources and the entities' targets
     description_sources: dict = field(default_factory=dict)
     description_targets: dict = field(default_factory=dict)
+    # MODEL.md §9.16 / §9.17: hypotheses H-A / H-B (counted only; not in c9v4)
+    delegated_sources: dict = field(default_factory=dict)
+    delegated_max_class: "str | None" = None
+    sender_in_own: bool = False
 
     # ── construction ─────────────────────────────────────────────────────────────
 
@@ -243,6 +247,9 @@ class GovernanceConfig:
             l1_by_clause=bool(data.get("l1_by_clause", False)),
             description_sources=dict(data.get("description_sources") or {}),
             description_targets=dict(data.get("description_targets") or {}),
+            delegated_sources=dict(data.get("delegated_sources") or {}),
+            delegated_max_class=data.get("delegated_max_class"),
+            sender_in_own=bool(data.get("sender_in_own", False)),
             **({"max_unattended_consequence": _parse_consequence_overrides(
                 {"_": data["max_unattended_consequence"]})["_"]}
                if data.get("max_unattended_consequence") is not None else {}),
@@ -345,6 +352,9 @@ class GovernanceConfig:
             "l1_by_clause": self.l1_by_clause,
             "description_sources": dict(self.description_sources),
             "description_targets": dict(self.description_targets),
+            "delegated_sources": dict(self.delegated_sources),
+            "delegated_max_class": self.delegated_max_class,
+            "sender_in_own": self.sender_in_own,
             "bounded_damage": dict(self.bounded_damage),
             "grant_quotas": dict(self.grant_quotas),
             "floor_scope": self.floor_scope,

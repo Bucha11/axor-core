@@ -203,6 +203,9 @@ class ToolCallGovernor:
         l1_by_clause: bool = False,
         description_sources: "dict | None" = None,
         description_targets: "dict | None" = None,
+        delegated_sources: "dict | None" = None,
+        delegated_max_class: "str | None" = None,
+        sender_in_own: bool = False,
         untrusted_sources: "set[str] | frozenset[str] | None" = None,
         sensitive_sources: "set[str] | frozenset[str] | None" = None,
         egress_sinks: "set[str] | frozenset[str] | None" = None,
@@ -325,7 +328,8 @@ class ToolCallGovernor:
                                          seed=seed, requests=self._requests,
                                          secret_fields=frozenset(secret_fields or ()),
                                          sender_aliases={str(k).casefold(): list(v) for k, v in
-                                                         (sender_aliases or {}).items()})
+                                                         (sender_aliases or {}).items()},
+                                         sender_own=bool(sender_in_own))
             self._no_sender_tools = frozenset(no_sender_tools or ())
         # STRICT obligation: every egress sink must carry a destination allowlist
         # (an enum value_policy) — the sound, paraphrase-proof control. Fail closed
@@ -381,6 +385,11 @@ class ToolCallGovernor:
         self._described: dict[tuple[str, str], set] = {}
         self._desc_done: set = set()
         self._desc_notes: dict[str, str] = {}
+        # §9.16 (hypothesis H-A, not in c9v4): tool -> the argument naming the source
+        self._delegated = dict(delegated_sources or {})
+        self._delegated_max = (ConsequenceClass[str(delegated_max_class).upper()]
+                               if delegated_max_class else None)
+        self._delegated_done: set = set()
         if description_sources:
             from axor_core.kernel.descriptions import DescriptionTable
             own = {str(v).casefold() for v in (set(self._audience) | set(self._own_names))}
@@ -569,6 +578,44 @@ class ToolCallGovernor:
         if self._desc is None or not self._desc.observe(tool_name, args or {}, value):
             return []
         return self._describe()
+
+    def observe_delegated(self, tool_name: str, args: "dict[str, Any] | None", output: Any) -> list:
+        """§9.16 (hypothesis H-A): a read of a source S the request names (a URL / a path literal).
+        Values of kind k in S's output become grant candidates for every sink whose leading
+        (destination) argument has kind k; one grant (one use) per pair (S, sink)."""
+        arg = self._delegated.get(tool_name)
+        if not arg or not isinstance(output, str):
+            return []
+        src = (args or {}).get(arg)
+        if not isinstance(src, str) or not src or not self._is_request_value(src):
+            return []
+        from axor_core.kernel.handles import split_kind
+        from axor_core.kernel.request_literals import literal_values
+        out = []
+        for sink, kinds in self._grant_args.items():
+            if self._delegated_max is not None and consequence_class(
+                    sink, overrides=self._consequence_overrides) > self._delegated_max:
+                continue
+            for a in self._destination_args.get(sink, ()):
+                k = split_kind(kinds.get(a, ""))[0] if a in kinds else ""
+                if k not in ("email", "iban", "url"):
+                    continue
+                vals = list(dict.fromkeys(literal_values(output, k)))
+                key = (tool_name, src.casefold(), sink, a)
+                if not vals or key in self._delegated_done:
+                    continue
+                self._delegated_done.add(key)
+                from axor_core.kernel.references import _canon
+                req = next((r for r in self._requests if _canon(src) in _canon(r)), self._requests[0])
+                note = f"delegated: {tool_name}({src}) -> {sink}.{a}"
+                gs = self._minter.from_description(req, sink, a, vals, members=True, note=note, uses=1)
+                if not gs:
+                    continue
+                for g in gs:
+                    self._desc_notes[g.id] = note
+                self._described.setdefault((sink, a), set()).update(str(v).strip().casefold() for v in vals)
+                out.append((note, vals))
+        return out
 
     def _describe(self) -> list:
         from axor_core.kernel.descriptions import covered, parse

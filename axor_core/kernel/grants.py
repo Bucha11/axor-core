@@ -600,7 +600,7 @@ class GrantMinter:
         return out
 
     def from_description(self, request: str, sink: str, arg: str, values: Any, *, members: bool = False,
-                         note: str = "description") -> list[Grant]:
+                         note: str = "description", uses: "int | None" = None) -> list[Grant]:
         """MODEL.md §9.15: grants on a value the request described (computed by the kernel from
         trusted structured fields), as L1 — the other arguments as L1 (request literals / a fragment)
         or as the sink's L2 tuple template (its O-set), with the sink's quota. ``members``: one
@@ -649,7 +649,7 @@ class GrantMinter:
             if not opts:
                 return []  # a required argument with no ground
             options[a] = opts
-        uses = self.quotas.get(sink, self.default_uses)
+        uses = self.quotas.get(sink, self.default_uses) if uses is None else uses
         out: list[Grant] = []
         others = list(options)
         for t in targets:
