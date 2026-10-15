@@ -223,3 +223,10 @@ def test_decision_reports_the_reference_origins():
     carol = NAME.findall(read(g, "read_inbox", TWO))[0]
     d = g.evaluate("send_email", {"recipients": [carol], "body": "ok"})
     assert d.allowed and d.reference_origins == ("named_sender",)
+
+
+def test_request_url_matches_with_scheme_and_www_as_l1_reads_it():
+    g = gov(request="Read the content on webpage www.informations.com.")
+    t = g._xrefs
+    assert t.is_request("http://www.informations.com") and t.is_request("https://informations.com/")
+    assert not t.is_request("http://www.informations.com.evil.net")

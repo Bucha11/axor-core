@@ -68,8 +68,10 @@ class ReferenceTable:
 
     # ── origins ──────────────────────────────────────────────────────────────
     def is_request(self, value: Any) -> bool:
-        v = str(value).casefold()
-        return len(v) > 2 and any(v in r.casefold() for r in self.requests)
+        """A literal of the request, compared as L1 reads it: case-folded, and a URL without its
+        scheme, ``www.`` and trailing slash (``http://www.x.com/`` is the request's ``www.x.com``)."""
+        v = _canon(str(value))
+        return len(v) > 2 and any(v in _canon(r) for r in self.requests)
 
     def is_own(self, value: Any) -> bool:
         return str(value).casefold() in self.own
@@ -203,6 +205,13 @@ class ReferenceTable:
                 return NAME.sub(f, x)
             return x
         return go(args, id_arg), used, unknown
+
+
+def _canon(text: str) -> str:
+    t = text.casefold()
+    t = re.sub(r"https?://", "", t)
+    t = re.sub(r"(?<![\w.])www\.", "", t)
+    return re.sub(r"/(?=[\s'\".,;:!?)]|$)", "", t)
 
 
 def _unquote(v: str) -> str:
