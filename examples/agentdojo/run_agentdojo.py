@@ -229,7 +229,12 @@ class _Recorder(BasePipelineElement):
         return out
 
 
-def _save_trajectory(rec, ut_id, governed, utility, tools_executor):
+def _traj_path(ut_id, governed):
+    d = os.environ.get("AXOR_BENCH_TRAJ_DIR")
+    return d and os.path.join(d, SUITE, f"{ut_id}{'' if governed else '_undefended'}.json")
+
+
+def _save_trajectory(rec, ut_id, governed, utility, tools_executor, cost=None):
     d = os.environ.get("AXOR_BENCH_TRAJ_DIR")
     if not d:
         return
@@ -238,9 +243,16 @@ def _save_trajectory(rec, ut_id, governed, utility, tools_executor):
     tid = ut_id
     rec_out = {"suite": SUITE, "user_task_id": ut_id, "governed": governed, "utility": bool(utility),
                "model": MODEL, "messages": rec.last,
+               # §6: per-call decisions (tool, verdict, gate), the confirmer's decisions with the
+               # proposed call, the budget-exhausted flag, and this episode's tokens / cost
+               "calls": getattr(tools_executor, "calls_log", {}).get(tid),
                "confirmations": getattr(tools_executor, "confirmations", {}).get(tid),
-               "l4": getattr(tools_executor, "l4_stats", {}).get(tid)}
-    with open(os.path.join(d, SUITE, f"{ut_id}{'' if governed else '_undefended'}.json"), "w") as f:
+               "l4": getattr(tools_executor, "l4_stats", {}).get(tid),
+               "l4_decisions": getattr(tools_executor, "l4_log", {}).get(tid),
+               "budget_exhausted": bool((getattr(tools_executor, "l4_stats", {}).get(tid) or {}).get("over_budget")
+                                        or (getattr(tools_executor, "l4_stats", {}).get(tid) or {}).get("terminated")),
+               "cost_usd": cost}
+    with open(_traj_path(ut_id, governed), "w") as f:
         _j.dump(rec_out, f, indent=1, default=str)
 
 
@@ -248,7 +260,8 @@ def build_pipeline(governed: bool):
     llm = _Recorder(_make_llm())
     if governed:
         tools_executor = GovernedToolsExecutor(
-            make_governor, grant_levels=os.environ.get("AXOR_BENCH_GRANT_LEVELS", ""))
+            make_governor, grant_levels=os.environ.get("AXOR_BENCH_GRANT_LEVELS", ""),
+            confirm=os.environ.get("AXOR_BENCH_L4_CONFIRM", "oracle"))
     else:
         tools_executor = ToolsExecutor()
     loop = ToolsExecutionLoop([tools_executor, llm])
@@ -297,10 +310,23 @@ def run_benign(governed: bool, suite):
     pipeline, tools_executor = build_pipeline(governed)
     utilities: list[bool] = []
     label = "GOVERNED " if governed else "UNDEFENDED"
+    from agentdojo_adapter import _spend_total
     for ut_id in USER_TASKS:
+        # §7 resume: skip a task whose trajectory file already exists (a restart continues from the
+        # break instead of re-running and re-spending); reuse its recorded utility.
+        p = _traj_path(ut_id, governed)
+        if p and os.path.exists(p):
+            import json as _j
+            try:
+                utilities.append(bool(_j.load(open(p)).get("utility")))
+                print(f"  [{label}] {ut_id:<14} (benign)  SKIP (already done)")
+                continue
+            except Exception:
+                pass
         user_task = suite.get_user_task_by_id(ut_id)
         if hasattr(tools_executor, "current_user_task"):
             tools_executor.current_user_task = user_task
+        before = _spend_total()
         try:
             utility, _ = suite.run_task_with_pipeline(pipeline, user_task, None, {})
         except Exception as exc:
@@ -308,7 +334,8 @@ def run_benign(governed: bool, suite):
             continue
         utilities.append(utility)
         print(f"  [{label}] {ut_id:<14} (benign)  utility={'Y' if utility else 'n'}")
-        _save_trajectory(pipeline._recorder, ut_id, governed, utility, tools_executor)
+        _save_trajectory(pipeline._recorder, ut_id, governed, utility, tools_executor,
+                         cost=round(_spend_total() - before, 6))
     return utilities, tools_executor
 
 

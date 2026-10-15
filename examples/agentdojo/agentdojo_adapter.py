@@ -21,6 +21,7 @@ operator deploys axor over a real tool set, exactly as it would in production.
 """
 from __future__ import annotations
 
+import re
 import json
 import os
 import time
@@ -344,6 +345,77 @@ class OpenRouterLLM(BasePipelineElement):
 
 # ── Governed tool executor ──────────────────────────────────────────────────────
 
+_LIST_HEAD = re.compile(r"^(?:Hotel Names|Restaurant in [^:\n]+|Car Rental Companies in [^:\n]+): ?(.*)$",
+                        re.S)
+
+
+def _parse_structured(tool: str, out: str):
+    """MODEL.md §9.15 structured-output parser (the platform adapter's job): read an AgentDojo tool
+    output string into a list / records / name->value map, or None when it is free text. Mirrors the
+    offline axor_ajar.structured so the live run exercises the same description grants."""
+    if not isinstance(out, str):
+        return out
+    s = out.strip("\n")
+    m = _LIST_HEAD.match(s)
+    if m:
+        return [x.strip() for x in m.group(1).split("\n") if x.strip()]
+    if s.startswith("{") and s.endswith("}"):
+        import ast
+        try:
+            return ast.literal_eval(s)
+        except (ValueError, SyntaxError):
+            return None
+    try:
+        import yaml
+        y = yaml.safe_load(s)
+    except Exception:
+        return None
+    return y if isinstance(y, (list, dict)) else None
+
+
+# view-aware confirmer verbs (residuals_rules.md; same table the offline axor_ajar.VIEW_VERBS uses)
+VIEW_VERBS: dict = {
+    "send_money": ("send", "pay", "transfer", "wire"), "schedule_transaction": ("schedule", "set up", "recurring"),
+    "update_scheduled_transaction": ("update", "change", "modify", "adjust"),
+    "update_password": ("password",), "update_user_info": ("update", "change"),
+    "send_email": ("send", "email", "mail", "reply", "forward", "write", "notify", "invite", "share"),
+    "create_calendar_event": ("create", "schedule", "add", "organize", "organise", "book", "set up", "plan"),
+    "cancel_calendar_event": ("cancel", "delete", "remove"),
+    "reschedule_calendar_event": ("reschedule", "move", "postpone", "change"),
+    "add_calendar_event_participants": ("add", "invite", "include"), "share_file": ("share", "grant", "give"),
+    "append_to_file": ("append", "add", "write", "update"), "create_file": ("create", "write", "save", "make"),
+    "delete_file": ("delete", "remove"), "delete_email": ("delete", "remove"),
+    "reserve_hotel": ("reserve", "book"), "reserve_car_rental": ("reserve", "book"),
+    "reserve_restaurant": ("reserve", "book"),
+    "send_direct_message": ("send", "message", "dm", "tell", "write", "reply", "ask"),
+    "send_channel_message": ("send", "post", "write", "message", "announce"),
+    "add_user_to_channel": ("add", "invite"), "invite_user_to_slack": ("invite", "add"),
+    "remove_user_from_slack": ("remove", "kick", "delete"), "post_webpage": ("post", "publish", "upload"),
+    "get_webpage": ("visit", "open", "read", "get", "fetch", "check", "summarize", "summarise", "browse", "go to"),
+}
+
+
+def _view_policy(prompt: str):
+    """view-aware confirmer: the naive destination test (every destination value named in the request)
+    AND the tool's verb present in the request. A tool with no verb entry is never approved."""
+    dest = re.compile(r"(^|_)(recipients?|participants|channel|url|e-?mail|user_email|cc|bcc|user)$")
+    low = (prompt or "").lower()
+    words = re.findall(r"[a-z]+", low)
+
+    def ok(tool, args):
+        verbs = VIEW_VERBS.get(tool)
+        if not verbs:
+            return False
+        vals = []
+        for k, v in args.items():
+            if dest.search(k) and v is not None:
+                vals += list(v) if isinstance(v, (list, tuple)) else [v]
+        if not all(str(x).lower() in low for x in vals):
+            return False
+        return any((v in low) if " " in v else any(w.startswith(v) for w in words) for v in verbs)
+    return ok
+
+
 def _limited(policy, executor, tid):
     """The daemon's per-session L4 limits (axor-daemon confirm.ThreadConfirmer), for
     the in-process live loop: $AXOR_BENCH_L4_BUDGET questions at most (beyond it the
@@ -406,6 +478,8 @@ class GovernedToolsExecutor(BasePipelineElement):
         self.current_user_task = None
         self.confirmations: dict[str, int] = {}
         self.l4_stats: dict[str, dict] = {}
+        self.calls_log: dict[str, list] = {}   # §6: per task, [{tool, allowed, category, grant_source}]
+        self.l4_log: dict[str, list] = {}       # §6: per task, [{call, approved, reason}]
         self._plan: list = []
 
     def _governor_for(self, messages, task_text) -> ToolCallGovernor:
@@ -469,10 +543,24 @@ class GovernedToolsExecutor(BasePipelineElement):
             tool, args = call
             kinds = g._grant_args.get(tool, {})
             want = proj(kinds, args)
-            return any(c.function == tool and proj(kinds, dict(c.args)) == want
-                       for c in executor._plan)
+            res = any(c.function == tool and proj(kinds, dict(c.args)) == want
+                      for c in executor._plan)
+            executor.l4_log.setdefault(tid, []).append(
+                {"call": [tool, args], "approved": bool(res), "policy": executor.confirm})
+            return res
 
-        g._confirmer = ScriptedConfirmer(_limited(oracle, executor, tid))
+        policy = _view_policy(getattr(ut, "PROMPT", "") or "") if executor.confirm == "view" else oracle
+        if executor.confirm == "view":
+            def view_logged(action, call):
+                executor.confirmations[tid] = executor.confirmations.get(tid, 0) + 1
+                tool, args = call
+                res = bool(policy(tool, args))
+                executor.l4_log.setdefault(tid, []).append(
+                    {"call": [tool, args], "approved": res, "policy": "view"})
+                return res
+            g._confirmer = ScriptedConfirmer(_limited(view_logged, executor, tid))
+        else:
+            g._confirmer = ScriptedConfirmer(_limited(oracle, executor, tid))
 
     def query(self, query, runtime, env=EmptyEnv(), messages=[], extra_args={}):
         if not messages or messages[-1]["role"] != "assistant":
@@ -488,9 +576,15 @@ class GovernedToolsExecutor(BasePipelineElement):
             except Exception:
                 self._plan = []
         governor = self._governor_for(messages, query)
+        tid = getattr(self.current_user_task, "ID", None) or "task"
+        calls_log = self.calls_log.setdefault(tid, [])
         results: list[ChatToolResultMessage] = []
         for tool_call in tool_calls:
             decision = governor.evaluate(tool_call.function, dict(tool_call.args))
+            calls_log.append({"tool": tool_call.function, "allowed": bool(decision.allowed),
+                              "category": decision.category,
+                              "grant_source": getattr(decision, "grant_source", None),
+                              "description": getattr(decision, "description", None)})
             if not decision.allowed:
                 self.denied_count += 1
                 self.denials.append(f"{tool_call.function}: {decision.category}")
@@ -512,11 +606,25 @@ class GovernedToolsExecutor(BasePipelineElement):
                 key = governor.spend(decision, dict(tool_call.args))
                 if key is not None:
                     governor.grant_store.commit(key)
+            out_str = tool_result_to_str(tool_result)
+            view = out_str
             if error is None:
-                governor.register_output(decision, tool_result_to_str(tool_result))
+                # MODEL.md §9: the agent sees references (present_output), not the raw value; and the
+                # declared structured sources (§9.15 / §9.16) are fed to the gate for description grants
+                if getattr(governor, "_xrefs", None) is not None:
+                    view = governor.present_output(decision, out_str)
+                else:
+                    governor.register_output(decision, out_str)
+                if getattr(governor, "_desc", None) is not None or getattr(governor, "_delegated", None):
+                    structured = _parse_structured(tool_call.function, out_str)
+                    if structured is not None:
+                        if getattr(governor, "_delegated", None):
+                            governor.observe_delegated(tool_call.function, dict(tool_call.args), out_str)
+                        if getattr(governor, "_desc", None) is not None:
+                            governor.observe_structured(tool_call.function, dict(tool_call.args), structured)
             results.append(ChatToolResultMessage(
                 role="tool",
-                content=[text_content_block_from_string(tool_result_to_str(tool_result))],
+                content=[text_content_block_from_string(view)],
                 tool_call_id=tool_call.id,
                 tool_call=tool_call,
                 error=error,
