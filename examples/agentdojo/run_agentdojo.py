@@ -85,6 +85,16 @@ def make_governor() -> ToolCallGovernor:
     integrity = os.environ.get("AXOR_BENCH_INTEGRITY")
     if integrity:
         cfg = dataclasses.replace(cfg, integrity_default=integrity)
+    # AXOR_BENCH_NO_GRANTS=1 = the origin-only ablation: strip every task-scoped grant
+    # source (L1/L2/L4) from the config so NO grant_source / grant_gate decisions can
+    # arise — only the non-grant gates (origin, consequence, operator-set refusal)
+    # decide. AXOR_BENCH_GRANT_LEVELS="" alone does NOT do this: the config's own
+    # grant_args/grant_templates stay installed on the governor and still mint L1/L2.
+    # strip_grants is the SAME helper the Ajar harness (axor_ajar no_grants) uses, so
+    # the two paths produce a byte-identical origin-only deployment.
+    if os.environ.get("AXOR_BENCH_NO_GRANTS") == "1":
+        from grant_ablation import strip_grants
+        cfg = strip_grants(cfg)
     kw = cfg.as_governor_kwargs()
     # AXOR_BENCH_ORIGIN=1 = the rope_bridge "origin" combo: STRICT tool roles
     # (fail-closed on an unclassified tool/consequence) but NO egress allowlist
