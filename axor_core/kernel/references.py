@@ -145,8 +145,14 @@ class ReferenceTable:
         s = IBAN.sub(sub("iban"), s)
         return URL.sub(sub("url"), s)
 
-    def mint(self, text: str, *, sensitive: bool = False, sender_records: bool = True) -> str:
-        """The agent's view of a tool output (a YAML / plain text string)."""
+    def mint(self, text: str, *, sensitive: bool = False, sender_records: bool = True,
+             item_senders: "list | None" = None, sender_from_typed: bool = False) -> str:
+        """The agent's view of a tool output (a YAML / plain text string).
+
+        ``sender_from_typed`` (default off): take each top-level item's sender from
+        ``item_senders`` (the tool's TYPED return field, positional by item) instead of the
+        text SENDER_IN_* regex; a tool with no declared sender field (``item_senders`` None or a
+        None entry) yields no named_sender. Off == the shipped text-parse behaviour."""
         if not isinstance(text, str) or not text:
             return text
         # §9.11: secret fields first — their values become secret references wherever they appear
@@ -162,9 +168,13 @@ class ReferenceTable:
                 text = text.replace(v, str(secrets[v]))
         out = []
         listed = text.startswith("- ")
-        for item in _items(text):
+        for idx, item in enumerate(_items(text)):
             sender = None
-            if sender_records:  # §9.13: never for file / web bodies
+            if sender_from_typed:  # hardening: sender from the TYPED field, never from the text
+                if sender_records and item_senders is not None and idx < len(item_senders):
+                    sv = item_senders[idx]
+                    sender = str(sv) if sv not in (None, "") else None
+            elif sender_records:  # §9.13: never for file / web bodies
                 pat = SENDER_IN_LIST if listed else SENDER_IN_ONE
                 sender = next((m.group("val") for m in map(pat.match, item) if m), None)
             named = bool(sender) and (self.sender_named(_unquote(sender))

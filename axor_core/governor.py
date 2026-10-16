@@ -200,6 +200,7 @@ class ToolCallGovernor:
         secret_fields: "set[str] | frozenset[str] | None" = None,
         sender_aliases: "dict[str, list[str]] | None" = None,
         no_sender_tools: "set[str] | frozenset[str] | None" = None,
+        sender_from_typed: bool = False,
         l1_by_clause: bool = False,
         description_sources: "dict | None" = None,
         description_targets: "dict | None" = None,
@@ -335,6 +336,7 @@ class ToolCallGovernor:
                                          sender_own=bool(sender_in_own),
                                          alias_unique=bool(sender_alias_unique))
             self._no_sender_tools = frozenset(no_sender_tools or ())
+        self._sender_from_typed = bool(sender_from_typed)
         # STRICT obligation: every egress sink must carry a destination allowlist
         # (an enum value_policy) — the sound, paraphrase-proof control. Fail closed
         # at construction rather than ship an egress sink on content-derivation alone.
@@ -544,10 +546,15 @@ class ToolCallGovernor:
         ctx["origin_decided"] = decided and checked > 0
         return resolved, ctx
 
-    def present_output(self, decision: "GovernanceDecision", output: Any) -> Any:
+    def present_output(self, decision: "GovernanceDecision", output: Any,
+                       item_senders: "list | None" = None) -> Any:
         """Register an executed tool's output and return what the agent may see: with references
         on (§9), target identifiers of untrusted origin replaced by references; otherwise the
-        output unchanged."""
+        output unchanged.
+
+        ``item_senders`` (with ``sender_from_typed`` on): the record sender per top-level item,
+        taken from the tool's TYPED return field by the integration — used instead of parsing
+        sender:/from: out of the rendered text."""
         self.register_output(decision, output)
         if self._xrefs is None or not isinstance(output, str):
             return output
@@ -555,7 +562,8 @@ class ToolCallGovernor:
         tool = ni.tool if ni is not None else ""
         before = {n for n in self._xrefs.by_name}
         view = self._xrefs.mint(output, sensitive=tool in self._sensitive_sources,
-                                sender_records=tool not in self._no_sender_tools)
+                                sender_records=tool not in self._no_sender_tools,
+                                item_senders=item_senders, sender_from_typed=self._sender_from_typed)
         # §9.5: a named sender's value is a ground as an L1 grant on that value
         from axor_core.kernel.references import SENDER
         for n, r in list(self._xrefs.by_name.items()):
