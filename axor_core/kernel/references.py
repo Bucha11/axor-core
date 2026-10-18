@@ -132,14 +132,17 @@ class ReferenceTable:
         # §9.11: a sensitive source no longer makes an identifier secret (secret = declared fields)
         return SENDER if item_named_sender else UNTRUSTED
 
-    def _mint_text(self, s: str, origin: str) -> str:
+    def _mint_text(self, s: str, origin: str, named_value: str | None = None) -> str:
         def sub(kind: str):
             def f(m: re.Match) -> str:
                 raw = m.group(0)
                 v = raw.rstrip(_TRAIL) if kind == "url" else raw
                 if self.shown_raw(v):
                     return raw
-                return str(self._ref(kind, v, origin, False)) + raw[len(v):]
+                # §9.13a: named_sender grounds ONLY the record's own sender-field value; every
+                # other identifier in the record keeps the read's origin (``origin``).
+                o = SENDER if (named_value is not None and v.casefold() == named_value) else origin
+                return str(self._ref(kind, v, o, False)) + raw[len(v):]
             return f
         s = EMAIL.sub(sub("email"), s)
         s = IBAN.sub(sub("iban"), s)
@@ -177,9 +180,18 @@ class ReferenceTable:
             elif sender_records:  # §9.13: never for file / web bodies
                 pat = SENDER_IN_LIST if listed else SENDER_IN_ONE
                 sender = next((m.group("val") for m in map(pat.match, item) if m), None)
-            named = bool(sender) and (self.sender_named(_unquote(sender))
-                                      or (self.sender_own and self.is_own(_unquote(sender))))
-            origin = self._origin(named, sensitive)
+            named = bool(sender) and self.sender_named(_unquote(sender))
+            own = bool(sender) and self.sender_own and self.is_own(_unquote(sender))
+            # §9.13a: a request-named (but un-owned) sender grounds ONLY its own sender-field value
+            # (``named_value``); a recipient/other id the record's body merely carries keeps the
+            # read's origin. H-B (``sender_in_own``, a flagged hypothesis) is unchanged: the user's
+            # OWN sender still proves every identifier in the record.
+            if own:
+                base = self._origin(True, sensitive)  # whole-record ground (H-B)
+                named_value = None
+            else:
+                base = self._origin(False, sensitive)
+                named_value = _unquote(sender).casefold() if named else None
             for line in item:
                 m = ID_LINE.match(line)
                 if m:
@@ -187,11 +199,12 @@ class ReferenceTable:
                     v = _unquote(raw)
                     if not self.shown_raw(v):
                         integer = raw.isdigit()
-                        name = self._ref("id", int(v) if integer else v, origin, integer)
+                        o = SENDER if (named_value is not None and v.casefold() == named_value) else base
+                        name = self._ref("id", int(v) if integer else v, o, integer)
                         line = f"{m.group('lead')}{m.group('key')}: {name}"
                     out.append(line)
                     continue
-                out.append(self._mint_text(line, origin))
+                out.append(self._mint_text(line, base, named_value))
         return "\n".join(out)
 
     # ── resolution (agent call → values, with origins) ───────────────────────
