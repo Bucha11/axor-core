@@ -91,7 +91,7 @@ pass" framing.
 - **Measurement axis (the big one): lead with structural-guarantee-at-utility-cost
   (§6.2), not ASR-delta.** ASR-delta is headroom-dependent and degenerates to 0→0 on
   robust models; the guarantee+cost claim is CaMeL-shaped and survives any model. This
-  is the empirical analogue of §5.4's honesty and the real answer to "motivation for
+  is the empirical analogue of §5.5's honesty and the real answer to "motivation for
   adoption." ASR-delta (§6.4) is secondary colour.
 - **Baseline semantics — option (b), own-baseline cost profiles; CaMeL NOT re-run.**
   A faithful re-implementation of CaMeL's interpreter is a project in itself; an
@@ -125,12 +125,17 @@ pass" framing.
   bytes — paraphrase-proof by signature) + deterministic illustration (arm → refuse →
   paraphrase-still-refused → control-allows), reproduced live on OpenRouter/GPT-4o
   while running travel. Name the axis asymmetry out loud: integrity = measured,
-  confidentiality = proven (§5.5). §6.2 keeps only the one-liner that the stock travel
+  confidentiality = structural, by construction, shown at unit level and in the
+  negative-control matrix (§5.6) — never "proven". §6.2 keeps only the one-liner that the stock travel
   slice does not isolate the floor. Optional, low priority: a targeted benign
   read-secret-then-email harness only if a reviewer insists on a floor *cost* number.
-- **Novelty arbitration: one headline — the K4 theorem + decidability split (§5.4).**
-  §4 (seam) and §6 (empirics) are supporting. An earlier draft let §4 and §5.4 each
-  claim "the contribution"; fixed.
+- **Novelty arbitration: one headline — the §5 chain (ground → projection →
+  consumption → dispatch → effect) with its conditions shown load-bearing by the
+  negative-control matrix.** K4 is a lemma in it, the decidability split a
+  classification inside T4; K5 and composition are parts of the argument, not separate
+  headlines. Superseded: an earlier decision billed "K4 + decidability split" as the
+  headline; a novelty claim rests on what the contracts measurably prevent, not on the
+  formulation. §4 (seam) and §6 (empirics) remain supporting.
 - **How hard to push the theorem:** "stated + pinned + demonstrated on 2 trust models,"
   explicitly *not* a mechanized proof. Keep the induction hedge identical everywhere:
   **"argued by pen-and-paper induction over a closed constructor set (a Coq/Lean
@@ -155,8 +160,14 @@ pass" framing.
   self-deprecation. Equally: never soften it ("roughly comparable") — −34.1 vs −23.8 is
   CaMeL ahead by ~10pp, say so.
 - **Never claim the gate covers "all attacks."** The guarantee covers the
-  projection-equivalence (framing) class, with the §5.4 conditionality (enum/numeric
-  outright; rich-syntax fuzz-discharged) and the §5.5 integrity paraphrase residual.
+  projection-equivalence (framing) class, with the §5.5 conditionality (enum/numeric
+  on fields with a consumption contract; rich-syntax fields an open, fuzz-tested
+  obligation — never "fuzz-discharged") and the §5.5 integrity paraphrase residual.
+- **Never say "machine-checked" for a Hypothesis run.** Property tests are evidence
+  over the drawn examples; "machine-checked" is reserved for a proof assistant.
+- **Never derive equal effects from equal projections without the consumer.** An
+  exact predicate decides a value; the effect depends on the handler, which is a
+  consumption contract (checked) or an attestation (premise).
 - **Do not call the supersession config "tuned."** §6.1 claims the deployed config is
   not benchmark-tuned; the allowlist is a legitimate operator artifact (approved-payee
   list). Use "deployment-allowlist (supersession)" vs "generic."
@@ -166,7 +177,7 @@ pass" framing.
 - **ASR 0% on o4-mini has two distinct causes — attribute both correctly:** undefended
   0% because the model resists the stock injection on its own; governed 0% structurally.
   Never attribute it to "AgentDojo's construction."
-- **The two weird-machine bugs (§5.4) are anecdotes** (n=2): offer as consistency with
+- **The two weird-machine bugs (§5.5) are anecdotes** (n=2): offer as consistency with
   the split, never as validation ("as the split predicts" is banned).
 - **NNSI:** illustrative stressor only, anchored to the published indirect/nested
   injection class (Greshake et al.); never a bare number, never a reason to adopt.
@@ -193,7 +204,7 @@ between core and frameworks as the interesting design content (→ §4), named h
 single-framework prior himself ("my previous works only implement on a single
 framework, either OpenClaw or LangChain" — AgentSpec, arXiv:2503.18666; engage it by
 name, a build-on, not a take-down), and wrote "we can only test it using fuzzing" about
-K4 — the §5.4 framing (decision procedure on enum/numeric; fuzzing localized to the
+K4 — the §5.5 framing (decision procedure on enum/numeric; fuzzing localized to the
 rich-syntax fraction) is specifically built to correct that mental model before he
 down-rates the claim in his own edits. He values honesty; "currently testable by
 fuzzing is acceptable for practical deployment" are his words.

@@ -29,6 +29,8 @@ from typing import Any
 from axor_core.contracts.canonical import ConsequenceClass
 from axor_core.contracts.mode import ExecutionMode
 from axor_core.contracts.taint import INTEGRITY_DEFAULTS, INTEGRITY_ORIGIN_MODES
+from axor_core.kernel.consumption import SinkContract, parse_field_contracts
+from axor_core.kernel.registration import RecordDecl, parse_records
 from axor_core.policy.value_policy import (
     ValuePredicate,
     enum,
@@ -44,8 +46,10 @@ _KNOWN_KEYS = frozenset({
     "positional_sinks", "imperative_sinks", "integrity_sinks", "benign_tools",
     "value_policies", "consequence_overrides",
     "driving_args",
+    "field_contracts", "consumption_attested",
     "integrity_default",
     "integrity_origins",
+    "records",
     "federation",
 })
 _CONSEQUENCE_BY_NAME = {c.name.lower(): c for c in ConsequenceClass}
@@ -75,6 +79,13 @@ class GovernanceConfig:
     value_policies: dict[str, list[ValuePredicate]] = field(default_factory=dict)
     # tool name -> argument names the taint decision keys on (whole-args by default)
     driving_args: dict[str, list[str]] = field(default_factory=dict)
+    # tool name -> consumption contract: the fields its handler reads and how
+    # (kernel/consumption.py). Value predicates are checked against it, and every
+    # call is put into it before the first gate.
+    field_contracts: dict[str, SinkContract] = field(default_factory=dict)
+    # guarded tools with no contract whose handler conformance the operator states
+    # explicitly (STRICT requires a contract or this for every guarded tool)
+    consumption_attested: frozenset[str] = frozenset()
     # tool name -> action-class override (raise/lower how irreversible it is)
     consequence_overrides: dict[str, ConsequenceClass] = field(default_factory=dict)
     # "clean" (legacy) or "context": whether a model-generated value that carries
@@ -83,8 +94,14 @@ class GovernanceConfig:
     # None = the mode's default ("context" under strict, "clean" otherwise),
     # resolved by the session / governor it is splatted into.
     integrity_default: "str | None" = None
-    # Which TrustedOrigins clear a value at an integrity sink; resolved downstream.
-    integrity_origins: str = "any-trusted"
+    # Which TrustedOrigins clear a value at an integrity sink. None = the mode's
+    # default ("request-only" under strict, "any-trusted" otherwise), resolved
+    # downstream.
+    integrity_origins: "str | None" = None
+    # record name -> RecordDecl(readers, writers): what each tool reads and writes.
+    # Required under STRICT with an explicit integrity_origins='any-trusted' — the
+    # record-closure check (kernel/registration.validate_record_closure).
+    records: "dict[str, RecordDecl]" = field(default_factory=dict)
     # Built opt-in A2A objects (None when no `federation:` section). The gateway is
     # the receive side (which peer values to trust); the identity is the send side
     # (used by a transport adapter to mint our outgoing receipts).
@@ -122,8 +139,8 @@ class GovernanceConfig:
                 f"{sorted(INTEGRITY_DEFAULTS)}"
             )
 
-        integrity_origins = data.get("integrity_origins", "any-trusted")
-        if integrity_origins not in INTEGRITY_ORIGIN_MODES:
+        integrity_origins = data.get("integrity_origins")
+        if integrity_origins is not None and integrity_origins not in INTEGRITY_ORIGIN_MODES:
             raise ValueError(
                 f"unknown integrity_origins {integrity_origins!r}; expected one of "
                 f"{sorted(INTEGRITY_ORIGIN_MODES)}"
@@ -133,6 +150,7 @@ class GovernanceConfig:
             mode=mode,
             integrity_default=integrity_default,
             integrity_origins=integrity_origins,
+            records=parse_records(data.get("records")),
             workspace=data.get("workspace"),
             profile=data.get("profile"),
             untrusted_sources=_as_set(data.get("untrusted_sources"), "untrusted_sources"),
@@ -144,6 +162,10 @@ class GovernanceConfig:
             benign_tools=_as_set(data.get("benign_tools"), "benign_tools"),
             value_policies=_parse_value_policies(data.get("value_policies")),
             driving_args=_parse_driving_args(data.get("driving_args")),
+            field_contracts=parse_field_contracts(data.get("field_contracts")),
+            consumption_attested=_as_set(
+                data.get("consumption_attested"), "consumption_attested"
+            ),
             consequence_overrides=_parse_consequence_overrides(
                 data.get("consequence_overrides")
             ),
@@ -179,10 +201,13 @@ class GovernanceConfig:
             "benign_tools": set(self.benign_tools),
             "value_policies": dict(self.value_policies),
             "driving_args": dict(self.driving_args),
+            "field_contracts": dict(self.field_contracts),
+            "consumption_attested": set(self.consumption_attested),
             # GovernedSession names the consequence-override table `danger`.
             "danger": dict(self.consequence_overrides),
             "integrity_default": self.integrity_default,
             "integrity_origins": self.integrity_origins,
+            "records": dict(self.records),
         }
         if self.workspace is not None:
             kwargs["workspace"] = self.workspace
@@ -209,11 +234,14 @@ class GovernanceConfig:
             "benign_tools": set(self.benign_tools),
             "value_policies": dict(self.value_policies),
             "driving_args": dict(self.driving_args),
+            "field_contracts": dict(self.field_contracts),
+            "consumption_attested": set(self.consumption_attested),
             "consequence_overrides": dict(self.consequence_overrides),
             "require_egress_allowlist": self.mode is ExecutionMode.STRICT,
             "require_tool_roles": self.mode is ExecutionMode.STRICT,
             "integrity_default": self.integrity_default,
             "integrity_origins": self.integrity_origins,
+            "records": dict(self.records),
         }
 
 

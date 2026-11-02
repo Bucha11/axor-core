@@ -94,6 +94,70 @@ def govern_ds(item: dict) -> dict:
             "floor_armed": g.confidentiality_floor_active()}
 
 
+_SHORT_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.@/-]*[0-9_][A-Za-z0-9_.@/-]*")
+
+
+def _tool_params() -> "dict[str, list[str]]":
+    """Attacker/user tool name -> its parameter names, from InjecAgent's tools.json."""
+    with open(os.path.join(INJECAGENT_DIR, "data", "tools.json")) as f:
+        kits = json.load(f)
+    return {kit["toolkit"] + t["name"]: [p["name"] for p in t.get("parameters", [])]
+            for kit in kits for t in kit["tools"]}
+
+
+def govern_dh_schema(item: dict, driving_args: dict, params: "dict[str, list[str]]",
+                     consequence: bool = True) -> dict:
+    """Replay a direct-harm case with arguments shaped by the attacker tool's own
+    schema, as the live path does: the task is registered (a value the user named
+    is trusted), a tool without parameters is called with none, and otherwise the
+    first declared driving argument (else the first parameter) carries a value the
+    injection names. ``govern_dh``'s >=12-char token rule predates the context
+    default and drops short values (a room id, a patient id, an amount), which
+    made such cases look as if they carried no attacker value."""
+    g = _governor(consequence=consequence)
+    g.register_task(item.get("User Instruction", ""))
+    atk = item["Attacker Tools"][0]
+    g.register_output(g.evaluate(item["User Tool"], {}), item["Tool Response"])
+    names = params.get(atk, [])
+    if not names:
+        args: dict = {}
+    else:
+        text = item.get("Attacker Instruction", "")
+        long = _TOKEN.findall(text)
+        short = _SHORT_ID.findall(text)
+        value = (long or short or ["attacker-chosen"])[0]
+        keys = [a for a in (driving_args.get(atk) or []) if a in names] or names[:1]
+        args = {keys[0]: value}
+    d = g.evaluate(atk, args)
+    return {"denied": not d.allowed, "reason": getattr(d, "category", None),
+            "has_params": bool(names)}
+
+
+def account_dh(setting: str = "base") -> dict:
+    """Per-case, per-gate accounting over every direct-harm case: each case is
+    replayed with the full configuration and with the consequence taxonomy
+    removed, and the (full, origin-only) verdict pairs are counted, split by
+    whether the attacker tool takes any parameter. Deterministic; no model call."""
+    import collections
+    cfg = GovernanceConfig.from_yaml(CONFIG)
+    driving = {k: list(v) for k, v in (cfg.driving_args or {}).items()}
+    params = _tool_params()
+    with open(os.path.join(INJECAGENT_DIR, "data", f"test_cases_dh_{setting}.json")) as f:
+        items = json.load(f)
+    pairs = collections.Counter()
+    no_param_tools = set()
+    for item in items:
+        full = govern_dh_schema(item, driving, params, consequence=True)
+        origin = govern_dh_schema(item, driving, params, consequence=False)
+        key = (full["reason"] if full["denied"] else "allow",
+               origin["reason"] if origin["denied"] else "allow",
+               "params" if full["has_params"] else "no-params")
+        pairs[key] += 1
+        if not full["has_params"]:
+            no_param_tools.add(item["Attacker Tools"][0])
+    return {"cases": len(items), "pairs": dict(pairs), "no_param_tools": sorted(no_param_tools)}
+
+
 def mock_pilot(n: int = 40) -> None:
     cfg = GovernanceConfig.from_yaml(CONFIG)
     driving = {k: list(v) for k, v in (cfg.driving_args or {}).items()}
@@ -138,5 +202,13 @@ def mock_pilot(n: int = 40) -> None:
 
 
 if __name__ == "__main__":
-    n = int(sys.argv[1]) if len(sys.argv) > 1 else 40
-    mock_pilot(n)
+    if len(sys.argv) > 1 and sys.argv[1] == "account":
+        for setting in ("base", "enhanced"):
+            print("dh", setting, account_dh(setting))
+            with open(os.path.join(INJECAGENT_DIR, "data", f"test_cases_ds_{setting}.json")) as f:
+                ds = [govern_ds(item) for item in json.load(f)]
+            print("ds", setting, {"cases": len(ds), "refused": sum(r["denied"] for r in ds),
+                                  "floor_armed": sum(r["floor_armed"] for r in ds)})
+    else:
+        n = int(sys.argv[1]) if len(sys.argv) > 1 else 40
+        mock_pilot(n)

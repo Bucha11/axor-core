@@ -128,9 +128,12 @@ class GovernedNode:
         integrity_sinks: "frozenset[str] | set[str] | None" = None,
         benign_tools: "frozenset[str] | set[str] | None" = None,
         driving_args: "dict[str, list[str]] | None" = None,
+        field_contracts: "dict | None" = None,
+        consumption_attested: "frozenset[str] | set[str] | None" = None,
         require_egress_allowlist: bool = False,
         require_tool_roles: bool = False,
         integrity_origins: "str | None" = None,
+        records: "dict | None" = None,
         trajectory_observers: "list | None" = None,
         invocation_recorder: "Callable[[str, dict, bool], None] | None" = None,
         adjudicator=None,
@@ -159,9 +162,10 @@ class GovernedNode:
         self._depth = current_depth
         self._escalation_callback = escalation_callback  # None → auto-deny escalation
         self._integrity_origins = integrity_origins
+        self._records = dict(records or {})
         self._taint_engine = taint_engine if taint_engine is not None else TaintEngine(
             integrity_origins=resolve_integrity_origins(
-                integrity_origins, strict=require_egress_allowlist or require_tool_roles,
+                integrity_origins, strict=require_egress_allowlist,
             )
         )
         self._degradation_engine = degradation_engine
@@ -186,6 +190,8 @@ class GovernedNode:
         self._integrity_sinks = frozenset(integrity_sinks or ())
         self._benign_tools = frozenset(benign_tools or ())
         self._driving_args = dict(driving_args or {})
+        self._field_contracts = dict(field_contracts or {})
+        self._consumption_attested = frozenset(consumption_attested or ())
         self._require_egress_allowlist = require_egress_allowlist
         self._require_tool_roles = require_tool_roles
         self._trajectory_observers = list(trajectory_observers or [])
@@ -405,9 +411,12 @@ class GovernedNode:
             integrity_sinks=self._integrity_sinks,
             benign_tools=self._benign_tools,
             driving_args=self._driving_args,
+            field_contracts=self._field_contracts,
+            consumption_attested=self._consumption_attested,
             require_egress_allowlist=self._require_egress_allowlist,
             require_tool_roles=self._require_tool_roles,
             integrity_origins=self._integrity_origins,
+            records=self._records,
             trajectory_observers=self._trajectory_observers,
             invocation_recorder=self._invocation_recorder,
             adjudicator=self._adjudicator,
@@ -625,9 +634,12 @@ class GovernedNode:
             integrity_sinks=self._integrity_sinks,
             benign_tools=self._benign_tools,
             driving_args=self._driving_args,
+            field_contracts=self._field_contracts,
+            consumption_attested=self._consumption_attested,
             require_egress_allowlist=self._require_egress_allowlist,
             require_tool_roles=self._require_tool_roles,
             integrity_origins=self._integrity_origins,
+            records=self._records,
             trajectory_observers=self._trajectory_observers,
             invocation_recorder=self._invocation_recorder,
             adjudicator=self._adjudicator,

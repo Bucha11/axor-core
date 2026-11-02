@@ -25,6 +25,7 @@ from dataclasses import dataclass
 from axor_core.contracts.anomaly import NormalizedIntent
 from axor_core.contracts.canonical import ConsequenceClass
 from axor_core.contracts.taint import Carrier
+from axor_core.kernel.consumption import prepare_call
 from axor_core.policy.consequence import consequence_class, is_consequence_classified
 from axor_core.policy.sinks import is_imperative_sink
 from axor_core.policy.value_policy import check_value_policies, closed_allowlist_args
@@ -115,6 +116,19 @@ def consequence_gate(
     )
 
 
+def consumption_gate(
+    tool_name: str, args: dict, field_contracts: "dict | None"
+) -> "tuple[dict, GateDecision | None]":
+    """Put the call into its sink's consumption-contract representation
+    (:mod:`axor_core.kernel.consumption`). Runs FIRST: every later gate, the
+    approval digest and the handler all read the returned argument set, so the
+    value checked is the value consumed. A tool with no contract is unchanged."""
+    prepared, reason = prepare_call(tool_name, args, field_contracts)
+    if reason is None:
+        return prepared, None
+    return prepared, GateDecision(reason=reason, category="consumption_contract")
+
+
 def value_policy_gate(
     tool_name: str, args: dict, value_policies: dict | None
 ) -> GateDecision | None:
@@ -193,15 +207,16 @@ def integrity_superseded_by_decidable(
     guarded by an ``enum`` value predicate over a **closed, operator-declared
     trusted set**.
 
-    Soundness condition (the T4 argument, §5.4) — supersession is sound **iff the
-    predicate's codomain is a subset of operator-trusted values the attacker cannot
-    choose.** Only an ``enum`` allowlist meets this: its codomain is the finite set
-    the operator declared trusted, so even a value *derived from an untrusted read*
-    can only ever be one of those approved members — the attacker cannot inject
-    themselves. A satisfied enum is therefore content-blind, provenance-independent,
-    and strictly stronger than content-derivation on the same arg, so the integrity
-    content-taint check there is redundant (it only adds the value-coincidence false
-    positive). Removing it recovers that over-block at no security cost.
+    What supersession means — a substitution of grounds, not a free relaxation.
+    The operator has pre-authorised a closed set of values for the driving args.
+    The attacker CAN choose a member of that set (an untrusted statement can name
+    the approved payee); what the attacker cannot do is reach a value outside it.
+    Membership therefore satisfies the integrity obligation *in place of* an origin
+    ground: the call is admitted on the operator's authorisation of the value, not
+    on the value's provenance. That is the trade the operator makes by declaring the
+    set, and it is what removes the value-coincidence over-block of content-taint on
+    this arg. Only a closed codomain qualifies (``enum``, ``tuple_enum``, the key of
+    a ``keyed_range``).
 
     ``numeric_range`` is **NOT** admissible for supersession: its codomain is an open
     interval the attacker *can* satisfy (an attacker-derived amount that happens to
@@ -210,8 +225,11 @@ def integrity_superseded_by_decidable(
     positional. A numeric range still *denies* an out-of-range value at the value-
     policy gate; it just does not exempt the arg from integrity taint.
 
-    Scope: supersedes the **integrity** axis only. The confidentiality floor is
-    unaffected (a secret read still blocks egress, even to an approved destination).
+    Scope: supersedes the **integrity** axis only. The confidentiality floor,
+    consequence, value ranges and capability are unaffected (a secret read still
+    blocks egress, even to an approved destination). Whether the handler consumes
+    the member the predicate checked is the T4 question, answered by the sink's
+    consumption contract (:mod:`axor_core.kernel.consumption`), not here.
     Requires *all* driving args present and enum-covered — a missing driving arg
     means the taint check fell back to the whole blob, where no per-arg cover exists,
     so no supersession (fail-closed)."""

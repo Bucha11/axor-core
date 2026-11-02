@@ -59,6 +59,7 @@ from axor_core.policy.gates import (
     GateDecision,
     carrier_gate,
     consequence_gate,
+    consumption_gate,
     driving_subset,
     integrity_superseded_by_decidable,
     positional_gate,
@@ -98,6 +99,10 @@ class KernelConfig:
     positional_sinks: frozenset[str] = frozenset()
     value_policies: dict = field(default_factory=dict)  # tool -> [ValuePredicate]
     driving_args: dict = field(default_factory=dict)  # tool -> frozenset[str]
+    # tool -> SinkContract (kernel/consumption.py). Preparation is idempotent, so
+    # re-running it on a recorded (already prepared) call reaches the runtime's
+    # verdict: a prepared call passes unchanged, an out-of-contract one is refused.
+    field_contracts: dict = field(default_factory=dict)
     consequence_overrides: dict = field(default_factory=dict)
     max_unattended_consequence: ConsequenceClass = ConsequenceClass.CONSEQUENTIAL
     budget_cap_calls: int | None = None
@@ -265,6 +270,9 @@ def evaluate_call(
     same way the runtime does; everything from consequence_gate down IS the
     runtime's code (axor_core.policy.gates), not a copy of it.
     """
+    args, deny = consumption_gate(tool, args, config.field_contracts)
+    if deny:
+        return deny
     if config.allowed_tools is not None and tool not in config.allowed_tools:
         return GateDecision(
             reason=f"capability: tool '{tool}' is not in the capability table",

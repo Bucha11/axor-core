@@ -44,6 +44,7 @@ from axor_core.contracts.lease import LeaseAuthorityType
 from axor_core.contracts.policy import PolicyDecision, PolicyDecisionKind
 from axor_core.contracts.result import ExecutorEvent
 from axor_core.contracts.envelope import ExecutionEnvelope
+from axor_core.kernel.consumption import prepare_call
 from axor_core.policy.effect import call_digest, effect_signature
 from axor_core.contracts.trace import (
     EscalationDeniedEvent,
@@ -163,6 +164,7 @@ class EscalationManager:
         *,
         escalation_callback: "EscalationCallback | None" = None,
         driving_args: "dict[str, object] | None" = None,
+        field_contracts: "dict | None" = None,
     ) -> None:
         # Reported to the approver as the operator's declaration of which args are
         # effect-determining. NOT used for binding: the digest covers every
@@ -170,6 +172,10 @@ class EscalationManager:
         self._driving_args = {
             k: tuple(v) for k, v in (driving_args or {}).items()
         }
+        # A call named in advance is bound in the representation it will execute
+        # in: the loop prepares every call into its sink's consumption contract
+        # before digesting it, so the named call is prepared the same way here.
+        self._field_contracts = dict(field_contracts or {})
         self._granted_escalations: dict[str, _GrantedEscalation] = {}
         # CALL authority, keyed by call digest: one approved call each, spent once.
         self._call_evidence: dict[str, _CallEvidence] = {}
@@ -367,6 +373,9 @@ class EscalationManager:
         # be spent on the grant. Omitted (the original shape) → CLASS scope.
         intended = args.get("args")
         call_bound = isinstance(intended, dict)
+        contract_error: str | None = None
+        if call_bound:
+            intended, contract_error = prepare_call(tool, intended, self._field_contracts)
         # The digest binds the sink, the authority scope (this node) and EVERY
         # argument of the named call.
         digest = (
@@ -395,6 +404,12 @@ class EscalationManager:
 
         if not ep.allow_escalation:
             return _deny("escalation not allowed by policy")
+
+        if contract_error is not None:
+            # The named call could never execute as named; approving it would
+            # authorise nothing — or, worse, show the approver a call that differs
+            # from the one that would run.
+            return _deny(contract_error)
 
         if tool not in ep.grantable_tools:
             return _deny(f"tool '{tool}' is not in grantable_tools")

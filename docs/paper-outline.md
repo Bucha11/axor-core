@@ -43,15 +43,19 @@ slack/workspace/travel runs are not yet recorded in `agentdojo_results.md`).**
      the leaky content-taint on top; on banking it deterministically lifts the gate
      over-block on read-derived egress to allowlisted known payees (+25pp gate-level
      upper bound; +13.4 ± 9.1pp realized). Full statement, soundness condition, and
-     honest scope in §6.3 / §5.4 / Appendix D. Supporting, not the headline.
+     honest scope in §6.3 / §5.5 / Appendix D. Supporting, not the headline.
 - **Novelty arbitration (one headline — a reviewer will ask "which is *the*
-  contribution?").** The **single headline novelty is contribution 2's perimeter
-  non-interference theorem with the decidability split (§5.4)** — the part that is
-  genuinely new (K4 holds outright on the enum/numeric perimeter; the weird-machine
-  residual is localized to a named rich-syntax fraction). Contributions 1 (the
-  framework-agnostic seam), 3 (the empirical study), and 4 (supersession) are
-  **supporting** — strong, but not billed as "the novel result." §4 is the engineering
-  contribution that *supports* the headline; do not let §4 and §5.4 each claim "the
+  contribution?").** The headline is **the chain of §5**: the conditions under which
+  an existing agent may propose arbitrary calls while every executed call satisfies
+  every stated constraint — permitting grounds from trusted mechanisms (T0), the checked
+  property bound to the consumed one by registered consumption contracts (T4), the
+  executed call bound to the checked one, and independent obligations that survive the
+  failure of one component — with each condition shown load-bearing by a measured
+  negative control (§5.7). K4 is a lemma inside the chain, the decidability split a
+  classification inside T4; neither is billed as the novelty on its own. A novelty
+  claim rests on what the contracts measurably prevent, not on the formulation.
+  Contributions 1 (the framework-agnostic seam), 3 (the empirical study), and 4
+  (supersession) are **supporting**; do not let §4 and §5 each claim "the
   contribution."
 - Forward-reference the opening example (§2).
 
@@ -63,7 +67,7 @@ slack/workspace/travel runs are not yet recorded in `agentdojo_results.md`).**
 the cleanest integrity gate-walk and the CaMeL-comparable scenario. (Suite choice is a
 resolved decision; rationale in `paper-decisions.md`. Travel is the natural *second*
 illustration — it is the suite where the confidentiality floor arms and closes on the
-sound axis, §5.5 / Appendix A-floor — an addition, not a swap.)
+sound axis, §5.6 / Appendix A-floor — an addition, not a swap.)
 
 **The scene.** A banking agent is asked to do a benign task (summarize transactions /
 pay a bill). The transaction history it must read contains an injected instruction:
@@ -100,7 +104,7 @@ proves it.
 End with the honest qualifier, kept on the right axis. Framing is neutralized
 structurally — but this banking case sits on the **integrity** axis, and there the
 content-derivation gate has a documented **paraphrase/encoding residual** on the
-non-liftable partition (§5.5): an attacker who *paraphrases* the recipient rather than
+non-liftable partition (§5.6): an attacker who *paraphrases* the recipient rather than
 copying it is not caught. Do **not** claim the confidentiality floor closes this — it is
 a *different axis* (it arms only after a secret read and is sound there); the positional
 gate closes only sinks whose input can be made instruction-incomplete. State plainly:
@@ -119,7 +123,7 @@ covers.
   escalation, uncontrolled child spawn.
 - **The lethal trifecta** framing (untrusted input × access to secrets/private data ×
   egress) — tie to `tests/adversarial/test_e2e_gate.py` (lethal-trifecta egress denied).
-- **The partition taxonomy (define once here; §5.5 and §6 consume it).** The paper's
+- **The partition taxonomy (define once here; §5.6 and §6 consume it).** The paper's
   results are stated over named partitions of sink traffic — introduce them up front so
   the later sections don't define vocabulary on the fly:
   - *Prompt-given egress* — the legitimate sink argument originates in the user prompt;
@@ -131,11 +135,11 @@ covers.
     to an operator-enumerable closed set → recoverable by `enum`-supersession, §6.3)
     vs the *one-off residual* (the argument exists only in the untrusted read →
     needs structural provenance).
-  - *Liftable vs non-liftable sinks* on the integrity axis (§5.5): a sink whose input
+  - *Liftable vs non-liftable sinks* on the integrity axis (§5.6): a sink whose input
     can be made instruction-incomplete admits positional admission; a generic
     write/exec does not and carries the paraphrase residual.
   - The two *axes*: integrity (per-value content-derivation) vs confidentiality (the
-    session floor) — asymmetric by design, §5.5.
+    session floor) — asymmetric by design, §5.6.
 - **Trust boundary.** In-process soft boundary (`LockedExecutor` → `GovernanceBypassError`)
   vs out-of-process hard boundary (the daemon re-derives the ceiling server-side).
 - **Non-goals (state up front, honestly).** Availability/uptime; implicit
@@ -184,7 +188,7 @@ once against the normalized shape, and supporting a new framework is one normali
 policy change. State it as: *AgentSpec = per-framework enforcement DSL; axor = one
 decision core behind a provider-neutral normalization seam.* This is the
 **design/engineering contribution** — it *supports* the paper's single headline novelty
-(the non-interference theorem + decidability split, §5.4); it is deliberately **not**
+(the §5 chain); it is deliberately **not**
 itself billed as "the" novelty (§1 novelty arbitration).
 
 **4.3 Provider independence is tested, not asserted.** Claude, mock-OpenAI, and
@@ -218,148 +222,163 @@ detail → Appendix).** Keep these to a paragraph each so they don't dilute the 
 
 ---
 
-## 5. The security model — Perimeter Non-Interference
+## 5. The security argument — one chain from ground to effect
 
-> The section is built as the explicit chain: attack → taint analysis → theorem, so a
-> reader senses what guarantee is provided.
+> One claim, about execution, and one chain that establishes it. K4 is a lemma inside
+> the chain; T0 and T4 are its conditions; composition and K5 are the parts that make
+> the conjunction hold. Every step names what core enforces, what it rests on, and the
+> kind of evidence — unit test, property test (Hypothesis: evidence, not proof), or
+> measured negative control. Nothing here is machine-checked.
 
-**5.1 The claim, in one line (K4).** For any sink invocation: (1) **complete
-mediation** — no effect bypasses the gating decision; (2) the gating decision
-**factors through an admissible structural projection** `π` whose codomain *admits no
-instruction* — **regardless of trust model** (`docs/kernel-theorem.md §1`). Term: this
-is *perimeter non-interference* in the Goguen–Meseguer sense (noninterference, 1982) —
-write it that way every time.
+**5.1 The claim.** For every model behaviour `M` (any sequence of proposed calls):
 
-State the invariant over the **raw** artifact, not over `π` — otherwise it is a
-tautology a reviewer will catch. Let `decide(x, p)` be the *actual* gating function on
-the path to an effect (whatever the implementation does with the raw artifact `x`).
-The non-interference content is that `decide` is **constant on the fibers of `π`**:
+```
+Execute(s, c)  ⟹  ∧_{j ∈ J(p)}  P_j(s, c)
+```
+
+Each `P_j` is a constraint the operator's policy `p` states independently of the
+others: the tool is permitted; the destination is allowlisted; the amount is in range;
+no declared egress while a secret read is outstanding; no unattended call above the
+consequence ceiling; an integrity sink's driving value is not attacker-chosen. The
+formula is not a new mathematical fact — it is the shape of the obligation. Its
+content is in the conditions under which it holds, which §5.2–§5.6 establish link by
+link, and in the measured controls that show each condition is load-bearing
+(§5.7). `docs/guarantees.md` is the one table of `P_j`, conditions, premises and
+evidence.
+
+One precision up front: untrusted bytes **may** change a verdict — an out-of-range
+amount is denied *because of* what the model wrote, and a gate that could not see it
+could not deny it. What untrusted bytes must never be is an **unchecked ground for
+widening** authority. That is the T0 condition (§5.3), not a non-interference claim
+about all bytes.
+
+**5.2 The chain.** A call reaches an effect through five links; the claim fails if any
+link fails, so each has an owner.
+
+| Link | What must hold | Mechanism | Core enforces / premise | Evidence |
+|---|---|---|---|---|
+| **Ground** (T0) | every input that can permit a call comes from a trusted mechanism | `kernel/grounds.py` — issuer, check, absence behaviour, non-overridden obligations, premise | enforced per row; premises named per row | spec tests; producer negative controls |
+| **Projection** (K4 lemma) | the decision factors through an admissible projection; labels are sound for explicit flows | O1, O2 | O2 explicit-flow only | `test_pure_allow.py`; ledger soundness tests |
+| **Consumption** (T4) | the property checked is the property the handler consumes | consumption contracts; registration + preparation | enforced for contracted fields; **attested** fields are a premise | `test_check_vs_consumer.py`; matrix rows 1–3 |
+| **Dispatch** | the call executed is the call checked (and approved) | preparation before the first gate; frozen set; digest over prepared args; volatile re-check; atomic claim; O3 | enforced; A-3 (single sink ring) is a premise in-process | `test_end_to_end_chain.py::test_the_call_that_runs_*`; call-bound tests |
+| **Policy integrity** (K5) | the authority the call is checked against cannot be rewritten by the agent | ceilings, grants, leases read from live state | enforced; the operator's policy is the intended one (premise) | `test_authority_transitions.py` (property) |
+
+**5.3 Lemma (K4) — perimeter non-interference.** Keep the lemma; demote it from the
+headline. Let `decide(x, p)` be the actual gating function on the path to an effect.
+The lemma is that `decide` is constant on the fibers of an admissible projection `π`:
 
 ```
 ∀ x₁, x₂ :  π(x₁) = π(x₂)  ⟹  decide(x₁, p) = decide(x₂, p)
 ```
 
-**The equation alone is necessary but not sufficient — say so explicitly, or a S&P
-reviewer kills the theorem with one line.** The equation is exactly "`decide` factors
-through `π`," and *every* function factors through `π = identity` (singleton fibers, the
-antecedent forces `x₁ = x₂`, the consequent is trivial). So the equation carries **zero**
-security content on its own; all of it lives in **which `π`**. Fix `π` up front as a
-**specified, lossy projection** (origin-class / enum / bounded-numeric / path-class /
-provenance-label — the closed admissible set, §5.4) and split the obligation into three
-parts, only the first of which is the equation:
+with the three-part caveat stated every time: (1) the equation is factorization
+(O1) and is satisfied by `π = identity`, so alone it carries no security content;
+(2) the content is **coarseness** — `π` is fixed up front as a lossy projection from
+the closed admissible set (enum / bounded-numeric / origin-class / path-class /
+provenance-label), so a whole class of reframings collapses into one fiber and must
+share a verdict; (3) the shared value admits no instruction — which is T0 and T4.
+O2 (label soundness, explicit flows only — implicit flows are out of scope, and that
+boundary is **ours, not shared**: FIDES closes it on the integrity axis) and O3
+(complete mediation over a finite sink ring) are the lemma's premises.
 
-1. **Factorization (O1, the equation).** `decide` reads `x` only through `π` — no
-   `decide'` on the effect path touches raw `x`. Necessary, not sufficient.
-2. **Coarseness (the part the equation hides).** `π` is lossy *enough* that the whole
-   class of attacker reframings of a given injection **collapses into one fiber** — they
-   all map to the same origin-class, so they are forced to share a verdict. This is what
-   makes framing-invariance a *theorem* and not a coincidence; it is exactly why
-   `π = identity` is disqualified (singleton fibers absorb nothing).
-3. **Instruction-free codomain (T0/T4, §5.4).** The shared projection value itself
-   admits no instruction, so collapsing into a fiber cannot smuggle the attack back in.
+What the lemma buys is framing-invariance of the **verdict**. It says nothing about
+whether the verdict's subject is the call that runs (dispatch), whether its inputs
+were legitimately produced (T0), or whether the checked property is the consumed one
+(T4). Those are the conditions below, and they are where the claim about
+**execution** is made.
 
-State the degenerate case in one sentence: *`π = identity` satisfies the equation and
-guarantees nothing; admissibility (the closed lossy codomain set) is precisely the
-condition that rules it out.* With that, "two inputs the consumer would treat
-differently cannot share a projection" (the non-merging / T4 direction) and "the whole
-reframing class does share one" (the coarseness direction) are the two halves that
-together give **"framing cannot change the verdict"** — neither half alone does.
+**5.4 Condition T0 — permitting grounds.** A model that *issues* a permitting
+input is in the trusted base however typed its output. The audit is data
+(`axor_core/kernel/grounds.py`); the theorem's table is rendered from it and tested
+for drift, missing mechanisms and missing pinning tests. Two columns keep apart what
+core **checks** and what a ground **rests on** (its premise). The table is a
+specification; its **completeness** — that every admitting input has a row — is
+argued by enumerating what the allow path reads (kernel-theorem §3b), and no test
+enforces that enumeration.
 
-**5.2 The chain — attack → taint → theorem (the heart of the paper).**
-Make this an explicit three-step walk, reusing §2's banking example:
+Determinism is not correctness: a deterministic matcher can still issue the wrong
+ground. The two producer negative controls build a flawless codomain on purpose and
+show it does not rescue a steerable producer: an approver with codomain {yes, no}
+that follows the call's arguments executes an unattended consequential transfer (and
+nothing else — the value constraints hold), and a datamark whose absence would admit
+a re-typed attacker IBAN is refused by the context-root ground the model cannot shed
+(matrix rows 5–6; `paper-model-carried-labels.md` for the measured search).
 
-| Step | What happens | Anchor |
-|---|---|---|
-| **Attack** | The §2 banking scene: an injected instruction + the attacker's IBAN enter via an untrusted transaction-history read; data and instructions share a channel. | §2; `examples/agentdojo/agentdojo_results.md` (banking, `important_instructions`) |
-| **Taint analysis (O2, label soundness)** | The value is constructed by `external_read` → `causal_root` marks it untrusted-derived; the join/derive is sound (`causal_root(v) ⊇` the untrusted sources that explicitly influenced `v`), **argued by pen-and-paper induction** over a closed constructor set (a Coq/Lean target, *not* machine-checked — use this exact hedge everywhere, see §5.6/§8); over-taint, never silent under-taint. | `axor_core/taint/causal_root.py`, `ledger.py`, `engine.py`; kernel-theorem §2 (O2) |
-| **Theorem (K4)** | The egress decision factors through the projection (origin-class of the driving arg), `allow` reads only that — so every reframing with the same tainted recipient gets the same deny. Complete mediation (O3) guarantees the sink cannot be reached around `allow`. | kernel-theorem §1, §2 (O1/O3) |
+Supersession is a **substitution of grounds**, not a free relaxation: the attacker
+can name a member of the operator's allowlist; membership stands in for the origin
+ground on the integrity axis only, and the floor, consequence, ranges and capability
+stay in force (`test_supersession_relaxes_integrity_only`).
 
-The reader's takeaway: *the guarantee is not "we detect this attack" but "no member
-of the entire equivalence class of attacks that share this projection can get a
-different answer."* That is the secure-by-design content.
+**5.5 Condition T4 — the checked property is the consumed property.** The decidability
+split is a classification (`kernel/decidability.py`): membership and range checks are
+decision procedures; path / interpreted / free-text consumers are not. The step that
+makes it about execution is that the consumer is **registered per field**
+(`kernel/consumption.py`): kind, and what the handler does when the field is absent.
+Registration checks each predicate against its field (an enum on a resolved path is
+FUZZ_REQUIRED and refused); preparation puts every call into the contract before the
+first gate, and the prepared set is what every gate, the approval digest and the
+handler see — through `IntentLoop`, `ToolCallGovernor` (`decision.args`) and the
+integrations that execute it (axor-wrap, the AgentDojo adapter).
 
-**5.3 The three structural obligations (the spine of the proof).**
-- **O1 — factorization.** `allow` is a pure function of `(projection, policy)`; no
-  hidden raw channel — reputation/trajectory are *not* arguments to `allow`
-  (`tests/invariants/test_pure_allow.py`).
-- **O2 — label soundness** (above). Scope boundary stated honestly: explicit-flow
-  only; implicit control-flow leaks are out of scope (shared with FIDES;
-  `tests/adversarial/test_implicit_flow_gap.py`, asserted `xfail(strict=True)` so the
-  suite trips the moment a sound backend closes it).
-- **O3 — complete mediation.** Finite sink ring → statically surveyable; in-process
-  soft boundary (`locked.py`) + out-of-process daemon hard boundary; unknown sink
-  fails closed.
+> The honest statement: **for the defined predicate language over contracted fields,
+> T4 is decided by a procedure; every other consumer needs a separate argument.**
+> An **attested** sink is not contracted: core prepares nothing for it, the gates
+> decide the raw proposal, and the operator's sentence is the whole of T4 there.
+> Rich-syntax fields remain open; fuzzing over them is evidence, not a discharge.
 
-**5.4 The conditionality is the point — the decidability split (THE headline novelty of
-the paper).** *Do not overclaim.* K4's safety content rests on two per-projection
-obligations: **T0** (the projection producer is *non-interpreting* — a deterministic
-structural function, never a model reading the governed content; the Firewalls
-LLM-projector is the public counterexample; pinned by an `.importlinter` contract + an
-import-scan test) and **T4** (effective codomain = nominal). T4 splits:
+The measured content is the gap between a correct verdict and a forbidden
+execution: with identical value policies, removing only the contract produces a
+balance sweep (handler default), a redirected transfer (alias field) and an
+unvalidated account (list in a scalar field); restoring it removes each, and the
+legitimate call still executes (matrix rows 1–3). An allowlisted path that is a
+symlink out of the root publishes a secret without a contract; with one, the
+configuration is refused at registration. Exponent strings and comma-joined
+recipients are refused either way — controls, kept so the claim stays proportional.
 
-- **Decidable by construction** for finite **enums** and **bounded-numeric** ranges
-  consumed as case-split / numerically — two equal projections cannot be split into
-  distinct effects. Discharged by a decision procedure
-  (`axor_core/kernel/decidability.py`); a config that mis-guards a fuzz field with a
-  decidable predicate is **rejected** (`registration.py`).
-- **Fuzzing only** for **path / string-subfield / carrier-over-free-text** — the
-  consumer is a rich-syntax interpreter, T4 is undecidable in general, so it stays a
-  fuzzing obligation. The weird-machine class is **localized** here. (Anecdotal but
-  consistent: the two real bugs found to date — newline-injection in path extraction,
-  `../` traversal in lease validation — both lived in this region. Two data points;
-  offer them as consistency with the split, not as validation of it.)
+**5.6 Composition and K5 — why the conjunction holds when a component fails.**
+- **Independent obligations.** Each `P_j` has its own gate reading its own inputs, so
+  the failure of one component relaxes only what depends on it. Fault injection:
+  with an integrity labeler returning an arbitrary fixed label, the floor and the
+  consequence ceiling still hold, and integrity is lost (and the test asserts the
+  loss rather than hiding it) — `test_floor_holds_when_the_integrity_labeler_fails`.
+- **Two axes, demonstrated differently.** Integrity is per-value content-derivation
+  (under STRICT, context-default): sound to deny, with a residual in `clean` mode, and
+  measured on the benchmark. Confidentiality is a session floor whose decision never
+  reads the outgoing bytes — content-blind by construction, demonstrated at unit level
+  and in the matrix (row 4), not averaged over a benchmark. "By construction" is an
+  argument about the decision's inputs, not a proof object.
+- **Positional admission** admits by form for sinks whose legitimate input cannot
+  encode an instruction; an exec-class sink cannot be declared positional.
+- **K5 — the second argument of `decide(x, p)`.** `A_t ⊆ B(t)`: grants, leases and
+  degradation transitions never take the authority in force outside the operator's
+  ceiling; property-tested over random interleavings of the real engines. A call-bound
+  approval authorises one prepared call, is re-checked against volatile state after
+  the answer and spent atomically; it relaxes the consequence axis only.
 
-> The honest one-liner for the paper: **K4 holds outright for the enum/numeric fraction
-> of the perimeter, and conditionally — discharged by fuzzing — for the rich-syntax
-> fraction.** "Currently testable by fuzzing" is acceptable for practical deployment
-> precisely *because the split tells you which fraction needs it.*
+**5.7 The negative-control matrix.** `docs/negative-controls.md` is generated by a run
+(and a test fails if it is stale): one condition at a time, removed → restored, with
+violating effects counted on the handlers' own state and the legitimate call checked
+with the condition in place. Every effect row reads `0 → 1 → 0` with the legitimate
+call executed. The counts are per proposal — they show each condition is
+load-bearing in isolation, not attack rates. Rates belong to §6. And they show
+indispensability **within this construction**, not universal necessity of each
+mechanism: confidentiality, for one, could be carried by a design without a session
+floor. The claim is "in Axor as built, removing X admits the forbidden effect," and
+it is stated that way.
 
-The framing to land is *not* "the theorem is fuzz-tested" — that concedes the whole
-claim to a test. It is: **K4 is discharged by a decision procedure on the enum/numeric
-fraction, and the weird-machine residual is *localized* to a named rich-syntax
-fraction, where fuzzing is the discharge.** Fuzzing covers a bounded sub-perimeter the
-split identifies up front, not the theorem as a whole.
+**5.8 Putting it together.** Under STRICT, with an operator-supplied policy, an approval
+callback that is not model-backed, consumption contracts on the guarded fields, and A-3:
+every executed call satisfies every stated `P_j`, for any proposal sequence. Premises,
+stated as such: handler conformance to its contract (and, for attested sinks, all of
+T4); the approver; the operator's policy; A-3 in-process; O2's explicit-flow scope;
+completeness of the grounds table (argued). Evidence: unit and regression tests for
+each mechanism, property tests for the arbitrary-proposer and K5 statements, and the
+measured matrix. Put kernel-theorem §5 (obligation → test) in an appendix.
 
-**5.5 The two axes, asymmetric by design — and asymmetric in how they are demonstrated
-(say this out loud; it pre-empts the "why no floor benchmark?" question).**
-- **Integrity** — precise per-value content-derivation; sound to *deny*, with a
-  documented **paraphrase residual** on the non-liftable partition (a generic write/exec
-  that cannot be made positional). State this as a boundary, not a surprise
-  (`governance-model §7`; `examples/attacks/`). *Demonstrated empirically* — its residual
-  and its cost are benchmark-measurable (the §6 cost numbers).
-- **Confidentiality** — a **sound, paraphrase-proof session floor**, and "paraphrase-proof"
-  is a **by-construction argument, not the claim of one passing test**: the floor's
-  decision is a function of a *session boolean* — "is a secret read outstanding?" — and
-  **never reads the bytes of the outgoing value at all**. Because the egress content is
-  not an input to the decision, *no* transformation of the secret (base64, paraphrase,
-  homoglyph, sub-fragment shredding) can change the verdict — there is no content channel
-  to attack. The paraphrase micro-test (§Appendix) is an *illustration* of that structural
-  fact, not its evidence. Released only by a governance endorsement (`governance-model §5`).
-  *Demonstrated structurally* — at unit level (Appendix A-floor), **not** as an AgentDojo
-  number, because a by-construction guarantee is shown to *hold*, not averaged over a
-  noisy suite (§6.2 records why the stock travel slice does not isolate it).
-- **Positional admission** — for high-stakes sinks whose legitimate input *cannot
-  encode an instruction*, admit by *form*, not content → sound by construction
-  (`governance-model §3`). The kernel **refuses** to let you declare an exec-class sink
-  positional.
-
-**The asymmetry, named:** integrity is a *measured* axis (cost + residual on the
-benchmark); confidentiality is a *proven* axis (a structural property shown at unit
-level). They are not demonstrated the same way *on purpose* — and stating that is
-stronger than pretending both live on the same benchmark table.
-
-**5.6 "Any trust model."** The kernel/trust-model factorization is enforced at the
-import level: enforcement depends on the **`ValueProvenance`** contract
-(`axor_core/contracts/provenance.py`), not on a concrete engine, and a substitution test
-re-proves non-interference + complete mediation under a *second* trust model with a different
-tainting rule (`tests/contracts/test_value_provenance.py`). The contract's own admissible
-backends are "a content-derivation taint tracker, **a data-flow interpreter**, or a
-label-propagating tracker" — i.e. **a CaMeL-style structural-provenance backend is a conforming
-trust model** (the gate runs unchanged on top; see §6.5, where this becomes the
-"axor *hosts* provenance, not competes with it" argument). Honest status: *demonstrated on two
-instances, not mechanized over all conforming backends, and the CaMeL backend is proposed, not
-implemented* (O2 is the inductive content — a Coq/Lean target). Put the obligation→test
-crosswalk table (kernel-theorem §5) in an appendix — it is the paper's credibility anchor.
+**5.9 "Any trust model."** The gate depends on the `ValueProvenance` contract, not a
+concrete engine; a substitution test re-runs non-interference and mediation under a
+second trust model with a different tainting rule. Demonstrated on two instances, not
+over all conforming backends; a CaMeL-style backend is proposed, not implemented.
 
 ---
 
@@ -372,7 +391,8 @@ crosswalk table (kernel-theorem §5) in an appendix — it is the paper's credib
 > "fraction of tasks solved *with* a by-construction guarantee," i.e. the **utility
 > cost** of the guarantee, well-defined on a dumb *and* a smart model. axor has the
 > same by-construction nature (the gate denies by projection, framing-invariant,
-> ASR→0 structurally — enum/numeric outright, rich-syntax fuzz-discharged; §5.4), so it
+> ASR→0 structurally — enum/numeric on contracted fields; rich-syntax fields remain an
+> open, fuzz-tested obligation; §5.5), so it
 > makes the same *type* of claim:
 > - **Primary (§6.2): structural guarantee at utility-cost Y** — the load-bearing
 >   result and the direct answer to "motivation for adoption": *motivation = the
@@ -383,7 +403,7 @@ crosswalk table (kernel-theorem §5) in an appendix — it is the paper's credib
 >   axis. (Smart models make a by-construction defense look *better* — CaMeL v2's
 >   utility rose on smarter models at the same guarantee.)
 >
-> This is the same honesty as §5.4 — a guarantee with a named, bounded conditionality —
+> This is the same honesty as §5.5 — a guarantee with a named, bounded conditionality —
 > applied to the empirics. Canon: every number in §6/§2/§1 traces to
 > `examples/agentdojo/agentdojo_results.md` (see the canon lock in `paper-decisions.md`).
 
@@ -409,8 +429,8 @@ of CaMeL numbers we must *not* cite are pinned in `paper-decisions.md`.)
 **6.2 The guarantee and its measured cost — the PRIMARY result (lead §6 with this).**
 State the guarantee first, in §5's vocabulary: axor's gate denies by *projection*, so on
 every declared egress sink the exfiltration path is refused **structurally** —
-framing-invariant, ASR→0 by construction (enum/numeric outright; rich-syntax
-fuzz-discharged, §5.4), independent of whether the model would have fallen. The empirical
+framing-invariant, ASR→0 by construction (enum/numeric on contracted fields; rich-syntax
+fields an open, fuzz-tested obligation, §5.5), independent of whether the model would have fallen. The empirical
 question is then CaMeL's question, not a scoreboard: **what does the guarantee cost in
 benign utility?** Measured per suite on the *benign* task list:
 
@@ -469,7 +489,7 @@ is structural** (prompt-given egress) and robust across models. (The retired
 The banking cost is exactly where a content ledger is weaker than CaMeL's structural
 provenance, and the gap *widens* on a capable model (§6.3 / Appendix D). The
 **confidentiality (sound floor)** axis is deliberately not a row here — it is a structural
-property (Appendix A-floor, §5.5), and the stock travel suite does not exercise it (0 floor
+property (Appendix A-floor, §5.6), and the stock travel suite does not exercise it (0 floor
 denials in the o4-mini run; the floor never armed because benign travel tasks don't
 read-secret-then-egress and o4-mini resisted the overt injection).
 
@@ -516,7 +536,7 @@ tainted, where CaMeL's structural provenance would not. When every driving arg o
 covered by a satisfied `enum` over a closed, operator-declared trusted set, that enum carries
 the integrity axis and the content-taint is skipped on that arg — soundly: attacker
 destinations stay denied (not in the set), the confidentiality floor is not superseded, and
-the codomain restriction (T4, §5.4: `enum` qualifies, `numeric_range` does not — the kernel
+the codomain restriction (T4, §5.5: `enum` qualifies, `numeric_range` does not — the kernel
 refuses the latter) plus a static, attacker-inaccessible allowlist keep the trusted set
 uncontaminable. The lift covers the 4-task known-payee read-derived partition — the strict
 value-coincidence subset ({3, 4, 6}: the prompt-given value coincides with a read-derived
@@ -574,7 +594,7 @@ cost at comparable-or-somewhat-lower utility**:
 axor's enforcement is defined against a *swappable* per-value trust-model contract,
 **`ValueProvenance`** (`axor_core/contracts/provenance.py`), whose own docstring admits "a
 content-derivation taint tracker, **a data-flow interpreter**, or a label-propagating tracker"
-as conforming backends, and whose substitutability is a *tested invariant* (§5.6,
+as conforming backends, and whose substitutability is a *tested invariant* (§5.9,
 `tests/contracts/test_value_provenance.py` re-proves non-interference + complete mediation
 under a second trust model). **A CaMeL-style structural provenance is exactly that "data-flow
 interpreter" backend:** implement `derive_value` from CaMeL's capability/provenance graph in
@@ -610,7 +630,7 @@ vanishes on a good model. Two supporting points (support, not headline — §1 n
    "Not what you've signed up for," and the nested/recursive-injection follow-ups —
    **cite the published prior art, pin the exact follow-up**). Model selection only ever
    covers attacks a model was already hardened against; a by-construction gate covers the
-   whole projection-equivalence class regardless — with the §5.4/§5.5 conditionality
+   whole projection-equivalence class regardless — with the §5.5/§5.6 conditionality
    (never state this as "all attacks"). That is *why* you want the guarantee.
 2. **NNSI is illustrative only, never load-bearing — it is *our own* attack.** A result
    built on NNSI is **self-refereed** ("we built X and beat X"); a reviewer discounts it
@@ -638,6 +658,14 @@ not belong in this paper.)
 
 ## 7. Related work
 
+> **ROPE** (arXiv 2608.27496) is compared obligation by obligation, by code at
+> `64495e1` and by its stated propositions, in `docs/rope-comparison.md`. Use that
+> table, not a feature list: the defensible differences are T4 (consumption
+> registered and prepared before the check), fail-closed mediation, and the
+> confidentiality scope; the amount bound is policy content and needs an
+> equal-policy ROPE arm; record closure (ROPE Lemma 1) is a point in ROPE's favour
+> that Axor's `TrustedOrigin.TOOL` leaves as a premise.
+
 - **AgentSpec (Wang, Poskitt, Sun, arXiv:2503.18666)** — *mandatory cite, and the
   closest single-framework prior.* A customizable runtime-enforcement DSL whose
   rules are expressed and enforced against one framework's representation at a time
@@ -659,7 +687,7 @@ not belong in this paper.)
   variables, with complete mediation as an explicit obligation; (b) the **decidability
   split** on T4 (enum/numeric discharged by a decision procedure vs rich-syntax
   localized to a fuzzing obligation) as the practical shape of the guarantee; (c) the
-  swappable trust-model contract under a fixed gate (§5.6). Pin exact citations during
+  swappable trust-model contract under a fixed gate (§5.9). Pin exact citations during
   drafting.
 - **CaMeL (Debenedetti et al., arXiv:2503.18813)** — security by construction via an
   interpreter between model and tools; stronger structural provenance and, on the
@@ -667,7 +695,7 @@ not belong in this paper.)
   the partition split (liftable known-payee vs one-off shared-channel) live in §6.3 and
   are not restated here. Axor = a gate in front of an *unmodified* loop; its case is
   adoption cost (§6.5). **Crucially, CaMeL is not only a rival: its structural
-  provenance is a conforming `ValueProvenance` backend (§5.6) under axor's gate** — the
+  provenance is a conforming `ValueProvenance` backend (§5.9) under axor's gate** — the
   two compose (axor hosts provenance, closing the shared-channel residual while keeping
   the framework-agnostic gate and the K4 guarantee), a *proposed* integration, not
   implemented (§6.5/§8).
@@ -689,7 +717,7 @@ not belong in this paper.)
   violation-probability bound. State the trade explicitly: *they buy coverage of fuzzy
   predicates at the cost of a probabilistic guarantee; axor buys a deterministic,
   framing-invariant guarantee at the cost of restricting the trusted path to
-  non-interpreting projections (the §5.4 decidability split is exactly that restriction
+  non-interpreting projections (the §5.5 decidability split is exactly that restriction
   made precise).* Their work is also the natural **future direction** for axor's two
   probabilistic-adjacent surfaces — the observe-only detection→degradation path
   (`governance-model §8`) and the advisory adjudicator — which could carry such sound
@@ -710,7 +738,7 @@ not belong in this paper.)
 
 Pull together, as first-class content (the kernel-theorem already states these as
 *boundaries of the claim*, not gaps):
-- Integrity paraphrase residual on the non-liftable partition (§5.5).
+- Integrity paraphrase residual on the non-liftable partition (§5.6).
 - Implicit / control-flow leaks out of scope (O2).
 - A-3 (complete mediation) is a premise satisfied by the daemon, not a theorem.
 - Availability is outside the safety perimeter (detection→degradation can cost uptime
@@ -723,10 +751,10 @@ Pull together, as first-class content (the kernel-theorem already states these a
   ASR benches go dark on robust models (§6.4).
 - **Confidentiality (sound) axis — shown as a structural property (Appendix A-floor), not
   a benchmark.** The floor is paraphrase-proof *by construction* (the gate reads a session
-  boolean, never the egress bytes; §5.5) and is illustrated by a deterministic unit-level
+  boolean, never the egress bytes; §5.6) and is illustrated by a deterministic unit-level
   demonstration (arm → refuse → paraphrase-still-refused → control-allows), reproduced on
   GPT-4o while running travel. Honest scope, stated as the *named axis asymmetry*: integrity
-  is a *measured* axis (§6 cost), confidentiality is a *proven* axis (a property) — the
+  is a *measured* axis (§6 cost), confidentiality is a *structural* axis (a by-construction property, shown at unit level) — the
   **stock AgentDojo travel slice does not isolate the floor** (ASR ≈0/noisy; the live benign
   denial was integrity), so there is no benchmark floor-cost and we report none.
 
@@ -734,13 +762,13 @@ Pull together, as first-class content (the kernel-theorem already states these a
 existing seams. **(1) A structural-provenance trust-model backend.** The strongest residual in
 §6 is the one-off shared-channel partition (a legitimate payee that exists only in an untrusted
 read) where axor's content-derivation ledger over-blocks and CaMeL's structural provenance does
-not. Because enforcement runs against the swappable `ValueProvenance` contract (§5.6), a
+not. Because enforcement runs against the swappable `ValueProvenance` contract (§5.9), a
 CaMeL-style data-flow/provenance backend can implement `derive_value` and slot in **under** the
 unchanged gate — closing that residual while keeping the framework-agnostic gate and the K4
 guarantee. This is the highest-value next step (it directly turns §6.3's deficit into a
 compose), and it is *unimplemented* — the contract admits it and a custom trust model passes the
 substitution test, but the CaMeL backend is not built. **(2) A sound probabilistic predicate off
-the trusted path.** The integrity paraphrase residual and the fuzzing fraction (§5.4) are where a
+the trusted path.** The integrity paraphrase residual and the fuzzing fraction (§5.5) are where a
 *probabilistic* predicate would help; probabilistic verification (arXiv:2606.20510, §7) admits
 one soundly — a bounded violation probability rather than a structural guarantee. Fold it in
 *without* weakening K4 by keeping it **off the trusted path**: carry the bound on the observe-only
@@ -780,7 +808,7 @@ the honest price. Agents should not self-govern execution.
   (supersession is integrity-only) — all in `tests/adversarial/test_decidable_supersession.py`.
 - **A-floor. Structural demonstration of the confidentiality floor (unit-level, sits
   beside A — *not* an AgentDojo result).** This is where the sound axis is shown, framed as
-  a kernel *property*, not a benchmark number (per §5.5; §6.2 explains why the stock travel
+  a kernel *property*, not a benchmark number (per §5.6; §6.2 explains why the stock travel
   slice cannot carry it). Two parts:
   1. **The by-construction argument (the load-bearing part — paraphrase-proofness is
      argued, not tested).** The floor's decision is a function of one session boolean —
@@ -823,7 +851,7 @@ the honest price. Agents should not self-govern execution.
 
 1. The reverse-osmosis gate stack (README) — *the* signature figure.
 2. Trust-ring diagram + three-interface adapter seam (§4).
-3. The attack → taint → theorem chain as a single diagram (§5.2) — the conceptual core.
+3. The ground → projection → consumption → dispatch → effect chain as a single diagram (§5.2) — the conceptual core.
 4. **The primary figure: measured utility cost across suites (o4-mini)** (§6.2 — banking
    ≈ −17 ± 7pp, slack −34.1 ± 7.2pp, workspace −15.5 ± 3.8pp, travel 0pp, all paired)
    with the CaMeL **o4-mini-high** cost overlaid (v2 Table 2: banking +18.8, slack −23.8,
@@ -836,8 +864,8 @@ the honest price. Agents should not self-govern execution.
    *property*, shown separately (figure 6), not a cost row. Put the ASR-delta table
    (§6.4) *second/smaller*, captioned "where headroom exists," so layout itself signals
    which axis is load-bearing.
-5. The decidability split (enum/numeric = decidable vs path/carrier = fuzzing) (§5.4).
+5. The decidability split as a classification, next to the negative-control matrix (contract removed → effect; restored → none) (§5.5, §5.7).
 6. **The confidentiality-floor listing** (Appendix A-floor) — a small deterministic
    unit-style listing (arm → refuse → paraphrase-still-refused → control-allows), shown
    the way a unit test is shown, *not* as a benchmark bar. Caption names the asymmetry:
-   integrity is *measured* (fig. 4), confidentiality is *proven* (fig. 6).
+   integrity is *measured* (fig. 4), confidentiality is *structural* (fig. 6).

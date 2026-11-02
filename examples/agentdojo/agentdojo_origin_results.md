@@ -6,6 +6,16 @@ sound, no-oracle configuration mirrored from `axor-eval` `experiments/rope_bridg
 This supersedes an earlier production-mode attempt that was **incorrectly
 configured** (see "What was wrong" below).
 
+> **Arm label (corrected later, numbers unaffected).** "STRICT-origin" here names
+> the methodology, not `mode: strict`: the arm carries STRICT role completeness and a
+> complete consequence table but, by design, **no egress allowlist** — so it is an
+> origin-only baseline, not a STRICT arm. The `*_origin.yaml` files now say so and
+> declare `mode: production`; `origin_arm.py` adds the two STRICT obligations the arm
+> does carry. The governor kwargs the runner builds are byte-identical before and
+> after the relabel, so the measurements below stand. Guarantees of this arm:
+> integrity by origin, the confidentiality floor, the consequence ceiling — not an
+> allowlisted destination, magnitude bounds, or T4.
+
 ## Methodology (what "origin" means, and why it is the correct config)
 
 Polarity flipped in the core: under `integrity_default=context` a model-emitted

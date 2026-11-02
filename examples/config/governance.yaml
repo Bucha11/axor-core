@@ -147,6 +147,51 @@ value_policies:
       allowed: [alice@yourcorp.com, bob@yourcorp.com]
 
 
+# ── Consumption contracts: what each guarded sink's handler does with its args ──
+#
+# A predicate checks a VALUE. Whether the handler turns that value into the matching
+# effect depends on the handler: it may default an absent argument (a missing
+# `amount` that means "everything"), read an alias (`iban` next to `recipient`),
+# parse a string itself (`float("1e5")`), or resolve a path through a symlink. A
+# contract names every field the handler reads and how:
+#
+#   number | flag | identifier | identifier_list   — decidable predicates allowed
+#   path | interpreted | text                       — no decidable predicate (fuzz)
+#
+# and what the handler does when the field is absent: refuse (required, the default),
+# `default: <value>` (materialised, so the gates see it), or `unused_when_absent: true`.
+# Every call is put into this representation BEFORE the first gate; the prepared
+# arguments are the ones checked, approved and executed. A field not named is refused
+# (`closed: false` to opt out).
+#
+# STRICT requires, for every sink with a value policy, either a contract here or an
+# entry in `consumption_attested` — the operator's explicit statement that the handler
+# consumes the guarded fields as the predicates assume (a premise, reported as such).
+field_contracts:
+  send_email:
+    fields:
+      to:      {kind: identifier}
+      cc:      {kind: identifier_list, default: []}
+      bcc:     {kind: identifier_list, default: []}
+      subject: {kind: text, default: ""}
+      body:    {kind: text}
+  transfer_money:
+    fields:
+      recipient: {kind: identifier}
+      amount:    {kind: number, decimal_string: true}   # required: no sweep default
+      reference: {kind: text, unused_when_absent: true}
+  share_file:
+    fields:
+      to:   {kind: identifier}
+      file: {kind: path}          # a path: guard it with the path ceiling, not an enum
+
+# post_webhook's `url` is parsed by an HTTP client — an `interpreted` field, on which a
+# contract refuses an enum. The exact-URL allowlist is kept, and the premise that the
+# client fetches exactly that URL is stated rather than implied:
+consumption_attested:
+  - post_webhook
+
+
 # ── Driving arguments: which field of a sink the taint decision keys on ──────────
 #
 # By default the WHOLE argument blob drives the per-value taint decision — safe but

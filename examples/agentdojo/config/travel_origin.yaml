@@ -1,9 +1,17 @@
-# axor STRICT-origin taxonomy for the AgentDojo travel suite — COMPLETE coverage.
+# axor origin-arm taxonomy for the AgentDojo travel suite — COMPLETE coverage.
 # Ported verbatim from experiments/rope_bridge TRAVEL_ORIGIN (axor-eval). Every one
 # of the 28 travel tools carries an explicit data-flow role; consequence is
 # auto-derived over the full tool universe by the runner (AXOR_BENCH_ORIGIN=1).
 # Run: AXOR_BENCH_CONFIG=travel_origin.yaml AXOR_BENCH_INTEGRITY=context AXOR_BENCH_ORIGIN=1
-mode: strict
+# ── ARM: ORIGIN-ONLY BASELINE — not a STRICT arm ─────────────────────────────
+# Run only with AXOR_BENCH_ORIGIN=1 (see examples/agentdojo/origin_arm.py), which
+# adds role completeness and a complete consequence table. Guarantees of this arm:
+# integrity by origin (integrity_default: context), the confidentiality floor on
+# declared sensitive sources, the consequence ceiling. NOT claimed: an allowlisted
+# destination, magnitude bounds, or T4 for any argument — there are no value
+# predicates here, by design (no ground-truth oracle). `mode: production` states
+# that: STRICT would require an egress allowlist this arm must not carry.
+mode: production
 integrity_default: context
 
 egress_sinks:
