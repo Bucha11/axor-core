@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+(nothing yet)
+
+## 0.12.0 — 2026-11-06
+
 ### Added
 
 - **`falsy_is_absent`** on a field contract: a handler that tests a field by
@@ -179,6 +183,23 @@
 - **T0 now covers the provenance-label producers.** `axor_core.taint.ledger` and
   `axor_core.taint.causal_root` are added to the `t0-producers-non-interpreting`
   import contract and to the T0 scan test, with a ledger determinism check.
+
+## 0.10.0 – 0.11.0 — 2026-07-27 … 2026-09-15
+
+These four releases were tagged and published without changelog entries; the
+headline of each is below, and the per-release notes are the generated PR lists
+at <https://github.com/Bucha11/axor-core/releases>. Reconstructed from the
+release notes and the tags, not re-derived from the diffs.
+
+- **0.11.0** (2026-09-15) — own the schemas that cross a product boundary, and
+  the engine that reads them (#28).
+- **0.10.2** (2026-08-17) — `gate_of` and `ToolCallGovernor.trace_events` (#27);
+  the publish trigger fans out to Lab and the control plane.
+- **0.10.1** (2026-08-17) — record and name the provenance a verdict was reached
+  on (#26).
+- **0.10.0** (2026-07-27) — **breaking:** the control-plane client moves out of
+  the kernel into axor-wrap (#25); legacy-path guards (#17), the authority/plan
+  split types and compatibility layer (#18), kernel README (#24).
 
 ## 0.9.2 — 2026-07-13
 
