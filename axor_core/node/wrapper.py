@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Callable
 
 if TYPE_CHECKING:
     from axor_core.contracts.admission import AdmissionController
+    from axor_core.contracts.directives import ControlDirectives
 
 from axor_core import trace as trace_mod
 from axor_core.budget.policy_engine import BudgetPolicyEngine, OptimizationAction
@@ -139,6 +140,7 @@ class GovernedNode:
         adjudicator=None,
         federation_gateway=None,
         admission: "AdmissionController | None" = None,
+        directives: "ControlDirectives | None" = None,
         context_taps: "Sequence | None" = None,
         agent_id: str = "",
         per_node_degradation: bool = False,
@@ -150,6 +152,7 @@ class GovernedNode:
         self._agent_id = agent_id
         self._executor = executor
         self._admission = admission
+        self._directives = directives  # operator call cap → IntentLoop; None = no plane
         self._child_executor = child_executor  # None → reuse parent executor
         self._cap_executor = capability_executor
         self._analyzer = analyzer
@@ -422,6 +425,7 @@ class GovernedNode:
             adjudicator=self._adjudicator,
             federation_gateway=self._federation_gateway,
             admission=self._admission,
+            directives=self._directives,
         )
 
         raw_output, raw_payload, budget_export_mode = await self._collect_stream(
@@ -645,6 +649,7 @@ class GovernedNode:
             adjudicator=self._adjudicator,
             federation_gateway=self._federation_gateway,
             admission=self._admission,  # stop cascades down the subtree (spec 12.2)
+            directives=self._directives,
         )
 
         child_cancel = envelope.cancel_token.child_token()

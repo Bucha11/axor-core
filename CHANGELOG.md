@@ -2,7 +2,43 @@
 
 ## Unreleased
 
-(nothing yet)
+## 0.12.1 — 2026-11-10
+
+### Added
+
+- **`ControlDirectives`** (`axor_core.contracts.directives`): the operator's
+  one-shot effects, applied by the kernel at its own boundaries. Until now the
+  control plane could only hold or stop a node through `AdmissionController`;
+  everything else it sent — a probe-localized context excision, a test-bench
+  injection, a lowered call budget — was verified and queued by the adapter and
+  never consumed, because nothing in the kernel asked for it. Opt-in
+  (`GovernedSession(directives=...)`), plane-agnostic like admission: the
+  adapter implements it (axor-wrap's `PlaneAdmission`).
+  - **Excision** is applied before each turn's context is built, with
+    `apply_excision` under the authority the adapter built from the verified
+    operator signature, and holds for the rest of the session — `build`
+    re-ingests every turn, so a fragment cut once would otherwise come back.
+    Pinned fragments (operator config) are never cut, and are reported as
+    `operator_config` in the provenance the adapter checks first.
+  - **Injection** rides the next view only and is registered as external
+    content, so the taint gates treat it as the untrusted input it stands in for.
+  - **Call cap**: the `IntentLoop` enforces the lower of its own cap and the
+    operator's, read at every check — a cap tightened mid-run binds the next
+    call. The plane can only lower it.
+  - Replan is deliberately not a directive: what it means is
+    framework-specific, and the kernel does not accept a directive it cannot
+    apply honestly.
+- `ContextManager.excise`, `.excised`, `.fragment_provenance`, `.inject_once`.
+
+### Fixed
+
+- `ContextManager.pin_fragment` dropped a fragment's `taint_mark` (and `turn`)
+  when it re-created it as pinned, so a pinned fragment could not be identified
+  by the key excision uses — the guard keeping operator config out of an
+  excision could not see that it was operator config.
+
+Additive and opt-in: with no `directives`, behaviour is unchanged. Released as
+a patch so the ecosystem's one-minor-line pins (`>=0.12,<0.13`) take it as is.
 
 ## 0.12.0 — 2026-11-06
 

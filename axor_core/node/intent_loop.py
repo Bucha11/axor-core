@@ -83,6 +83,7 @@ from axor_core.taint.causal_root import CausalRoot
 
 if TYPE_CHECKING:
     from axor_core.contracts.admission import AdmissionController
+    from axor_core.contracts.directives import ControlDirectives
     from axor_core.contracts.reputation import ReputationEnricher
     from axor_core.degradation.engine import DegradationEngine
     from axor_core.contracts.provenance import ValueProvenance
@@ -186,6 +187,7 @@ class IntentLoop:
         invocation_recorder: "Callable[[str, dict, bool], None] | None" = None,
         admission: "AdmissionController | None" = None,
         spawn_inherits_context: bool = False,
+        directives: "ControlDirectives | None" = None,
     ) -> None:
         self._executor = capability_executor
         # True only when the spawn callback is the kernel's own GovernedNode spawn,
@@ -336,6 +338,10 @@ class IntentLoop:
         # the intent boundary only, so pause/stop take effect between intents,
         # never mid-effect.
         self._admission = admission
+        # Operator directives (spec 12.0, the same advisory overlay): read here
+        # for the call cap only — the operator's cap applies as the LOWER of it
+        # and this loop's own, so the plane can tighten a budget, never widen it.
+        self._directives = directives
         # STRICT obligation: every egress sink must carry an enum allowlist (the
         # sound, paraphrase-proof destination control). Fail closed at construction.
         if require_egress_allowlist:
@@ -382,6 +388,18 @@ class IntentLoop:
                     await aclose()
                 except Exception:
                     log.debug("executor stream aclose() raised", exc_info=True)
+
+    def _call_cap(self) -> int | None:
+        """The call cap in force now: this loop's own, lowered by the operator's
+        if one is set. Read at every check, so a cap the operator tightens
+        mid-run binds the next call — it was applied to the adapter's session
+        and never read by the loop that spends the budget."""
+        cap = self._budget_cap_calls
+        if self._directives is not None:
+            plane = self._directives.budget_cap_calls()
+            if plane is not None:
+                cap = plane if cap is None else min(cap, plane)
+        return cap
 
     async def _run_inner(
         self,
@@ -689,12 +707,13 @@ class IntentLoop:
         # A budget denial is a typed fact (recorded + fed to degradation), so a run
         # that hits its ceiling stops loudly — it never silently overruns.
         budget_reason: str | None = None
+        call_cap = self._call_cap()
         if (
-            self._budget_cap_calls is not None
-            and self._budget_spent_calls >= self._budget_cap_calls
+            call_cap is not None
+            and self._budget_spent_calls >= call_cap
         ):
             budget_reason = (
-                f"budget: call cap {self._budget_cap_calls} exhausted "
+                f"budget: call cap {call_cap} exhausted "
                 f"({self._budget_spent_calls} spent)"
             )
         elif (
@@ -1525,12 +1544,13 @@ class IntentLoop:
         if envelope.cancel_token.is_cancelled():
             return "cancelled while an approval was outstanding"
 
+        call_cap = self._call_cap()
         if (
-            self._budget_cap_calls is not None
-            and self._budget_spent_calls >= self._budget_cap_calls
+            call_cap is not None
+            and self._budget_spent_calls >= call_cap
         ):
             return (
-                f"budget: call cap {self._budget_cap_calls} exhausted while an "
+                f"budget: call cap {call_cap} exhausted while an "
                 f"approval was outstanding ({self._budget_spent_calls} spent)"
             )
         if (

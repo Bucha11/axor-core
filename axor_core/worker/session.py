@@ -11,6 +11,7 @@ if TYPE_CHECKING:
     from axor_core.contracts.memory import MemoryProvider
     from axor_core.contracts.session import SessionSink
     from axor_core.node.intent_loop import EscalationCallback
+    from axor_core.contracts.directives import ControlDirectives
 from axor_core.contracts.cancel import make_token, CancelReason
 from axor_core.contracts.session import SessionAuditRecord, ToolInvocationRecord
 from axor_core.contracts.context import RawExecutionState, LineageSummary
@@ -163,6 +164,7 @@ class GovernedSession:
         adjudicator=None,
         federation_gateway=None,
         admission=None,
+        directives: "ControlDirectives | None" = None,
         session_sink: "SessionSink | None" = None,
         context_taps: "list[ContextTap] | None" = None,
         per_node_degradation: bool = False,
@@ -210,6 +212,10 @@ class GovernedSession:
         self._adjudicator = adjudicator          # opt-in advisory layer; None = off
         self._federation_gateway = federation_gateway  # opt-in A2A trust; None = off
         self._admission = admission  # opt-in control-plane admission; None = no plane
+        # Opt-in operator directives: excision and test-bench injection applied
+        # here before each turn's context is built, the call cap by IntentLoop.
+        # None = no plane; nothing waits on a network either way.
+        self._directives = directives
         _overlay_ceiling = None
         _overlay_escalation = None
         if profile is not None:
@@ -618,6 +624,10 @@ class GovernedSession:
             self._cap_executor.register_post_callback(_context_observer)
             self._context_observer_registered = True
 
+        # Operator directives land at the turn boundary, before this turn's
+        # context is assembled — never mid-effect.
+        self._apply_control_directives()
+
         cancel_token = make_token()
         self._active_token = cancel_token
 
@@ -771,6 +781,41 @@ class GovernedSession:
                 pass
 
         return result
+
+    def _apply_control_directives(self) -> None:
+        """Consume what the operator sent since the last turn.
+
+        An excision cuts the named fragments from this session's context for
+        good, with the authority the adapter built from the verified operator
+        signature. A test-bench injection rides in the next view only, and is
+        registered as external content: it is there to see what the agent does
+        with untrusted input, so the taint gates must see it as untrusted too.
+        The adapter reports both back to the plane (consumed / excised), which
+        is what closes the heal the operator started.
+        """
+        if self._directives is None:
+            return
+        excision = self._directives.take_excision(
+            self._context_manager.fragment_provenance()
+        )
+        if excision is not None:
+            self._context_manager.excise(excision.target_refs, excision.authority)
+        injection = self._directives.take_injection()
+        if injection is not None and injection.text:
+            from axor_core.contracts.context import ContextFragment
+            from axor_core.contracts.taint import TaintSource
+            from axor_core.taint.causal_root import CausalRoot
+
+            self._taint_engine.register_value(
+                injection.text, CausalRoot.external_read(TaintSource.UNKNOWN_EXTERNAL),
+            )
+            self._context_manager.inject_once(ContextFragment(
+                kind="tool_result",
+                content=injection.text,
+                token_estimate=estimate_tokens(injection.text),
+                source=f"operator-injection:{injection.injection_id}",
+                relevance=1.0,
+            ))
 
     async def notify_behavioral_drift(self, agent_id: str, action: str) -> None:
         """
@@ -976,6 +1021,7 @@ class GovernedSession:
             adjudicator=self._adjudicator,
             federation_gateway=self._federation_gateway,
             admission=self._admission,
+            directives=self._directives,
             context_taps=self._context_taps or None,
             agent_id=self._agent_def.name if self._agent_def is not None else "",
             per_node_degradation=self._per_node_degradation,

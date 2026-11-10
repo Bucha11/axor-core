@@ -12,6 +12,9 @@ from axor_core.context.compressor import ContextCompressor
 from axor_core.context.invalidator import ContextInvalidator
 from axor_core.context.selector import ContextSelector
 from axor_core.context.symbol_table import SymbolTable
+from axor_core.context.excision import ExcisionResult, apply_excision
+from axor_core.contracts.degradation import GovernanceAuthority
+from collections.abc import Sequence
 
 
 class ContextManager:
@@ -56,6 +59,12 @@ class ContextManager:
         self._all_fragments: list[ContextFragment] = []
         self._pinned_fragments: list[ContextFragment] = []  # never compressed/evicted
         self._recent_outputs: list[str] = []
+        # Operator excisions (spec 8.2.1), by fragment key (taint mark). Kept for
+        # the whole session: `build` re-ingests every turn, so a fragment removed
+        # once would otherwise come back from the cache on the next one.
+        self._excised: set[str] = set()
+        # Test-bench injections: in the NEXT built view only, then gone.
+        self._inject_once: list[ContextFragment] = []
 
     def pin_fragment(self, fragment: ContextFragment) -> None:
         """
@@ -72,6 +81,9 @@ class ContextManager:
         """
         # ensure value is set to pinned
         if fragment.value != "pinned":
+            # carry the taint mark (and turn) across: rebuilding without it made
+            # a pinned fragment unidentifiable, so the guard that keeps operator
+            # config out of an excision could not see that it was operator config
             fragment = ContextFragment(
                 kind=fragment.kind,
                 content=fragment.content,
@@ -79,12 +91,48 @@ class ContextManager:
                 source=fragment.source,
                 relevance=fragment.relevance,
                 value="pinned",
+                turn=fragment.turn,
+                taint_mark=fragment.taint_mark,
             )
         # deduplicate by source
         self._pinned_fragments = [
             f for f in self._pinned_fragments if f.source != fragment.source
         ]
         self._pinned_fragments.append(fragment)
+
+    # ── operator effects (spec 8.2.1 excision, test-bench injection) ───────────
+
+    def fragment_provenance(self) -> dict[str, str]:
+        """Every keyed fragment the session holds, mapped to "operator_config"
+        (pinned: personality, rules the operator set) or "runtime" (everything
+        the session picked up while running). An excision may only cut runtime
+        context; the adapter refuses one that names operator config."""
+        out = {f.taint_mark: "runtime" for f in self._all_fragments if f.taint_mark}
+        out |= {f.taint_mark: "operator_config" for f in self._pinned_fragments if f.taint_mark}
+        return out
+
+    def excise(self, target_refs: Sequence[str], authority: GovernanceAuthority) -> ExcisionResult:
+        """Cut these fragments now and for the rest of the session.
+
+        `apply_excision` decides what an authority may remove; this keeps the
+        decision. Pinned fragments are never touched — operator config is not
+        the operator's to excise from the plane (the adapter refuses that whole
+        command first; this is the second wall, not the first)."""
+        result = apply_excision(
+            self._all_fragments, auto_excise=target_refs, authority=authority,
+        )
+        self._all_fragments = list(result.repaired_fragments)
+        pinned = {f.taint_mark for f in self._pinned_fragments if f.taint_mark}
+        self._excised |= set(target_refs) - pinned
+        return result
+
+    def excised(self) -> frozenset[str]:
+        return frozenset(self._excised)
+
+    def inject_once(self, fragment: ContextFragment) -> None:
+        """Include this fragment in the next built view, after the pinned ones,
+        and never again."""
+        self._inject_once.append(fragment)
 
     def add_knowledge(self, content: str, source: str, token_estimate: int = 0) -> None:
         """
@@ -154,6 +202,8 @@ class ContextManager:
 
         # ── ingest ────────────────────────────────────────────────────────────
         fragments = self._ingest(raw_state)
+        if self._excised:
+            fragments = [f for f in fragments if f.taint_mark not in self._excised]
 
         # ── invalidate ────────────────────────────────────────────────────────
         invalidation = self._invalidator.run(
@@ -186,7 +236,8 @@ class ContextManager:
 
         # ── prepend pinned fragments ───────────────────────────────────────────
         # pinned always first — before all other fragments
-        final = list(self._pinned_fragments) + selected
+        injected, self._inject_once = self._inject_once, []
+        final = list(self._pinned_fragments) + injected + selected
         total_tokens = sum(f.token_estimate for f in final)
 
         return ContextView(
