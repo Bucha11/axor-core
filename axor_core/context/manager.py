@@ -63,6 +63,7 @@ class ContextManager:
         # the whole session: `build` re-ingests every turn, so a fragment removed
         # once would otherwise come back from the cache on the next one.
         self._excised: set[str] = set()
+        self._excised_sources: set[str] = set()
         # Test-bench injections: in the NEXT built view only, then gone.
         self._inject_once: list[ContextFragment] = []
 
@@ -124,6 +125,27 @@ class ContextManager:
         self._all_fragments = list(result.repaired_fragments)
         pinned = {f.taint_mark for f in self._pinned_fragments if f.taint_mark}
         self._excised |= set(target_refs) - pinned
+        return result
+
+    def excise_sources(
+        self, sources: Sequence[str], authority: GovernanceAuthority,
+    ) -> ExcisionResult:
+        """Cut fragments by origin (their ``source``) now and for the rest of
+        the session.
+
+        For an excision that names a TOOL CALL rather than a context fragment:
+        an adapter that keeps a run's tool results in its own conversation
+        (axor-claude's executor) cuts them there by call id, but a ``read``
+        result also lands here as a cached fact keyed by its path, and that
+        copy would carry the cut content into every later turn. Same authority
+        rules as :meth:`excise`; pinned operator config is never touched."""
+        result = apply_excision(
+            self._all_fragments, auto_excise=sources, authority=authority,
+            key=lambda f: f.source,
+        )
+        self._all_fragments = list(result.repaired_fragments)
+        pinned = {f.source for f in self._pinned_fragments}
+        self._excised_sources |= set(sources) - pinned
         return result
 
     def excised(self) -> frozenset[str]:
@@ -204,6 +226,8 @@ class ContextManager:
         fragments = self._ingest(raw_state)
         if self._excised:
             fragments = [f for f in fragments if f.taint_mark not in self._excised]
+        if self._excised_sources:
+            fragments = [f for f in fragments if f.source not in self._excised_sources]
 
         # ── invalidate ────────────────────────────────────────────────────────
         invalidation = self._invalidator.run(

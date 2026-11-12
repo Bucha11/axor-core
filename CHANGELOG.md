@@ -6,6 +6,13 @@
 
 ### Added
 
+- **`ContextManager.excise_sources` / `GovernedSession.excise_context_sources`**:
+  cut context fragments by origin (`source`) for the rest of the session, under
+  the same authority rules as `excise`. For an excision that names a tool call
+  rather than a fragment: a `read` result is cached as a fact keyed by its path
+  and carried into later turns, and no fragment carries a taint mark to cut it
+  by. axor-claude translates a cut `tool_use_id` into that path.
+
 - **`ControlDirectives`** (`axor_core.contracts.directives`): the operator's
   one-shot effects, applied by the kernel at its own boundaries. Until now the
   control plane could only hold or stop a node through `AdmissionController`;

@@ -843,6 +843,13 @@ class GovernedSession:
                 exc_info=True,
             )
 
+    def excise_context_sources(self, sources, authority) -> None:
+        """An operator excision that named tool calls, translated by the adapter
+        into the context sources those calls left behind (a ``read`` result is
+        cached as a fact keyed by its path). Cut now and for the rest of the
+        session; the authority is the one the plane verified."""
+        self._context_manager.excise_sources(tuple(sources), authority)
+
     def cancel(self, detail: str = "") -> None:
         """
         Cancel the current active execution.
