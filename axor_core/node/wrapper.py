@@ -144,7 +144,14 @@ class GovernedNode:
         context_taps: "Sequence | None" = None,
         agent_id: str = "",
         per_node_degradation: bool = False,
+        child_roles: "dict | None" = None,
+        max_parallel_children: int | None = None,
     ) -> None:
+        # Operator-declared child roles (axor_core.contracts.roles): which agent
+        # and model a child spawned under each name runs on. Inherited by every
+        # descendant — a child spawns from the same roster, under its own policy.
+        self._child_roles = dict(child_roles or {})
+        self._max_parallel_children = max_parallel_children
         # Optional live-context taps (hot path) so an external monitor
         # (axor-probe) can build drift snapshots. None/empty → the node-level
         # emit is a no-op, zero overhead. agent_id rides into the emitted view.
@@ -355,7 +362,7 @@ class GovernedNode:
         _trace_events = trace_events
 
         async def _spawn_child_callback(
-            tool_use_id: str, task: str, context_hint: str
+            tool_use_id: str, task: str, context_hint: str, role: str | None = None,
         ) -> str:
             from axor_core.errors.exceptions import (
                 ChildNotAllowedError,
@@ -368,6 +375,7 @@ class GovernedNode:
                     "task": task,
                     "context_hint": context_hint,
                     "tool_use_id": tool_use_id,
+                    "role": role or "",
                 },
                 node_id=envelope.node_id,
                 sequence=0,
@@ -395,6 +403,9 @@ class GovernedNode:
             # (context root, trusted index, integrity mode), so the loop may judge
             # a spawn on what the task visibly carries — see _spawn_taint_reason.
             spawn_inherits_context=True,
+            child_roles=self._child_roles,
+            **({"max_parallel_children": self._max_parallel_children}
+               if self._max_parallel_children is not None else {}),
             escalation_callback=self._escalation_callback,
             taint_engine=self._taint_engine,
             degradation_engine=self._degradation_engine,
@@ -435,6 +446,9 @@ class GovernedNode:
             parent_policy=policy,
             cancel_token=cancel_token,
         )
+        # In memory only, for the spawning parent's findings check — never
+        # traced (arguments are inputs, and the trace may not persist inputs).
+        self.last_approved_calls = list(intent_loop.approved_calls)
 
         # ── 7. Export filter ───────────────────────────────────────────────────
         # Apply any budget-imposed export narrowing to the contract before the
@@ -548,6 +562,16 @@ class GovernedNode:
         Budget check happens before spawning.
         """
         child_task = intent.payload.get("task", envelope.task)
+        # The role was gated in the loop (declared, model switch allowed); here it
+        # only resolves to what the operator configured for it.
+        role = self._child_roles.get(intent.payload.get("role") or "")
+        if role is not None:
+            intent = Intent(
+                kind=intent.kind,
+                payload={**intent.payload, "executor_label": role.label},
+                node_id=intent.node_id,
+                sequence=intent.sequence,
+            )
 
         # budget check before spawn
         if self._budget_engine:
@@ -606,8 +630,12 @@ class GovernedNode:
                 self._degradation_engine, child_lineage.node_id
             )
 
+        child_executor = (
+            role.executor if role is not None and role.executor is not None
+            else self._child_executor or self._executor
+        )
         child_node = GovernedNode(
-            executor=self._child_executor or self._executor,
+            executor=child_executor,
             capability_executor=self._cap_executor,
             analyzer=self._analyzer,
             selector=self._selector,
@@ -650,6 +678,8 @@ class GovernedNode:
             federation_gateway=self._federation_gateway,
             admission=self._admission,  # stop cascades down the subtree (spec 12.2)
             directives=self._directives,
+            child_roles=self._child_roles,
+            max_parallel_children=self._max_parallel_children,
         )
 
         child_cancel = envelope.cancel_token.child_token()
@@ -658,6 +688,9 @@ class GovernedNode:
                 raw_state=child_raw_state,
                 extension_bundle=extension_bundle,
                 parent_policy=parent_policy,
+                # a role's policy is the child's starting point; run() still
+                # composes it under parent_policy and validates the result
+                override_policy=role.policy if role is not None else None,
                 cancel_token=child_cancel,
             )
         except Exception as exc:  # noqa: BLE001 — crash/disappearance path
@@ -692,8 +725,24 @@ class GovernedNode:
                 )
             return f"[child failed: node_stale ({type(exc).__name__})]"
 
+        # What the parent is handed. A findings role's answer is checked against
+        # the files the child actually read first (axor_core.node.findings): the
+        # parent receives the same findings, each marked verified or not.
+        returned = child_result.output
+        checked: dict | None = None
+        if role is not None and role.output == "findings":
+            import json as _json
+
+            from axor_core.node.findings import verify_findings
+
+            checked = verify_findings(child_result.output,
+                                      getattr(child_node, "last_approved_calls", []))
+            returned = _json.dumps(checked, ensure_ascii=False)
+
         # Provenance of the child's returned output, registered into the parent's
-        # per-value ledger so a parent sink later carrying it is gated.
+        # per-value ledger so a parent sink later carrying it is gated. A checked
+        # findings answer is a re-encoding of the child's output, so it carries the
+        # same root — re-encoding launders nothing.
         if self._taint_engine is not None and child_result.output:
             if self._federation_gateway is not None:
                 # Federation on: an in-process child is a same-process, same-kernel
@@ -704,6 +753,8 @@ class GovernedNode:
                 # tainted (and a sensitive one re-arms the parent's egress floor).
                 child_root = child_taint.derive_value(child_result.output)
                 self._taint_engine.register_value(child_result.output, child_root)
+                if returned is not child_result.output:
+                    self._taint_engine.register_value(returned, child_root)
             else:
                 # Federation off (conservative default): the child output crosses a
                 # trust boundary we do not audit, so re-mint it untrusted. This
@@ -712,6 +763,9 @@ class GovernedNode:
                 self._taint_engine.register_value(
                     child_result.output, CausalRoot.cross_process_in()
                 )
+                if returned is not child_result.output:
+                    self._taint_engine.register_value(
+                        returned, CausalRoot.cross_process_in())
 
         # emit child_completed into parent trace
         from axor_core.contracts.trace import TraceEvent
@@ -727,6 +781,9 @@ class GovernedNode:
                     else "unknown",
                     "tokens": child_result.token_usage.total,
                     "cancelled": child_result.metadata.get("cancelled", False),
+                    **({"findings_verified": checked["verified"],
+                        "findings_unverified": checked["unverified"]}
+                       if checked is not None else {}),
                 },
             )
         )
@@ -755,7 +812,7 @@ class GovernedNode:
                 ),
             )
 
-        return child_result.output
+        return returned
 
     # ── Helpers ────────────────────────────────────────────────────────────────
 

@@ -129,6 +129,10 @@ class ChildSpawnedEvent(TraceEvent):
     child_node_id: str = ""
     child_depth: int = 0
     context_fraction: float = 0.0
+    # the operator-declared role the child was spawned under, and the executor
+    # it runs on ("codex/luna") — empty for a plain spawn on the default executor
+    role: str = ""
+    executor_label: str = ""
 
 
 @dataclass(frozen=True)

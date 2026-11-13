@@ -318,3 +318,58 @@ async def test_clean_spawn_task_still_allowed():
     results = await _drive_spawn(loop, _spawn_envelope(), "summarize the README")
     assert results[0]["approved"] is True
     assert spawned == ["summarize the README"]
+
+
+# ── a batch of children is gated child by child ───────────────────────────────
+
+async def _drive_args(loop: IntentLoop, env, args: dict) -> list[dict]:
+    async def _stream():
+        yield ExecutorEvent(
+            kind=ExecutorEventKind.TOOL_USE,
+            payload={"tool": "spawn_child", "args": args, "tool_use_id": "s0"},
+            node_id=env.node_id,
+        )
+        yield ExecutorEvent(kind=ExecutorEventKind.STOP, payload={"usage": {}},
+                            node_id=env.node_id)
+
+    return [ev.payload async for ev in loop.run(_stream(), env)
+            if ev.kind == ExecutorEventKind.TEXT and "approved" in ev.payload]
+
+
+@pytest.mark.asyncio
+async def test_a_tainted_child_in_a_batch_is_denied_and_its_siblings_run():
+    spawned: list[str] = []
+
+    async def _spawn_cb(tool_use_id: str, task: str, context_hint: str) -> str:
+        spawned.append(task)
+        return "child done"
+
+    eng = TaintEngine()
+    eng.register_value(ATTACK_TASK, CausalRoot.external_read(TaintSource.WEB))
+    loop = IntentLoop(capability_executor=CapabilityExecutor(), trace_events=[],
+                      taint_engine=eng, spawn_callback=_spawn_cb)
+    [result] = await _drive_args(loop, _spawn_envelope(), {"children": [
+        {"task": "summarize the README"}, {"task": ATTACK_TASK}]})
+    children = result["tool_result"]["children"]
+    assert [c["status"] for c in children] == ["ok", "denied"]
+    assert spawned == ["summarize the README"]
+
+
+@pytest.mark.asyncio
+async def test_naming_a_role_does_not_exempt_a_tainted_task():
+    from axor_core import ChildRole
+
+    spawned: list[str] = []
+
+    async def _spawn_cb(tool_use_id, task, context_hint, role=None) -> str:
+        spawned.append(task)
+        return "child done"
+
+    eng = TaintEngine()
+    eng.register_value(ATTACK_TASK, CausalRoot.external_read(TaintSource.WEB))
+    loop = IntentLoop(capability_executor=CapabilityExecutor(), trace_events=[],
+                      taint_engine=eng, spawn_callback=_spawn_cb,
+                      child_roles={"implementer": ChildRole("implementer")})
+    [result] = await _drive_args(loop, _spawn_envelope(),
+                                 {"task": ATTACK_TASK, "role": "implementer"})
+    assert result["approved"] is False and spawned == []

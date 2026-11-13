@@ -165,6 +165,8 @@ class ChildSpawner:
                 child_node_id=child_node_id,
                 child_depth=child_depth,
                 context_fraction=parent_envelope.policy.child_context_fraction,
+                role=str(spawn_intent.payload.get("role") or ""),
+                executor_label=str(spawn_intent.payload.get("executor_label") or ""),
             )
         )
 

@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+### Added
+
+- **Child roles** (`axor_core.contracts.roles.ChildRole`,
+  `GovernedSession(child_roles=...)`): the operator declares which agent and
+  model a child may run on — `ChildRole("reader", executor=codex, label="codex/luna",
+  policy=read_only)` — and `spawn_child(task, role="reader")` picks one by name.
+  An unknown role is denied; a role on another executor needs
+  `allow_model_switch` (authority, not planning); a role's policy is still
+  composed under the parent's ceiling. `ChildSpawnedEvent` records `role` and
+  `executor_label`, so the tree says which agent each node was.
+- **Parallel spawn**: `spawn_child(children=[{task, role?}, ...])` starts a batch
+  concurrently (`max_parallel_children`, default 8). Each child passes every gate
+  on its own — capability, role, taint, the total-spawn cap — and the result
+  lists each child, approved or denied, in the order asked.
+- **Checked findings** (`axor_core.node.findings`): a role with
+  `output="findings"` answers with a JSON findings list; before the parent sees
+  it, each finding is marked verified only if the child actually read the file
+  it names — through a read tool, a search over its directory, or the shell
+  (`sed -n`, `cat`, `rg`, `find`…). A failed read is not a read.
+  `CHILD_COMPLETED` carries the verified/unverified counts.
+
 ## 0.12.1 — 2026-11-10
 
 ### Added

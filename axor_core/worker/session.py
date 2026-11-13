@@ -171,7 +171,15 @@ class GovernedSession:
         integrity_default: "str | None" = None,
         integrity_origins: "str | None" = None,
         records: "dict | None" = None,
+        child_roles: "list | dict | None" = None,
+        max_parallel_children: int | None = None,
     ) -> None:
+        # Child roles (axor_core.contracts.roles): the agents/models a spawn may
+        # name. Normalised once here so a duplicate name fails at construction.
+        from axor_core.contracts.roles import role_roster
+
+        self._child_roles = role_roster(child_roles)
+        self._max_parallel_children = max_parallel_children
         # Wall-clock the session was constructed — handed to sentinel in the
         # closed-session record (slow-and-low staging compares session start times).
         self._started_at = time.time()
@@ -1032,6 +1040,8 @@ class GovernedSession:
             context_taps=self._context_taps or None,
             agent_id=self._agent_def.name if self._agent_def is not None else "",
             per_node_degradation=self._per_node_degradation,
+            child_roles=self._child_roles,
+            max_parallel_children=self._max_parallel_children,
         )
 
     async def _handle_command(self, raw: str) -> ExecutionResult:

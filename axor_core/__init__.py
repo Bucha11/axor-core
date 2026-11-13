@@ -97,6 +97,7 @@ _LAZY = {
     "TaskSignal": "axor_core.contracts.policy",
     "TaskComplexity": "axor_core.contracts.policy",
     "TaskNature": "axor_core.contracts.policy",
+    "ChildRole": "axor_core.contracts.roles",
     "ExecutionResult": "axor_core.contracts.result",
     "TokenUsage": "axor_core.contracts.result",
     "ExtensionLoader": "axor_core.contracts.extension",
@@ -183,6 +184,7 @@ __all__ = [
     "ResourceBudget", "split_legacy_policy",
     "TaskSignal", "TaskComplexity", "TaskNature",
     "ExecutionResult", "TokenUsage",
+    "ChildRole",
     "ExtensionLoader", "ExtensionBundle",
     "TraceConfig",
     # agent

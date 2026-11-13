@@ -80,6 +80,8 @@ axor_core/
 │   │                                   delegates the structural gates to policy/gates.py
 │   ├── canonicalizer.py   IntentCanonicalizer — strips raw strings before any advisory/detection layer
 │   ├── spawn.py           ChildSpawner — _validate_child_policy(), SpawnValidationError
+│   ├── findings.py        verify_findings — a findings role's answer checked against
+│   │                                   the files the child actually read
 │   └── export.py          ExportFilter — SummarizationMembrane, export contracts
 │
 ├── governor.py            ToolCallGovernor — synchronous per-call gate engine for
@@ -223,6 +225,8 @@ The guarantee is regression-tested (`tests/test_kernel_only_import.py`).
 **Core does not decompose tasks.** Agents decide when to spawn children. Core governs each spawn and provides a minimum sufficient context slice.
 
 **spawn_child is an intent, not a tool.** `IntentLoop` intercepts `spawn_child` tool_use events before they reach `CapabilityExecutor`. The routing is `SpawnCallback → _handle_spawn_child` — internal to core. Adapters never see federation.
+
+**Children run on the agent and model the operator chose.** `GovernedSession(child_roles=[ChildRole(...)])` declares roles; `spawn_child(task, role=...)` may only name one. A role on a different executor is a model switch and needs `allow_model_switch` on the parent's policy; a role's `policy` is the child's starting policy, still composed under the parent's ceiling. `spawn_child(children=[...])` starts a batch in parallel (at most `max_parallel_children`): each child is gated on its own, and one denial does not sink its siblings. A role with `output="findings"` hands its parent findings each marked verified only if the child actually read the file it names (`axor_core/node/findings.py`).
 
 **Denied spawns never crash.** `SpawnValidationError` is caught in the spawn callback and returned as a structured denial string. The executor sees a tool result, not an exception.
 

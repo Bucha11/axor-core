@@ -111,9 +111,15 @@ _KNOWN_TOOL_EXCEPTIONS: tuple[type[BaseException], ...] = (
 ToolResultCallback = Callable[[str, str, Any, bool], Awaitable[None]]
 
 # Optional callback for spawn_child intents.
-# Signature: (tool_use_id, task, context_hint) → str (child result)
+# Signature: (tool_use_id, task, context_hint) → str (child result). A spawn
+# naming a role is called with an extra keyword, ``role=<name>``; a host whose
+# callback does not take it never sees roles, because the loop only passes one
+# when the session declared a roster (see axor_core.contracts.roles).
 # Implemented in wrapper.py — intent_loop stays provider-agnostic.
-SpawnCallback = Callable[[str, str, str], Awaitable[str]]
+SpawnCallback = Callable[..., Awaitable[str]]
+
+# How many children one batched spawn_child(children=[...]) may start at once.
+DEFAULT_MAX_PARALLEL_CHILDREN = 8
 
 # Optional approval callback. It is asked one question — an ApprovalRequest —
 # and answers yes/no. The request carries its SCOPE: a class-scoped question
@@ -188,8 +194,18 @@ class IntentLoop:
         admission: "AdmissionController | None" = None,
         spawn_inherits_context: bool = False,
         directives: "ControlDirectives | None" = None,
+        child_roles: "dict | None" = None,
+        max_parallel_children: int = DEFAULT_MAX_PARALLEL_CHILDREN,
     ) -> None:
         self._executor = capability_executor
+        # Operator-declared child roles (name → ChildRole). Empty = no roles: a
+        # spawn naming one is denied as unknown.
+        self._child_roles = dict(child_roles or {})
+        # (tool, args) of every call the gates let through and that ran, in order. In memory
+        # only: a spawning parent checks a child's findings against it
+        # (axor_core.node.findings). Never written to the trace.
+        self.approved_calls: list[tuple[str, dict]] = []
+        self._max_parallel_children = max(1, int(max_parallel_children))
         # True only when the spawn callback is the kernel's own GovernedNode spawn,
         # which builds the child's engine by inheriting THIS engine (context root,
         # trusted index, mode). A host that wires its own spawn_callback gets no
@@ -459,86 +475,26 @@ class IntentLoop:
                             )
                         continue
 
-                    # spawn_child is a special intent — not a regular tool call
+                    # spawn_child is a special intent — not a regular tool call.
+                    # One child, or a batch (args.children) started in parallel;
+                    # every child passes the same gates either way.
                     if (
                         tool_name == "spawn_child"
                         and self._spawn_callback is not None
                     ):
-                        self._intent_sequence += 1
-                        spawn_intent = Intent(
-                            kind=IntentKind.SPAWN_CHILD,
-                            payload=event.payload,
-                            node_id=envelope.node_id,
-                            sequence=self._intent_sequence,
+                        child_result, approved = await self._dispatch_spawn(
+                            tool_use_id, tool_name, event.payload, envelope,
                         )
-                        # Capability check BEFORE dispatching to callback —
-                        # denial must be recorded in the trace regardless of
-                        # whether the callback would catch the exception.
-                        spawn_decision = self.resolve_spawn_intent(
-                            spawn_intent, envelope
-                        )
-                        if spawn_decision.kind == PolicyDecisionKind.DENY:
-                            self._record_denial(
-                                spawn_intent, spawn_decision.reason, envelope,
-                                "capability",
-                            )
-                            denial = _denial_result(tool_name, spawn_decision.reason)
-                            if self._tool_result_callback is not None:
-                                await self._tool_result_callback(
-                                    tool_use_id, tool_name, denial, False
-                                )
-                            else:
-                                yield ExecutorEvent(
-                                    kind=ExecutorEventKind.TEXT,
-                                    payload={
-                                        "tool_result": denial,
-                                        "approved": False,
-                                    },
-                                    node_id=envelope.node_id,
-                                )
-                            continue
-
-                        # Per-value carrier/taint gate — the capability check
-                        # above only asks "may this node spawn"; it does not inspect
-                        # WHAT drives the spawn. A tainted free-text task is prompt
-                        # injection reaching an instruction-following sink.
-                        spawn_args = event.payload.get("args", {})
-                        taint_reason = self._spawn_taint_reason(spawn_args)
-                        if taint_reason is not None:
-                            self._record_denial(spawn_intent, taint_reason, envelope, "taint_enforcement")
-                            denial = _denial_result(tool_name, taint_reason)
-                            if self._tool_result_callback is not None:
-                                await self._tool_result_callback(
-                                    tool_use_id, tool_name, denial, False
-                                )
-                            else:
-                                yield ExecutorEvent(
-                                    kind=ExecutorEventKind.TEXT,
-                                    payload={"tool_result": denial, "approved": False},
-                                    node_id=envelope.node_id,
-                                )
-                            continue
-
-                        # Approved — count this spawn once at the dispatch site.
-                        self._spawn_count += 1
-                        task = event.payload.get("args", {}).get("task", "")
-                        context_hint = event.payload.get("args", {}).get(
-                            "context_hint", ""
-                        )
-                        child_result = await self._spawn_callback(
-                            tool_use_id, task, context_hint
-                        )
-
                         if self._tool_result_callback is not None:
                             await self._tool_result_callback(
-                                tool_use_id, tool_name, child_result, True
+                                tool_use_id, tool_name, child_result, approved
                             )
                         else:
                             yield ExecutorEvent(
                                 kind=ExecutorEventKind.TEXT,
                                 payload={
                                     "tool_result": child_result,
-                                    "approved": True,
+                                    "approved": approved,
                                 },
                                 node_id=envelope.node_id,
                             )
@@ -1165,6 +1121,9 @@ class IntentLoop:
             # They may only TIGHTEN degradation (observe-only), never authorise — a
             # domain heuristic, not a structural fact.
             self._run_trajectory_observers(tool_name, effective_args, result)
+            # recorded once the call RAN: a read that failed (no such file) is
+            # not something the child read
+            self.approved_calls.append((tool_name, dict(effective_args or {})))
             return ResolvedIntent(
                 intent=intent,
                 approved=True,
@@ -1277,6 +1236,137 @@ class IntentLoop:
         return await self._escalation.grant_from_intent(
             event, envelope, self._trace_events
         )
+
+    # ── Spawn ──────────────────────────────────────────────────────────────────
+
+    async def _dispatch_spawn(
+        self,
+        tool_use_id: str,
+        tool_name: str,
+        payload: dict,
+        envelope: ExecutionEnvelope,
+    ) -> tuple[Any, bool]:
+        """Gate and run a spawn_child call. Returns (tool result, approved).
+
+        ``args.children`` (a list of ``{task, role?, context_hint?}``) asks for a
+        batch: each child is gated on its own — capability, role, taint, the
+        total-spawn cap counting the ones before it — and the approved ones run
+        concurrently. One child's denial does not sink its siblings; the result
+        lists every child in the order asked, approved or not.
+        """
+        args = payload.get("args", {}) or {}
+        children = args.get("children")
+        if children is None:
+            reason = self._gate_spawn(args, payload, envelope)
+            if reason is not None:
+                return _denial_result(tool_name, reason), False
+            return await self._run_child(tool_use_id, args), True
+
+        # A batch. Shape first: a malformed batch is denied whole and recorded,
+        # before any child counts against a cap.
+        shape = None
+        if not isinstance(children, list) or not children:
+            shape = "spawn_child children must be a non-empty list of {task, role?}"
+        elif not all(isinstance(c, dict) for c in children):
+            shape = "spawn_child children must be objects ({task, role?, context_hint?})"
+        elif len(children) > self._max_parallel_children:
+            shape = (f"spawn_child asked for {len(children)} children at once; at most "
+                     f"{self._max_parallel_children} run in parallel")
+        if shape is not None:
+            self._intent_sequence += 1
+            self._record_denial(
+                Intent(kind=IntentKind.SPAWN_CHILD, payload=payload,
+                       node_id=envelope.node_id, sequence=self._intent_sequence),
+                shape, envelope, "capability",
+            )
+            return _denial_result(tool_name, shape), False
+
+        import asyncio
+
+        outcome: list[dict] = []
+        runs: list[tuple[int, dict]] = []
+        for index, child_args in enumerate(children):
+            reason = self._gate_spawn(
+                child_args, {"tool": tool_name, "args": child_args}, envelope)
+            entry: dict = {"index": index, "role": child_args.get("role") or ""}
+            if reason is not None:
+                entry.update(status="denied", reason=reason)
+            else:
+                runs.append((index, child_args))
+            outcome.append(entry)
+
+        if runs:
+            results = await asyncio.gather(*(
+                self._run_child(f"{tool_use_id}#{index}", child_args)
+                for index, child_args in runs
+            ))
+            for (index, _), result in zip(runs, results):
+                outcome[index].update(status="ok", output=result)
+        return {"children": outcome}, any(e["status"] == "ok" for e in outcome)
+
+    def _gate_spawn(self, args: dict, payload: dict, envelope: ExecutionEnvelope
+                    ) -> str | None:
+        """Every gate one child passes, in order; the first denial is recorded
+        and returned. None = approved, and the spawn is counted."""
+        self._intent_sequence += 1
+        spawn_intent = Intent(
+            kind=IntentKind.SPAWN_CHILD,
+            payload=payload,
+            node_id=envelope.node_id,
+            sequence=self._intent_sequence,
+        )
+        # Capability check BEFORE dispatching to callback — denial must be
+        # recorded in the trace regardless of whether the callback would catch
+        # the exception.
+        decision = self.resolve_spawn_intent(spawn_intent, envelope)
+        if decision.kind == PolicyDecisionKind.DENY:
+            self._record_denial(spawn_intent, decision.reason, envelope, "capability")
+            return decision.reason
+        # Which agent/model the child runs on is operator configuration; the
+        # spawn may only pick a declared role, and switching models is authority.
+        role_reason = self._role_reason(args.get("role"), envelope)
+        if role_reason is not None:
+            self._record_denial(spawn_intent, role_reason, envelope, "capability")
+            return role_reason
+        # Per-value carrier/taint gate — the capability check above only asks
+        # "may this node spawn"; it does not inspect WHAT drives the spawn. A
+        # tainted free-text task is prompt injection reaching an
+        # instruction-following sink. Naming a role exempts nothing: the task
+        # is judged the same with or without one. (The role NAME itself is a
+        # short identifier the value ledger does not track; what bounds a role
+        # chosen under influence is that it must be declared, that switching
+        # models needs authority, and that the parent's policy is its ceiling.)
+        taint_reason = self._spawn_taint_reason(args)
+        if taint_reason is not None:
+            self._record_denial(spawn_intent, taint_reason, envelope, "taint_enforcement")
+            return taint_reason
+        # Approved — count this spawn once, here.
+        self._spawn_count += 1
+        return None
+
+    def _role_reason(self, role: object, envelope: ExecutionEnvelope) -> str | None:
+        if role is None or role == "":
+            return None
+        if not isinstance(role, str):
+            return "spawn_child role must be the name of a declared child role"
+        declared = self._child_roles.get(role)
+        if declared is None:
+            return (f"unknown child role {role!r}"
+                    + (f" (declared: {sorted(self._child_roles)})" if self._child_roles
+                       else " (this session declares no child roles)"))
+        if declared.executor is not None and not envelope.policy.allow_model_switch:
+            return (f"child role {role!r} runs on "
+                    f"{declared.label or 'a different executor'}, and policy "
+                    f"'{envelope.policy.name}' does not allow a model switch")
+        return None
+
+    async def _run_child(self, tool_use_id: str, args: dict) -> Any:
+        task = args.get("task", "")
+        context_hint = args.get("context_hint", "")
+        role = args.get("role")
+        if role:
+            return await self._spawn_callback(tool_use_id, task, context_hint, role=role)
+        return await self._spawn_callback(tool_use_id, task, context_hint)
 
     def resolve_spawn_intent(
         self,
