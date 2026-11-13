@@ -22,6 +22,8 @@
   it names — through a read tool, a search over its directory, or the shell
   (`sed -n`, `cat`, `rg`, `find`…). A failed read is not a read.
   `CHILD_COMPLETED` carries the verified/unverified counts.
+- **`ToolCallGovernor(taint_engine=...)`**: several governors may share one
+  ledger — agents working in one workspace see each other's taint.
 
 ## 0.12.1 — 2026-11-10
 

@@ -188,6 +188,7 @@ class ToolCallGovernor:
         records: "dict | None" = None,
         trace: bool = True,
         node_id: str = "",
+        taint_engine: "TaintEngine | None" = None,
     ) -> None:
         self._positional_sinks = frozenset(positional_sinks or ())
         illegal = {
@@ -280,8 +281,14 @@ class ToolCallGovernor:
             if errors:
                 raise ValueError("strict egress allowlist: " + "; ".join(errors))
         self._normalizer = IntentNormalizer()
-        self._taint = TaintEngine(node_id=node_id, integrity_default=resolved_integrity,
-                                  integrity_origins=resolved_origins)
+        # One ledger per governor by default. Several governors may SHARE one —
+        # agents working in the same workspace (a Claude Code session and a Codex
+        # session in one repo): a value one of them read from the web is then
+        # tainted wherever another one carries it. Sharing a ledger only adds what
+        # each one knows; the gates still decide per call.
+        self._taint = taint_engine if taint_engine is not None else TaintEngine(
+            node_id=node_id, integrity_default=resolved_integrity,
+            integrity_origins=resolved_origins)
         # Context-default integrity: operator allowlist members are values the
         # attacker cannot author. Seeding them keeps the trusted-origin proof
         # consistent with the enum supersession (T4) those members already carry.
