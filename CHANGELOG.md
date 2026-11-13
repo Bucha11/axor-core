@@ -22,6 +22,11 @@
   it names — through a read tool, a search over its directory, or the shell
   (`sed -n`, `cat`, `rg`, `find`…). A failed read is not a read.
   `CHILD_COMPLETED` carries the verified/unverified counts.
+- **Out-of-loop executors report what they did**: an executor whose tool calls
+  run in its own process (a CLI agent governed by its hooks) may implement
+  `executed_calls(node_id)` and `output_provenance(node_id)`; the spawning
+  parent checks findings against the former and taints the child's answer with
+  the latter. Both only add.
 - **`ToolCallGovernor(taint_engine=...)`**: several governors may share one
   ledger — agents working in one workspace see each other's taint.
 

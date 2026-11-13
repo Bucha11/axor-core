@@ -127,3 +127,65 @@ def test_a_shell_command_that_reads_nothing_backs_nothing() -> None:
     got = verify_findings(json.dumps({"findings": [{"claim": "a", "file": "src/a.py"}]}),
                           [("bash", {"command": "echo src/a.py > /dev/null"})])
     assert got["verified"] == 0
+
+
+class _OutOfLoop(Invokable):
+    """A CLI agent: its tool calls ran in its own process, governed by hooks,
+    so it reports them instead of streaming them."""
+
+    def __init__(self, sources=()) -> None:
+        self.sources = sources
+        self.asked: list[str] = []
+
+    async def stream(self, envelope) -> AsyncIterator[ExecutorEvent]:
+        yield ExecutorEvent(kind=ExecutorEventKind.TEXT,
+                            payload={"text": json.dumps(ANSWER)},
+                            node_id=envelope.node_id)
+        yield ExecutorEvent(kind=ExecutorEventKind.STOP, payload={"usage": {}},
+                            node_id=envelope.node_id)
+
+    def executed_calls(self, node_id):
+        self.asked.append(node_id)
+        return [("bash", {"command": "sed -n 1,80p src/auth.py"})]
+
+    def output_provenance(self, node_id):
+        from axor_core.contracts.taint import TaintSource
+        from axor_core.taint.causal_root import CausalRoot
+
+        return CausalRoot(sources=frozenset(self.sources)) if self.sources else None
+
+
+async def _run_out_of_loop(executor):
+    from axor_core.federation import FederationGateway
+
+    sess = GovernedSession(
+        executor=EchoExecutor(tool_calls=[("spawn_child", {"task": "audit auth",
+                                                            "role": "reader"})]),
+        capability_executor=CapabilityExecutor(),
+        trace_config=TraceConfig(local_only=True, persist_inputs=False),
+        child_roles=[ChildRole("reader", executor=executor, output="findings")],
+        federation_gateway=FederationGateway(peers={}, compatible_kernels=set(),
+                                             federated_domains=set()),
+    )
+    await sess.run("audit", policy=dataclasses.replace(presets.get("federated"),
+                                                       allow_model_switch=True))
+    return sess
+
+
+@pytest.mark.asyncio
+async def test_an_out_of_loop_executor_reports_what_it_ran() -> None:
+    executor = _OutOfLoop()
+    sess = await _run_out_of_loop(executor)
+    done = [e for t in sess.all_traces() for e in t.events
+            if e.kind == TraceEventKind.CHILD_COMPLETED]
+    assert executor.asked and done[0].payload["findings_verified"] == 1
+    # it read nothing untrusted: its output arrives clean
+    assert not sess._taint_engine.derive_value(json.dumps(ANSWER)).is_tainted
+
+
+@pytest.mark.asyncio
+async def test_what_it_read_taints_what_it_returns() -> None:
+    from axor_core.contracts.taint import TaintSource
+
+    sess = await _run_out_of_loop(_OutOfLoop(sources=[TaintSource.WEB]))
+    assert sess._taint_engine.derive_value(json.dumps(ANSWER)).is_tainted

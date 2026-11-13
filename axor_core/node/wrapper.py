@@ -725,6 +725,29 @@ class GovernedNode:
                 )
             return f"[child failed: node_stale ({type(exc).__name__})]"
 
+        # An executor whose tool calls ran OUTSIDE this node's loop — a CLI agent
+        # governed by its own hooks — may report them for the node it ran:
+        #   executed_calls(node_id)    -> [(tool, args), ...] that actually ran
+        #   output_provenance(node_id) -> CausalRoot of what it read, or None
+        # Both only ADD: calls back findings, provenance taints the output.
+        child_id = child_lineage.node_id
+        executed = list(getattr(child_node, "last_approved_calls", []))
+        external_root = None
+        reported = getattr(child_executor, "executed_calls", None)
+        if callable(reported):
+            try:
+                executed += list(reported(child_id) or [])
+            except Exception:  # noqa: BLE001 - a report is evidence, never a crash
+                log.warning("executor could not report calls for %s", child_id,
+                            exc_info=True)
+        provenance = getattr(child_executor, "output_provenance", None)
+        if callable(provenance):
+            try:
+                external_root = provenance(child_id)
+            except Exception:  # noqa: BLE001
+                # unknown provenance is untrusted provenance
+                external_root = CausalRoot.cross_process_in()
+
         # What the parent is handed. A findings role's answer is checked against
         # the files the child actually read first (axor_core.node.findings): the
         # parent receives the same findings, each marked verified or not.
@@ -735,8 +758,7 @@ class GovernedNode:
 
             from axor_core.node.findings import verify_findings
 
-            checked = verify_findings(child_result.output,
-                                      getattr(child_node, "last_approved_calls", []))
+            checked = verify_findings(child_result.output, executed)
             returned = _json.dumps(checked, ensure_ascii=False)
 
         # Provenance of the child's returned output, registered into the parent's
@@ -752,6 +774,8 @@ class GovernedNode:
                 # output carrying a secret / web value the child read is registered
                 # tainted (and a sensitive one re-arms the parent's egress floor).
                 child_root = child_taint.derive_value(child_result.output)
+                if external_root is not None:
+                    child_root = CausalRoot.mint(child_root, external_root)
                 self._taint_engine.register_value(child_result.output, child_root)
                 if returned is not child_result.output:
                     self._taint_engine.register_value(returned, child_root)
@@ -760,12 +784,12 @@ class GovernedNode:
                 # trust boundary we do not audit, so re-mint it untrusted. This
                 # over-taints a clean child output, but guarantees a child cannot
                 # launder a secret / web value it read by returning it.
-                self._taint_engine.register_value(
-                    child_result.output, CausalRoot.cross_process_in()
-                )
+                remint = CausalRoot.cross_process_in()
+                if external_root is not None:
+                    remint = CausalRoot.mint(remint, external_root)
+                self._taint_engine.register_value(child_result.output, remint)
                 if returned is not child_result.output:
-                    self._taint_engine.register_value(
-                        returned, CausalRoot.cross_process_in())
+                    self._taint_engine.register_value(returned, remint)
 
         # emit child_completed into parent trace
         from axor_core.contracts.trace import TraceEvent
