@@ -189,3 +189,13 @@ async def test_what_it_read_taints_what_it_returns() -> None:
 
     sess = await _run_out_of_loop(_OutOfLoop(sources=[TaintSource.WEB]))
     assert sess._taint_engine.derive_value(json.dumps(ANSWER)).is_tainted
+
+
+@pytest.mark.asyncio
+async def test_a_host_can_read_what_the_ledger_knows_of_a_value() -> None:
+    from axor_core.contracts.taint import TaintSource
+
+    sess = await _run_out_of_loop(_OutOfLoop(sources=[TaintSource.WEB]))
+    root = sess.provenance_of(json.dumps(ANSWER))
+    assert root.is_tainted and TaintSource.WEB in root.sources
+    assert not sess.provenance_of("something nobody returned").is_tainted

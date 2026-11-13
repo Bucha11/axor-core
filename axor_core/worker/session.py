@@ -983,6 +983,13 @@ class GovernedSession:
     def all_traces(self):
         return self._collector.all_traces()
 
+    def provenance_of(self, value: object):  # noqa: ANN201 - CausalRoot
+        """What this session's ledger knows of ``value``: the causal root the
+        gates would derive for it. Read-only — for a host deciding what to pass
+        on (an orchestrator choosing which child answers flow to the next
+        stage), never a way to change what the ledger holds."""
+        return self._taint_engine.derive_value(value)
+
     def current_degradation_level(self) -> str:
         return self._degradation_engine.state.level.value
 

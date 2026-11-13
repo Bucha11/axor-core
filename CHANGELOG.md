@@ -27,6 +27,8 @@
   `executed_calls(node_id)` and `output_provenance(node_id)`; the spawning
   parent checks findings against the former and taints the child's answer with
   the latter. Both only add.
+- **`GovernedSession.provenance_of(value)`**: read-only — what the session's
+  ledger knows of a value, for a host deciding what to pass on.
 - **`ToolCallGovernor(taint_engine=...)`**: several governors may share one
   ledger — agents working in one workspace see each other's taint.
 
