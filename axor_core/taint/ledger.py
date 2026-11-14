@@ -191,10 +191,16 @@ class ValueTaintLedger:
             return value
         if isinstance(value, (int, float, bool)):
             return str(value)
+        # A structured value's leaves are joined one per LINE, not by spaces: a
+        # line is a segment, so each string leaf of a tool's JSON answer is a
+        # fragment of its own — exactly as if the tool had returned that string.
+        # Joined by spaces, {"text": "<injected command>"} registered only as
+        # "text <injected command>", and the command alone, passed on by the
+        # model, matched nothing: a dict-returning source was barely tracked.
         if isinstance(value, dict):
-            return " ".join(
+            return "\n".join(
                 ValueTaintLedger._flatten(v) for v in list(value.keys()) + list(value.values())
             )
         if isinstance(value, (list, tuple, set)):
-            return " ".join(ValueTaintLedger._flatten(v) for v in value)
+            return "\n".join(ValueTaintLedger._flatten(v) for v in value)
         return str(value)

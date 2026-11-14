@@ -32,6 +32,17 @@
 - **`ToolCallGovernor(taint_engine=...)`**: several governors may share one
   ledger — agents working in one workspace see each other's taint.
 
+### Fixed
+
+- **A tool that answers with a dict or list is tracked leaf by leaf.** The
+  per-value ledger flattened a structured answer by joining its leaves with
+  spaces, so `{"text": "<injected command>"}` registered only as one line
+  `"text <injected command>"` — and the command alone, passed on by the model
+  to a sink, matched nothing. Leaves are now joined one per line, and a line is
+  a segment: each string in a JSON answer is a fragment of its own, exactly as
+  if the tool had returned that string. Python tools returning dicts (wrapped
+  with axor-wrap) and the proxy's HTTP/MCP answers were the cases that slipped.
+
 ## 0.12.1 — 2026-11-10
 
 ### Added
