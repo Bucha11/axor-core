@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Fixed
+
+- **Replay honours a counterfactual's driving args on `arg_refs` records**: a
+  config that declares a tool's driving args (`send_email` → `to`) now narrows
+  the re-derived driving root to the refs of those args, as the live gate
+  narrows its check (`driving_subset`). Before, every ref counted, so "only
+  `to` decides" re-gated an email on its body's untrusted text and changed
+  nothing. Declared args that carry no ref give a clean root; declared args
+  absent from the call fall back to every ref (the same fail-safe as
+  `driving_subset`). Configs that declare nothing replay as before.
+
 ### Added
 
 - **Code fetched by name counts as executing generated code**: a shell command

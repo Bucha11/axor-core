@@ -215,6 +215,21 @@ def _refs_root(
     arg_refs = payload.get("arg_refs") or {}
     if not arg_refs:
         return None
+    # A config that declares this tool's driving args (the `to` of an email, not
+    # its body) narrows the re-derivation to them, as the live gate narrows its
+    # check (`driving_subset`): otherwise a counterfactual "only `to` decides"
+    # re-gated on the body's refs and changed nothing. Same fail-safe as
+    # `driving_subset`: when none of the declared args carries a ref, every
+    # ref still counts.
+    drivers = config.driving_args.get(str(payload.get("tool", "")))
+    if drivers:
+        narrowed = {a: r for a, r in arg_refs.items() if a in drivers}
+        if narrowed:
+            arg_refs = narrowed
+        elif set(drivers) & set((payload.get("args") or {}).keys()):
+            # the declared args are present and carry no ref: nothing outside
+            # drives the call — a clean root, not a fallback to the recorded one
+            return CausalRoot.constant()
     roots = []
     excised = False
     unresolved = False
