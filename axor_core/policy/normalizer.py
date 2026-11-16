@@ -24,6 +24,24 @@ _POWER_STATE_MARKERS = (
     "systemctl poweroff", "systemctl reboot", "systemctl halt",
     "mkfs", "dd if=/dev", "fdisk", " rm -rf /", "factory_reset", "factoryreset",
 )
+# A shell command that runs code named on its own command line, fetched at that
+# moment: a package runner (npx, uvx, pnpm dlx …), a remote script (deno run
+# https://…, go run pkg@v), or an installer given a package (pip install X,
+# npm i X, cargo install X …) — installing runs the package's own hooks. The
+# code is not in the workspace and was not reviewed: whoever chose the name
+# chose the code. It counts as executing generated code, so a name that came
+# from untrusted text is refused by the integrity axis; a clean name runs.
+# (A bare `npm install` / `pip install -r requirements.txt` runs what the
+# workspace already pins, and is not matched.)
+_RUNS_FETCHED_CODE = re.compile(
+    r"(?:^|[;&|(]\s*|\s)"
+    r"(?:(?:npx|pnpx|bunx|uvx|(?:pnpm|yarn|bun)\s+dlx|pipx\s+run|npm\s+exec"
+    r"|go\s+run(?=\s+\S+@)"
+    r"|(?:pip3?|uv\s+pip|pipx|cargo|gem|go|brew)\s+install(?![^;&|\n]*\s(?:-r|--requirement|-e|--editable|-c|--constraint)\b)"
+    r"|uv\s+(?:add|tool\s+install)|npm\s+(?:i|install|add)|(?:yarn|pnpm|bun)\s+add)"
+    r"(?:\s+-{1,2}[\w-]+(?:=\S+)?)*\s+(?![-<>|;&./~])[^\s;&|]+"
+    r"|deno\s+run(?:\s+-\S+)*\s+https?://)"
+)
 # Tools that perform network requests
 _NETWORK_TOOLS = frozenset({"curl", "fetch", "http_request", "web_fetch", "web_search"})
 # Tools that read files
@@ -249,10 +267,12 @@ class IntentNormalizer:
         )
 
     def _executes_generated_code(self, tool: str, args: dict) -> bool:
+        """Runs code that is not the workspace's reviewed code: a file written
+        this session, or code fetched by name on this command line."""
         t = tool.lower()
         if t in _BASH_TOOLS:
             cmd = str(args.get("command", args.get("cmd", ""))).lower()
-            return self._cmd_executes_written_file(cmd)
+            return self._cmd_executes_written_file(cmd) or bool(_RUNS_FETCHED_CODE.search(cmd))
         return False
 
     def _classify_data_flow(

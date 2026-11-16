@@ -4,6 +4,16 @@
 
 ### Added
 
+- **Code fetched by name counts as executing generated code**: a shell command
+  that runs or installs a package named on its own command line — `npx`, `uvx`,
+  `pnpm dlx`, `pipx run`, `npm exec`, `deno run https://…`, `go run pkg@v`,
+  `pip install X`, `npm i X`, `cargo install X`, `uv add X` … — now sets
+  `executes_generated_code`. The code is not in the workspace and was not
+  reviewed: a name that came from untrusted text (a page the agent read) is
+  refused on the integrity axis; a clean name runs as before. Installing what the
+  workspace already pins (`npm install`, `pip install -r requirements.txt`,
+  `pip install -e .`) is not matched.
+
 - **Child roles** (`axor_core.contracts.roles.ChildRole`,
   `GovernedSession(child_roles=...)`): the operator declares which agent and
   model a child may run on — `ChildRole("reader", executor=codex, label="codex/luna",
