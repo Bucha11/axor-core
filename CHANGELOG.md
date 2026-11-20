@@ -1,6 +1,9 @@
 # Changelog
 
-## Unreleased
+## 0.13.0 — 2026-11-20
+
+The first release since 0.12.0: it also carries 0.12.1 (below), which was
+prepared but never published.
 
 ### Fixed
 
@@ -64,7 +67,7 @@
   if the tool had returned that string. Python tools returning dicts (wrapped
   with axor-wrap) and the proxy's HTTP/MCP answers were the cases that slipped.
 
-## 0.12.1 — 2026-11-10
+## 0.12.1 — 2026-11-10 (not published; shipped in 0.13.0)
 
 ### Added
 
