@@ -66,3 +66,15 @@ def test_a_structured_answer_is_tracked_leaf_by_leaf():
     led.register(nested, CausalRoot.external_read(TaintSource.WEB))
     assert led.derive({"url": "https://evil.example/hook"}).is_tainted is True
     assert led.derive({"to": "boss@corp.example", "body": "weekly numbers"}).is_tainted is False
+
+
+def test_a_structured_answer_of_short_leaves_is_still_tracked_whole():
+    # Leaf by leaf, none of these is long enough to be a segment; the value
+    # passed on as it is — the tainted answer itself, at a sink — must still
+    # derive tainted (it did when leaves were joined by spaces).
+    led = ValueTaintLedger()
+    answer = {"results": [{"content": "real result"}]}
+    led.register(answer, CausalRoot.external_read(TaintSource.WEB))
+    assert led.derive(answer).is_tainted is True
+    assert led.derive({"text": answer}).is_tainted is True
+    assert led.derive({"to": "boss@corp.example", "body": "weekly numbers"}).is_tainted is False

@@ -142,9 +142,14 @@ class ValueTaintLedger:
         text = _normalize(self._flatten(value)).casefold()
         if not text or not self._segments:
             return CausalRoot.constant()
+        # A structured value is also read whole (leaves joined by spaces), to
+        # meet the whole-value segment _segmentize registers for it.
+        texts = [text]
+        if isinstance(value, (dict, list, tuple, set)):
+            texts.append(_normalize(self._flatten(value, " ")).casefold())
         root = CausalRoot.constant()
         for seg, entry in self._segments.items():
-            if seg in text:
+            if any(seg in t for t in texts):
                 root = CausalRoot.mint(root, entry[0])
         return root
 
@@ -157,6 +162,13 @@ class ValueTaintLedger:
         # case). derive() folds the query side to match.
         s = _normalize(ValueTaintLedger._flatten(content)).casefold()
         segs: set[str] = set()
+        # A structured value whole, as well as leaf by leaf: when every leaf is
+        # short ({"results": [{"content": "real result"}]}) no leaf is a segment,
+        # and the value passed on as it is would match nothing.
+        if isinstance(content, (dict, list, tuple, set)):
+            whole = _normalize(ValueTaintLedger._flatten(content, " ")).casefold().strip()
+            if len(whole) >= _MIN_SEGMENT:
+                segs.add(whole)
         for line in s.splitlines():
             line = line.strip()
             if len(line) >= _MIN_SEGMENT:
@@ -184,7 +196,7 @@ class ValueTaintLedger:
         return sorted(segs)
 
     @staticmethod
-    def _flatten(value: object) -> str:
+    def _flatten(value: object, sep: str = "\n") -> str:
         if value is None:
             return ""
         if isinstance(value, str):
@@ -198,9 +210,9 @@ class ValueTaintLedger:
         # "text <injected command>", and the command alone, passed on by the
         # model, matched nothing: a dict-returning source was barely tracked.
         if isinstance(value, dict):
-            return "\n".join(
-                ValueTaintLedger._flatten(v) for v in list(value.keys()) + list(value.values())
+            return sep.join(
+                ValueTaintLedger._flatten(v, sep) for v in list(value.keys()) + list(value.values())
             )
         if isinstance(value, (list, tuple, set)):
-            return "\n".join(ValueTaintLedger._flatten(v) for v in value)
+            return sep.join(ValueTaintLedger._flatten(v, sep) for v in value)
         return str(value)
