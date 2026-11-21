@@ -22,7 +22,10 @@ and action-class core that a tool registry alone cannot express.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from axor_core.taint.causal_root import CausalRoot
 
 from axor_core.contracts.anomaly import NormalizedIntent
 from axor_core.contracts.canonical import ConsequenceClass
@@ -492,6 +495,18 @@ class ToolCallGovernor:
         return events
 
     # ── ledger ────────────────────────────────────────────────────────────────
+
+    def output_root_of(self, decision: GovernanceDecision) -> "CausalRoot | None":
+        """Where this call's output comes from, as ``register_output`` will
+        register it: an untrusted (or sensitive) root, or ``None`` for a clean
+        read. A host that reports results — a sidecar shipping telemetry — says
+        what the kernel decided instead of guessing from the arguments."""
+        ni = decision._normalized
+        return output_root(
+            ni.tool if ni is not None else "", ni,
+            untrusted_sources=self._untrusted_sources,
+            sensitive_sources=self._sensitive_sources,
+        )
 
     def register_output(
         self, decision: GovernanceDecision, output: Any

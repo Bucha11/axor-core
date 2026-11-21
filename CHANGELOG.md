@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.13.1 — 2026-11-21
+
+### Added
+
+- **`ToolCallGovernor.output_root_of(decision)`**: where a call's output comes
+  from, exactly as `register_output` registers it — an untrusted or sensitive
+  root, or `None` for a clean read. A host that reports results (axor-wrap's
+  sidecar shipping telemetry) says what the kernel decided instead of guessing
+  from the call's arguments, which marked every local command's output as
+  "text from outside".
+
 ## 0.13.0 — 2026-11-20
 
 The first release since 0.12.0: it also carries 0.12.1 (below), which was
