@@ -346,8 +346,12 @@ async def test_a_tainted_child_in_a_batch_is_denied_and_its_siblings_run():
 
     eng = TaintEngine()
     eng.register_value(ATTACK_TASK, CausalRoot.external_read(TaintSource.WEB))
+    # spawn_inherits_context: the child runs under this engine's context root, as
+    # GovernedNode's children do — otherwise, after an untrusted read, the context
+    # default refuses every free-text task (the child could not be shown to inherit).
     loop = IntentLoop(capability_executor=CapabilityExecutor(), trace_events=[],
-                      taint_engine=eng, spawn_callback=_spawn_cb)
+                      taint_engine=eng, spawn_callback=_spawn_cb,
+                      spawn_inherits_context=True)
     [result] = await _drive_args(loop, _spawn_envelope(), {"children": [
         {"task": "summarize the README"}, {"task": ATTACK_TASK}]})
     children = result["tool_result"]["children"]

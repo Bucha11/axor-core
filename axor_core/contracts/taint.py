@@ -46,31 +46,39 @@ class TrustedOrigin(str, Enum):
 INTEGRITY_DEFAULTS = frozenset({"clean", "context"})
 
 
+_WARNED_CLEAN: set = set()
+
+
 def resolve_integrity_default(requested: "str | None", *, strict: bool) -> str:
     """The integrity default a governed session or governor runs with.
 
-    ``None`` means "the mode's default": ``"context"`` under STRICT, ``"clean"``
-    otherwise. An explicit value wins. Choosing ``"clean"`` under STRICT is the
-    legacy opt-out and is logged: it restores the gap where a re-encoded
-    untrusted identifier passes the integrity gate on every sink without an enum
-    allowlist (docs/rfc-integrity-context-default.md).
+    ``None`` means the default, ``"context"``, in every mode: a value the model
+    writes after an untrusted read is untrusted unless it provably comes from a
+    trusted origin (docs/rfc-integrity-context-default.md). STRICT took it first;
+    Production and the library followed in 0.13. An explicit value wins.
+    ``"clean"`` is the legacy opt-out and is logged in every mode: it trusts any
+    model-written value that carries no registered untrusted fragment, so a
+    re-encoded attacker identifier passes the integrity gate on every sink
+    without an enum allowlist. ``strict`` only words the warning.
     """
     if requested is None:
-        return "context" if strict else "clean"
+        return "context"
     if requested not in INTEGRITY_DEFAULTS:
         raise ValueError(
             f"unknown integrity_default {requested!r}; expected one of "
             f"{sorted(INTEGRITY_DEFAULTS)}"
         )
-    if strict and requested == "clean":
+    if requested == "clean" and strict not in _WARNED_CLEAN:
+        # once per process: a proxy builds a governor per conversation
+        _WARNED_CLEAN.add(strict)
         import logging
 
         logging.getLogger("axor.taint").warning(
-            "integrity_default='clean' under STRICT: model-generated values that "
-            "carry no registered untrusted fragment are trusted, so a re-encoded "
-            "attacker identifier passes the integrity gate on every sink without "
-            "an enum allowlist. This is the legacy opt-out; STRICT defaults to "
-            "'context'."
+            "integrity_default='clean'%s: model-generated values that carry no "
+            "registered untrusted fragment are trusted, so a re-encoded attacker "
+            "identifier passes the integrity gate on every sink without an enum "
+            "allowlist. This is the legacy opt-out; the default is 'context'.",
+            " under STRICT" if strict else "",
         )
     return requested
 

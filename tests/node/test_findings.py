@@ -198,4 +198,8 @@ async def test_a_host_can_read_what_the_ledger_knows_of_a_value() -> None:
     sess = await _run_out_of_loop(_OutOfLoop(sources=[TaintSource.WEB]))
     root = sess.provenance_of(json.dumps(ANSWER))
     assert root.is_tainted and TaintSource.WEB in root.sources
-    assert not sess.provenance_of("something nobody returned").is_tainted
+    # a value nobody returned: the ledger knows nothing of it. (provenance_of
+    # answers for a model-written value, so under the context default it still
+    # carries the session's context root — the web read.)
+    assert not sess._taint_engine.derive_carried("something nobody returned").is_tainted
+    assert sess.provenance_of("something nobody returned").sources == {TaintSource.WEB}

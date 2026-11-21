@@ -94,11 +94,11 @@ def _loop_with_untrusted_read() -> IntentLoop:
     return IntentLoop(capability_executor=ex, trace_events=[], taint_engine=eng)
 
 
-@pytest.mark.xfail(strict=True, reason=IMPLICIT_FLOW_GAP_REASON)
 @pytest.mark.asyncio
 async def test_paraphrased_untrusted_into_write_outside_workdir_should_deny():
-    # Desired: a paraphrase of an untrusted read written outside the workspace
-    # should be denied. It is not — content derivation misses the re-encoding.
+    # A paraphrase of an untrusted read written outside the workspace is denied:
+    # content derivation misses the re-encoding, but under the context default
+    # (0.13, every mode) the path the model wrote after the read is untrusted.
     loop = _loop_with_untrusted_read()
     r = await _resolve(loop, _env("write"),
                        "write", {"path": "/etc/cron.d/x", "content": PARAPHRASE})

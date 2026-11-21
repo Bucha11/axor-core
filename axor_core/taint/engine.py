@@ -68,9 +68,10 @@ class TaintEngine:
     Integrity default for a model-generated value that carries no registered
     untrusted fragment (``integrity_default``):
 
-    - ``"clean"`` (legacy): it derives ``constant()`` — trusted. A re-encoded copy
-      of an untrusted identifier therefore passes the integrity gate.
-    - ``"context"``: it carries this node's context root (every untrusted source
+    - ``"clean"`` (legacy opt-out): it derives ``constant()`` — trusted. A
+      re-encoded copy of an untrusted identifier therefore passes the integrity
+      gate.
+    - ``"context"`` (the default): it carries this node's context root (every untrusted source
       registered so far) unless the trusted-origin index proves it equals a value
       the attacker cannot author (docs/rfc-integrity-context-default.md). Re-encoding
       no longer helps an attacker: any spelling that is not literally a trusted
@@ -79,7 +80,7 @@ class TaintEngine:
     Thread-safety: not thread-safe. Each session has its own instance.
     """
 
-    def __init__(self, node_id: str = "", integrity_default: str = "clean",
+    def __init__(self, node_id: str = "", integrity_default: str = "context",
                  integrity_origins: str = "any-trusted") -> None:
         if integrity_default not in INTEGRITY_DEFAULTS:
             raise ValueError(
@@ -140,9 +141,14 @@ class TaintEngine:
         self._ledger.register(content, root)
         if root.is_tainted:
             self._session_any_tainted = True
-            self._context_root = CausalRoot.mint(
-                self._context_root, CausalRoot(sources=root.sources)
-            )
+            # A secret read is confidentiality, which the floor holds soundly and
+            # an endorsement releases. Folding it into the context root as well
+            # would refuse every model-written egress after reading a credential,
+            # past any endorsement (RFC §3.5: that would duplicate the floor).
+            if not root.sensitive:
+                self._context_root = CausalRoot.mint(
+                    self._context_root, CausalRoot(sources=root.sources)
+                )
         if root.sensitive:
             self._session_any_sensitive = True
             # Arm the floor on the READ fact, keyed by the secret's fingerprint —
@@ -249,8 +255,10 @@ class TaintEngine:
         parent_trusted = getattr(parent, "_trusted", None)
         if parent_trusted is not None:
             self._trusted.merge(parent_trusted)
-        if getattr(parent, "_integrity_default", "clean") == "context":
-            self._integrity_default = "context"
+        # The child runs in its parent's integrity mode: an operator's explicit
+        # legacy "clean" covers the subtree it governs, and "context" is never
+        # dropped on the way down.
+        self._integrity_default = getattr(parent, "_integrity_default", self._integrity_default)
         # Inherit the integrity-origin mode: the child must not clear a value on a
         # looser origin set than its parent would.
         parent_origins = getattr(parent, "_integrity_origins", None)

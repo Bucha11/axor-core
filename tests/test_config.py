@@ -269,11 +269,11 @@ def test_federation_unknown_algorithm_fails_closed():
 # ── integrity_default (context-default integrity, RFC step 2) ─────────────────
 
 @pytest.mark.parametrize("mode, expected", [
-    ("library", "clean"), ("production", "clean"), ("strict", "context"),
+    ("library", "context"), ("production", "context"), ("strict", "context"),
 ])
 def test_integrity_default_follows_the_mode(mode, expected):
-    """Unset, the mode decides: STRICT runs context-default integrity (RFC step 6),
-    library/production keep the legacy default."""
+    """Unset, every mode runs context-default integrity: STRICT since RFC step 6,
+    library and production since 0.13."""
     from axor_core import ToolCallGovernor
     cfg = GovernanceConfig.from_dict({"mode": mode})
     assert cfg.integrity_default is None
