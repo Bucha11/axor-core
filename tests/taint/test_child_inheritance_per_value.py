@@ -38,7 +38,9 @@ def test_inheritance_is_additive_not_shared_upward():
     child = TaintEngine(node_id="child")
     child.inherit_value_ledger(parent)
     child.register_value("CHILD_ONLY_fragment_xyz", CausalRoot.external_read(TaintSource.WEB))
-    assert parent.derive_value("CHILD_ONLY_fragment_xyz").is_tainted is False
+    # what the ledger carries, not the parent's own context root (the parent read
+    # untrusted data too, so under the context default anything it writes is)
+    assert parent.derive_carried("CHILD_ONLY_fragment_xyz").is_tainted is False
 
 
 def test_spawn_inherits_ledger_not_session_taint():

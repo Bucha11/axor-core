@@ -41,6 +41,7 @@ def test_driving_args_allows_untrusted_content_to_unconstrained_destination_in_p
     # is the deliberate CaMeL-comparable posture; STRICT closes it by requiring the
     # destination to be allowlisted (see the strict tests below).
     g = _gov(driving_args={"send_email": ["to"]})
+    g.register_task("summarise the document and send it to alice@corp.com")
     d = g.evaluate("read_doc", {"id": 1})
     g.register_output(d, f"note {_TOK} from an untrusted document")
     out = g.evaluate("send_email", {"to": "alice@corp.com", "body": f"summary: {_TOK}"})

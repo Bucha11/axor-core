@@ -122,7 +122,8 @@ async def test_legit_recipient_from_prompt_is_not_over_blocked():
         trace_config=TraceConfig(local_only=True, persist_inputs=False),
         untrusted_sources={"search_docs"}, egress_sinks={"send_email"},
     )
-    await session.run("send the status update", policy=_policy())
-    # The legit recipient never appeared in the untrusted doc → clean → allowed.
+    await session.run(f"send the status update to {LEGIT}", policy=_policy())
+    # The legit recipient comes from the user's prompt (a trusted origin) and never
+    # appeared in the untrusted doc → allowed.
     assert not _denied_taint(session)
     assert send.sent == [LEGIT]

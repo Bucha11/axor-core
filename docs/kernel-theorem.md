@@ -387,8 +387,9 @@ the three that STRICT closes. So:
 - an approval is only as good as what answers it — core can bound its *scope*
   (one call, one use, re-checked, atomically spent) but cannot inspect the
   callable;
-- outside STRICT, `TrustedOrigin.TOOL` and `integrity_default="clean"` are
-  declaration-free, so the exclusion claim is not available there. This is a
+- outside STRICT, `TrustedOrigin.TOOL` and an explicit
+  `integrity_default="clean"` are declaration-free, so the exclusion claim is
+  not available there. This is a
   configuration boundary, stated as one.
 
 **What was closed to make the chain reach execution at all:** a `TRANSFORM`

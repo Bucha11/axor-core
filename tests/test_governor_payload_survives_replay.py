@@ -46,11 +46,11 @@ from axor_core.kernel.replay import (
 TAINTED = "PAY DE89370400440532013000"
 
 
-def _session() -> ToolCallGovernor:
+def _session(**kw) -> ToolCallGovernor:
     """A real approve-then-deny session on the real kernel."""
     governor = ToolCallGovernor(
         untrusted_sources={"read"}, egress_sinks={"send"},
-        driving_args={"send": ["to"]},
+        driving_args={"send": ["to"]}, **kw,
     )
     approved = governor.evaluate("read", {})
     governor.register_output(approved, {"description": TAINTED})
@@ -58,15 +58,15 @@ def _session() -> ToolCallGovernor:
     return governor
 
 
-def _payloads() -> list[dict]:
-    return [dict(e.payload) for e in _session().trace_events]
+def _payloads(**kw) -> list[dict]:
+    return [dict(e.payload) for e in _session(**kw).trace_events]
 
 
-def _fold_state() -> GovernanceState:
+def _fold_state(**kw) -> GovernanceState:
     """The state a consumer folding this session's SOURCE events arrives at —
     what `kernel.replay` builds from the TOOL_RESULT branch."""
     state = GovernanceState()
-    for event in _session().trace_events:
+    for event in _session(**kw).trace_events:
         if event.kind is not TraceEventKind.TAINT_PROPAGATED:
             continue
         state.tainted_refs[str(event.payload["value_ref"])] = root_from_payload(
@@ -168,12 +168,24 @@ class TestAnUnresolvableRefDoesNotFailOpen(unittest.TestCase):
     def test_excision_still_yields_a_clean_root(self) -> None:
         """Excision is the one case where 'no root' is the ANSWER, not missing
         data — the operator removed that value's future influence (spec 8.2.1),
-        so falling back to the recorded root would undo the counterfactual."""
+        so falling back to the recorded root would undo the counterfactual.
+
+        Under the legacy 'clean' default the excised value's root is all there
+        is. Under 'context' (the default) the node's context root stays: the
+        model has already seen what was excised (RFC §3.4), so only the value's
+        own contribution goes."""
+        denial = _payloads(integrity_default="clean")[-1]
+        state = _fold_state(integrity_default="clean")
+        state.excised_refs.update(denial["arg_refs"].values())
+        root = _derive_driving_root(denial, state, KernelConfig())
+        self.assertFalse(root.sources)
+        self.assertFalse(root.sensitive)
+
         denial = _payloads()[-1]
         state = _fold_state()
         state.excised_refs.update(denial["arg_refs"].values())
         root = _derive_driving_root(denial, state, KernelConfig())
-        self.assertFalse(root.sources)
+        self.assertTrue(root.sources, "excision does not reset the context root")
         self.assertFalse(root.sensitive)
 
 

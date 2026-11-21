@@ -189,6 +189,7 @@ class ToolCallGovernor:
         trace: bool = True,
         node_id: str = "",
         taint_engine: "TaintEngine | None" = None,
+        workdir: "str | None" = None,
     ) -> None:
         self._positional_sinks = frozenset(positional_sinks or ())
         illegal = {
@@ -280,7 +281,11 @@ class ToolCallGovernor:
                 )
             if errors:
                 raise ValueError("strict egress allowlist: " + "; ".join(errors))
-        self._normalizer = IntentNormalizer()
+        # The workspace the agent works in. Without one, any absolute path under
+        # /home, /etc, /usr … reads as a system path, so a write to the agent's own
+        # repository counts as writing outside the workdir — an integrity sink,
+        # which under the context default is refused after any untrusted read.
+        self._normalizer = IntentNormalizer(workdir)
         # One ledger per governor by default. Several governors may SHARE one —
         # agents working in the same workspace (a Claude Code session and a Codex
         # session in one repo): a value one of them read from the web is then

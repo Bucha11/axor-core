@@ -5,7 +5,43 @@
 The first release since 0.12.0: it also carries 0.12.1 (below), which was
 prepared but never published.
 
+### Changed (breaking outside STRICT)
+
+- **Context integrity is the default in every mode.** `integrity_default`
+  unset — and a `TaintEngine()` built with no argument — now means `context` in
+  Library and Production too, not only STRICT. After an untrusted read, a value
+  the model writes into a driving argument is untrusted unless it provably comes
+  from a trusted origin: the user's task, an operator allowlist, a trusted tool,
+  an endorsement. Re-encoding an attacker value no longer gets it past the gate,
+  and the ledger's fragment matching no longer decides the verdict — only which
+  sources a value visibly carries.
+  - **Register the user's task.** A host that sees the prompt must call
+    `ToolCallGovernor.register_task(text)` (axor-wrap: `WrappedToolset(task=…)`).
+    Without it, a recipient the user named is refused after the first untrusted
+    read.
+  - **Declare `driving_args` on egress sinks.** Without them the whole argument
+    blob drives the check, and the subject/body the model writes after a read
+    make every call refused.
+  - `integrity_default="clean"` restores the old behaviour; it is logged as the
+    legacy opt-out in every mode, once per process.
+  - A child engine now runs in its parent's mode (an explicit `clean` covers the
+    subtree it governs).
+  - Measured on every connected repository's suite (deterministic, no live
+    model): docs/rfc-integrity-context-default.md §13.
+
+### Added
+
+- **`ToolCallGovernor(workdir=…)`**: the agent's workspace. Without one, any
+  absolute path under `/home/` reads as a system path, so a write into the
+  agent's own repository counted as writing outside the workdir — an integrity
+  sink, refused under the context default after any untrusted read.
+
 ### Fixed
+
+- **A secret read no longer enters the integrity context.** A credential read
+  joined the context root, so after it every model-written egress was refused,
+  even once an endorsement released the confidentiality floor. The floor alone
+  holds confidentiality (RFC §3.5).
 
 - **Replay honours a counterfactual's driving args on `arg_refs` records**: a
   config that declares a tool's driving args (`send_email` → `to`) now narrows

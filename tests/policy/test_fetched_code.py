@@ -55,6 +55,11 @@ def test_a_package_a_page_named_is_refused() -> None:
 
 
 def test_a_package_nobody_untrusted_named_runs() -> None:
-    gov = _governor_after_reading(PAGE)
-    assert gov.evaluate("bash", {"command": "npx prettier --write src"}).allowed
+    # Before any untrusted read, a package named on the command line runs.
     assert ToolCallGovernor().evaluate("bash", {"command": "npx limitkit@latest init --apply"}).allowed
+    # After one, a command the model wrote is untrusted unless it comes from a
+    # trusted origin: the user asked for this one.
+    gov = _governor_after_reading(PAGE)
+    assert not gov.evaluate("bash", {"command": "npx prettier --write src"}).allowed
+    gov.register_task("format the code: npx prettier --write src")
+    assert gov.evaluate("bash", {"command": "npx prettier --write src"}).allowed

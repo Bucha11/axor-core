@@ -28,9 +28,17 @@ def test_register_then_derive_tainted():
 
 
 def test_clean_value_stays_clean_even_with_taint_registered():
-    e = TaintEngine()
+    # The ledger's own answer: a value carrying no registered fragment. Under the
+    # legacy 'clean' default that is the verdict; under 'context' (the default)
+    # a model-written value also carries the context root.
+    e = TaintEngine(integrity_default="clean")
     e.register_value(V, CausalRoot.external_read(TaintSource.WEB))
     assert e.derive_value("nothing tainted here").is_tainted is False
+    assert e.derive_carried("nothing tainted here").is_tainted is False
+    ctx = TaintEngine()
+    ctx.register_value(V, CausalRoot.external_read(TaintSource.WEB))
+    assert ctx.derive_value("nothing tainted here").is_tainted is True
+    assert ctx.derive_carried("nothing tainted here").is_tainted is False
 
 
 def test_worker_cannot_clear():

@@ -1,6 +1,6 @@
 # RFC: Context-default integrity — prove trusted origin, not untrusted origin
 
-Status: **accepted; steps 1–4 and 6 (Strict) implemented** (A2A deferred; step 5 and the Production flip pending) · Scope: integrity axis of the per-value taint gate · Confidentiality: unchanged
+Status: **accepted; steps 1–4 and 6 implemented — Strict, then Production and the library in 0.13** (A2A deferred; step 5 measured on the deterministic suites, §13; AgentDojo with a live model not run) · Scope: integrity axis of the per-value taint gate · Confidentiality: unchanged
 
 ---
 
@@ -298,7 +298,7 @@ modes before any default changes.
 5. **Measure** utility on AgentDojo / `axor-eval` in both modes.
 6. **Default flip**: `context` in the Strict profile first, then in Production if
    the measured cost is acceptable. `clean` stays as an explicit legacy opt-out
-   with a warning. *(Strict done — see §12; Production not flipped)*
+   with a warning. *(Strict done — see §12; Production and library in 0.13 — see §13)*
 
 Ledger work (Aho-Corasick, a single-index `ValueRefLedger`, attribution accuracy)
 continues independently. After step 2 it affects attribution quality and
@@ -435,6 +435,7 @@ Tests: `tests/kernel/test_replay_context_default.py`.
   the default flip closes the gap on outside-workspace writes and generated-code
   execution, which Strict never constrained.
 - **Not flipped: Production.** Pending the utility measurement (step 5).
+  *(Superseded in 0.13 — §13.)*
 - **Blast radius checked.** No other connected repository constructs a Strict
   governor or session; `examples/config/governance.yaml` (Strict) already declares
   `driving_args` for every egress sink and builds in `context` mode. Existing
@@ -510,3 +511,51 @@ for iban in ["DE89 3704 0044 0532 0130 00", IBAN, IBAN.lower(),
 g = governor(value_policies={"transfer_money": [enum("iban", {"GB33BUKB20201555555555"})]})
 assert not g.evaluate("transfer_money", {"iban": IBAN, "amount": 9800}).allowed
 ```
+
+## 13. The Production and library flip (0.13)
+
+`resolve_integrity_default(None, …)` returns `context` in every mode, and a
+`TaintEngine()` built with no argument runs `context` too. `clean` stays the
+explicit legacy opt-out; it is logged in every mode, once per process (a proxy
+builds a governor per conversation).
+
+**Measured (step 5), deterministically — no live model.** Every connected
+repository's suite was run against the flipped kernel; what changed is what the
+mode changes, and nothing else:
+
+| Suite | Result | What had to change |
+|---|---|---|
+| axor-core | 1698 passed | tests that asserted `clean` semantics: a recipient the user named is now registered as the task; the RFC's own encodings run unmarked; the `clean` gap is pinned `xfail` |
+| axor-wrap | 402 passed | the coding sidecar gives the governor its workspace (below); `WrappedToolset(task=…)` / `register_task` |
+| axor-eval | 177 passed | one test read `derive_value` as the ledger's answer; it reads `derive_carried` |
+| axor-sentinel | 428 passed | — |
+| axor-control-plane | 1142 passed | the proxy guard opts out (below) |
+| axor-lab | 1318 passed | the scenario's inputs are registered as trusted, live and on replay, so replay stays exact |
+
+The coding sidecar, driven through its hooks: after one untrusted web read,
+`pytest`, `npm test`, `git commit` and edits inside the repository still run; a
+URL the model writes itself and `npx <package>` are refused unless the user's
+prompt named them. Both are the attacker-shaped flows §7 lists.
+
+**Found while flipping:**
+
+- *A secret read entered the context root.* A credential read (a sensitive
+  root) joined the integrity context, so after reading one every model-written
+  egress was refused — past an endorsement that released the floor. §3.5 says
+  the floor holds confidentiality alone; sensitive roots no longer join the
+  context root.
+- *The governor had no workspace.* Without one, any absolute path under
+  `/home/` reads as a system path, so a write into the agent's own repository
+  counted as writing outside the workdir. `ToolCallGovernor(workdir=…)` now sets
+  it; axor-wrap's sidecar passes the repository.
+
+**Integration requirement.** Context integrity is only as useful as the trusted
+origins a host registers. A host that sees the user's prompt must register it
+(`ToolCallGovernor.register_task`, `WrappedToolset(task=…)`); one that does not
+will see every model-written destination refused after the first untrusted read.
+
+**Exception: the Control Plane's proxy guard** runs `integrity_default="clean"`
+explicitly. A proxy sees tool calls, never the prompt, so it has no task to
+register; an allowlist in its manifests still decides destinations. Revisit
+when the proxy can learn the task.
+

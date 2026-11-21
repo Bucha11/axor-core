@@ -63,7 +63,8 @@ def test_declared_taxonomy_blocks_verbatim_propagation():
     blocked = gov.evaluate("send_money", {"recipient": attacker, "amount": 100})
     assert not blocked.allowed
     assert blocked.category == "taint_enforcement"
-    # A recipient that never appeared in untrusted content is clean.
+    # A recipient from the user's task (a trusted origin) is clean.
+    gov.register_task("pay the rent to GB29NWBK60161331926819")
     assert gov.evaluate(
         "send_money", {"recipient": "GB29NWBK60161331926819", "amount": 50}
     ).allowed
@@ -87,8 +88,12 @@ def test_punctuation_adjacent_attacker_token_is_caught():
         f"Board summary ... audit ... review ... '{core}' ...",       # depth 5
     ]
     for doc in framings:
+        # driving_args: the recipient decides; the subject and body the model
+        # writes after the read would otherwise drive the check too, and under
+        # the context default they are untrusted.
         gov = ToolCallGovernor(
-            untrusted_sources={"search_docs"}, egress_sinks={"send_email"}
+            untrusted_sources={"search_docs"}, egress_sinks={"send_email"},
+            driving_args={"send_email": ["to"]},
         )
         d = gov.evaluate("search_docs", {"query": "routing policy"})
         gov.register_output(d, doc)
@@ -98,6 +103,7 @@ def test_punctuation_adjacent_attacker_token_is_caught():
         assert not blocked.allowed, f"missed attacker egress for framing: {doc[:40]}"
         assert blocked.category == "taint_enforcement"
         # A recipient from the user's prompt (not the document) stays allowed.
+        gov.register_task("send the status update to alice@company.com")
         assert gov.evaluate(
             "send_email", {"to": "alice@company.com", "subject": "Status", "body": "Update."}
         ).allowed

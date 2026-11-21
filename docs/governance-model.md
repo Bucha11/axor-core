@@ -331,8 +331,8 @@ assert the *sound* behaviour and are marked expected-to-fail
 `tests/test_tokenizer_evasion.py`), so the suite trips when the gap closes. The
 fix inverts the default: a model-generated value carries the taint of the model's
 context unless it provably originates from a trusted source. It is
-`integrity_default: context` (§12): the default under Strict (§10), opt-in in
-Library/Production until its utility cost there is measured. It closes every case
+`integrity_default: context` (§12): the default in every mode — Strict first
+(§10), Library and Production since 0.13. It closes every case
 above
 ([rfc-integrity-context-default](rfc-integrity-context-default.md)).
 
@@ -569,8 +569,8 @@ its tools. The operator declares their roles so the kernel can govern them:
   integrity axis — the confidentiality floor stays whole-call, so a secret in any
   field still cannot leave. Fail-safe: if a declared driving arg is absent from a
   call, the check falls back to the whole blob (never a bypass).
-- **`integrity_default`** — `clean` or `context`; unset, the mode decides
-  (`context` under Strict, `clean` otherwise). Under `context`, once a
+- **`integrity_default`** — `clean` or `context`; unset, `context` in every
+  mode (since 0.13; `clean` is the logged legacy opt-out). Under `context`, once a
   node has read untrusted data, a value the model writes into a driving argument
   is tainted unless it equals a **trusted value**: the user's task, an `enum`
   allowlist member, the output of a trusted tool, or a governance-endorsed value.
