@@ -1,6 +1,9 @@
 # Changelog
 
-## Unreleased
+## 0.13.0 — 2026-11-20
+
+The first release since 0.12.0: it also carries 0.12.1 (below), which was
+prepared but never published.
 
 ### Fixed
 
@@ -63,8 +66,12 @@
   a segment: each string in a JSON answer is a fragment of its own, exactly as
   if the tool had returned that string. Python tools returning dicts (wrapped
   with axor-wrap) and the proxy's HTTP/MCP answers were the cases that slipped.
+  The value is still registered whole as well (leaves joined by spaces): an
+  answer whose every leaf is shorter than a segment —
+  `{"results": [{"content": "real result"}]}` — passed on as it is still
+  derives tainted, as it did before.
 
-## 0.12.1 — 2026-11-10
+## 0.12.1 — 2026-11-10 (not published; shipped in 0.13.0)
 
 ### Added
 
